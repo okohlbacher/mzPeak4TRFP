@@ -1,0 +1,9 @@
+.idea/
+bin/
+obj/
+*.log
+*.sln.DotSettings.user
+.vs/
+*.csproj.user
+.vscode/
+Properties/

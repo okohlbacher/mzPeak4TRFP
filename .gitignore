@@ -1,0 +1,9 @@
+# Build artifacts
+**/bin/
+**/obj/
+*.user
+# Reference clones (kept locally as read-only material, not in our history)
+refs/mzPeak/
+refs/mzML2mzPeak/
+# Large local mzpeak example artifacts
+*.mzpeak

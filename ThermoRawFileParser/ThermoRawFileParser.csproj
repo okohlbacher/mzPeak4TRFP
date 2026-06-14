@@ -1,0 +1,64 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <Nullable>annotations</Nullable>
+    <StartupObject>ThermoRawFileParser.MainClass</StartupObject>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64</Platforms>
+    <Version>2.0.0-dev</Version>
+    <Title>$(AssemblyName)</Title>
+    <Company>Compomics</Company>
+    <Copyright>2017 - 2025</Copyright>
+    <PackageProjectUrl>https://compomics.github.io/projects/ThermoRawFileParser</PackageProjectUrl>
+    <Description>Parser allowing reading Thermo RAW files and converting to common open formats on all platforms supporting .NET Core</Description>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <RepositoryUrl>https://github.com/compomics/ThermoRawFileParser</RepositoryUrl>
+    <Authors>Compomics</Authors>
+    <PackageLicenseFile>LICENSE</PackageLicenseFile>
+    <PackageLicenseFile>THERMO_LICENSE</PackageLicenseFile>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Remove="ThermoRawFileParserTest\**" />
+    <EmbeddedResource Remove="ThermoRawFileParserTest\**" />
+    <None Remove="ThermoRawFileParserTest\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AWSSDK.Core" Version="3.7.400.36" />
+    <PackageReference Include="AWSSDK.S3" Version="3.7.405" />
+    <PackageReference Include="log4net" Version="3.0.1" />
+    <PackageReference Include="Mono.Options" Version="6.12.0.148" />
+    <PackageReference Include="Mono.Posix.NETStandard" Version="1.0.0" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="NJsonSchema" Version="11.0.2" />
+    <PackageReference Include="Parquet.Net" Version="5.0.1" />
+    <PackageReference Include="ThermoFisher.CommonCore.RawFileReader" Version="8.0.6" />
+    <PackageReference Include="zlib.net-mutliplatform" Version="1.0.8" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="LICENSE">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Update="README.md">
+      <Pack>True</Pack>
+      <PackagePath>\</PackagePath>
+    </None>
+    <None Update="THERMO_LICENSE">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
