@@ -1,3 +1,18 @@
+---
+gsd_state_version: 1.0
+milestone: v5.0.1
+milestone_name: milestone
+status: verifying
+last_updated: "2026-06-14T06:39:50.006Z"
+last_activity: 2026-06-14
+progress:
+  total_phases: 4
+  completed_phases: 0
+  total_plans: 2
+  completed_plans: 1
+  percent: 0
+---
+
 # Project State
 
 ## Project Reference
@@ -11,14 +26,15 @@ See: .planning/PROJECT.md (updated 2026-06-14)
 
 Phase: 1 of 4 (Walking Skeleton: CLI Wiring + Parquet/ZIP Foundation)
 Plan: 0 of 0 in current phase
-Status: Ready to plan
-Last activity: 2026-06-14 — Project initialized (PROJECT, REQUIREMENTS, ROADMAP, config); repos cloned & explored; ground-truth schema + mapping bible captured.
+Status: Phase complete — ready for verification
+Last activity: 2026-06-14
 
 Progress: [░░░░░░░░░░] 0%
 
 ## Performance Metrics
 
 **Velocity:**
+
 - Total plans completed: 0
 
 | Phase | Plans | Total | Avg/Plan |
@@ -27,12 +43,17 @@ Progress: [░░░░░░░░░░] 0%
 
 ## Accumulated Context
 
+| Phase 01 P01 | 75 | 3 tasks | 8 files |
+
 ### Decisions
 
 Decisions are logged in PROJECT.md Key Decisions table. Recent:
+
 - Point layout for v1; chunked/Numpress deferred to v2.
 - Validate Parquet.Net nested-schema capability via a Phase 1 spike before building the metadata writer.
 - External codex+vibe adversarial review at the start (plan) and close (certification) of every phase.
+- [Phase ?]: Parquet.Net 5.0.1 Path.ToString() is slash-separated; MzPeakParquet keys on DataField identity, not path strings
+- [Phase ?]: arm64 macOS runs the x64-pinned net8 build via Rosetta x64 .NET 8 runtime at ~/.dotnet-x64 (DOTNET_ROOT_X64 for dotnet test)
 
 ### Key Artifacts
 

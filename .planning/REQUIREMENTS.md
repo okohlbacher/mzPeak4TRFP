@@ -7,15 +7,15 @@
 
 ### CLI Integration
 
-- [ ] **CLI-01**: `MzPeak` added to `OutputFormat` enum and selectable via `-f mzpeak` / `--format mzpeak`
-- [ ] **CLI-02**: `--format` help text lists mzPeak; output filename gets `.mzpeak` extension
-- [ ] **CLI-03**: `RawFileParser` dispatch instantiates `MzPeakSpectrumWriter` for the new format
+- [x] **CLI-01**: `MzPeak` added to `OutputFormat` enum and selectable via `-f mzpeak` / `--format mzpeak`
+- [x] **CLI-02**: `--format` help text lists mzPeak; output filename gets `.mzpeak` extension
+- [x] **CLI-03**: `RawFileParser` dispatch instantiates `MzPeakSpectrumWriter` for the new format
 
 ### Parquet Foundation
 
-- [ ] **PQ-01**: Write a Parquet file with nested structs + lists-of-structs using Parquet.Net (spike-validated approach)
-- [ ] **PQ-02**: Reusable helpers to build the repeated `PARAM` value-struct and CV-accession-named columns
-- [ ] **PQ-03**: Per-Parquet ZSTD compression; assemble facets into a STORED (uncompressed) ZIP archive
+- [x] **PQ-01**: Write a Parquet file with nested structs + lists-of-structs using Parquet.Net (spike-validated approach)
+- [x] **PQ-02**: Reusable helpers to build the repeated `PARAM` value-struct and CV-accession-named columns
+- [x] **PQ-03**: Per-Parquet ZSTD compression; assemble facets into a STORED (uncompressed) ZIP archive
 
 ### Spectra Data
 
@@ -83,6 +83,7 @@
 | VER-01..04 | Phase 4 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 25 total
 - Mapped to phases: 25
 - Unmapped: 0
