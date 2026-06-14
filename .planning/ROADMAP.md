@@ -27,7 +27,7 @@ never appear in the produced code or output schema.
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Walking Skeleton — CLI Wiring + Parquet/ZIP Foundation** - `-f mzpeak` produces a minimal valid archive; nested-schema Parquet.Net approach spike-validated (completed 2026-06-14)
-- [ ] **Phase 2: Spectra Signal Data** - Point-layout `spectra_data`/`spectra_peaks` with sorted m/z, honoring MS-level/scan-range filters
+- [x] **Phase 2: Spectra Signal Data** - Point-layout `spectra_data`/`spectra_peaks` with sorted m/z, honoring MS-level/scan-range filters (completed 2026-06-14)
 - [ ] **Phase 3: Spectra Metadata + File-Level Metadata/Index** - Packed parallel metadata tables and the full `mzpeak_index.json` metadata block
 - [ ] **Phase 4: Chromatograms + Conformance Verification** - TIC chromatogram facets and round-trip verification against the reference reader
 
@@ -74,7 +74,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   - Intensity narrowing f64→f32 is lossy if the source is f64; must apply uniformly and not break the round-trip tolerance used in Phase 4.
   - Centroid-vs-profile routing must follow the explicit representation, not be inferred from array shape.
 
-**Plans**: TBD
+**Plans**: 1 plan
+
+  - [ ] 02-01-PLAN.md — Iterate all in-range spectra into point-layout `spectra_data`, add the centroid `spectra_peaks` facet, declare `sorting_rank:0` on `point.mz`, honor MS-level/scan-range filters, and lock sort/multiset/width/filtering with NUnit tests
 
 ### Phase 3: Spectra Metadata + File-Level Metadata/Index
 
@@ -126,6 +128,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Walking Skeleton — CLI Wiring + Parquet/ZIP Foundation | 1/1 | Complete   | 2026-06-14 |
-| 2. Spectra Signal Data | 0/TBD | Not started | - |
+| 2. Spectra Signal Data | 0/1 | Not started | - |
 | 3. Spectra Metadata + File-Level Metadata/Index | 0/TBD | Not started | - |
 | 4. Chromatograms + Conformance Verification | 0/TBD | Not started | - |

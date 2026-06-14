@@ -1,0 +1,5 @@
+BLOCKER, ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:94, zero-point spectra are still assigned metadata rows and ordinals even when `mz.Length == 0`; the only guard is `ordinal == 0` at line 107, so an all-empty or partly-empty in-range run can emit `spectrum_count > distinct point.spectrum_index`, breaking data/metadata parity. Concrete fix: only append metadata/increment ordinal after confirming the data facet received at least one point for that scan, and throw `RawFileParserException` if no point-bearing spectra were found.
+
+MEDIUM, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs:211, the peaks test is conditional and passes if `spectra_peaks.parquet` is absent, so it does not lock the required small.RAW dual-routing path or the “centroid-only scans are not duplicated” rule. Concrete fix: assert small.RAW writes `spectra_peaks.parquet`, enumerate expected qualifying ordinals from `ScanData == Profile && HasCentroidStream`, and compare them to distinct `spectra_peaks.point.spectrum_index`.
+
+VERDICT: REWORK
