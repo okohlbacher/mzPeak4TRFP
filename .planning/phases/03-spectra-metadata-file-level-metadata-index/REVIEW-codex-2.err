@@ -1,0 +1,2023 @@
+Reading additional input from stdin...
+OpenAI Codex v0.137.0
+--------
+workdir: /Users/kohlbach/Claude/mzPeak4TRFR
+model: gpt-5.5
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: xhigh
+reasoning summaries: none
+session id: 019ec52b-b33c-7362-913b-ec6396b31eea
+--------
+user
+Confirmation re-review. You previously reviewed this plan (SHIP-WITH-FIXES). It was revised to address findings Q1-Q7 in .planning/phases/03-spectra-metadata-file-level-metadata-index/REVIEW-SYNTHESIS.md. Read that synthesis and the REVISED .planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md. For each of Q1-Q7 state RESOLVED or NOT-RESOLVED with a one-line reason citing the plan location. Pay special attention to Q1 (the general nested def/rep-level computer and whether its pyarrow proof covers the real isolation_window/activation.parameters/scan_windows shapes incl. empty-list vs null-list and null-padded tails) and Q2 (parent linkage incl. filtered/MS2-only). List any NEW issues. End with one line VERDICT: SHIP / SHIP-WITH-FIXES / REWORK.
+codex
+I’ll re-read the synthesis and revised plan, then map each Q finding directly to the plan text and look for regressions or gaps.
+exec
+/bin/zsh -lc "sed -n '1,260p' .planning/phases/03-spectra-metadata-file-level-metadata-index/REVIEW-SYNTHESIS.md" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+# Phase 3 plan review synthesis (plan gate)
+
+codex = SHIP-WITH-FIXES; vibe = SHIP-WITH-FIXES. Raw: `REVIEW-codex.md`, `REVIEW-vibe.md`.
+No REWORK, but several HIGH correctness items must be folded in before execution.
+
+## Fixes to fold into 03-01-PLAN.md
+
+| # | Sev | Finding | Resolution |
+|---|-----|---------|------------|
+| Q1 | HIGH | **Nested def/rep level computation is the crux and is under-specified** (codex CH3, vibe M1). Nested struct/list leaves need max-def-levels >1 (existing tests: `mz_range/lo`=2; list leaves 5/4/2). "def-level=1" is wrong for isolation_window / activation.parameters / scan_windows / padded tails / empty-vs-null lists | **Task 1 builds a GENERAL per-leaf level computer** covering: top-struct present/null, nested-struct present/null, null-list, empty-list, list-with-N-items, leaf-null. Prove it with pyarrow on the ACTUAL Phase-3 shapes (isolation_window struct, activation.parameters list, scan_windows list) — not just a toy. This helper is the foundation for Tasks 2-3 |
+| Q2 | HIGH | **Precursor parent linkage** naive `lastMs1Ordinal` breaks filtered / MS2-only / ranged runs (codex CH2) | Maintain a `scanNumber → emitted ordinal` map; derive the precursor's parent scan via the mzML logic already in the codebase (`Master Scan Number` trailer / scan-string parent fallback — reuse MzMlSpectrumWriter/PrecursorInfo); map parent scan number → emitted ordinal. If the parent was filtered out / not emitted, define behavior explicitly (null `precursor_index`, keep precursor) and TEST the MS2-only path |
+| Q3 | HIGH | **Counts are representation-specific** (codex CH1). Plan populates data_points always + 0 peaks | In our DUAL model: `number_of_data_points` = the spectrum's `spectra_data` point count; `number_of_peaks` = its `spectra_peaks` count when peaks were written for that ordinal, else NULL (def-level null, not 0). Assert on small.RAW: a profile+centroid scan has both populated; a scan with no peaks has `number_of_peaks` null |
+| Q4 | HIGH | **Validator gate too weak** — only checks the scan-error string (codex CH4) | Parse validator output by rule/error id: assert `columns_spectra_metadata`(scan) AND `cv_list_declared` are ABSENT, and that no NEW ERROR id appears beyond an explicit allowlist (the pre-existing reference-archive failures). Make the gate decisive about "no new errors" |
+| Q5 | MED | **List element must be named `item`** not `element` (codex CM1) — Arrow/Parquet.Net path is `…/list/item/…` | `BuildParamField("item")` for list elements; add a pyarrow schema-name assertion (`parameters/list/item/...`) |
+| Q6 | MED | **cv_list drift guard** (codex CM2, vibe H1) | Generate `cv_list` by collecting CV prefixes from CvColumn usage + every PARAM `accession`/`unit` emitted; assert the index AND footer cv_list cover the set. Not hard-coded MS/UO |
+| Q7 | DOC | **CONTEXT row-disjoint model contradicts RESEARCH** (vibe B2) + N-row schema ambiguity (vibe B1) + counts wording (vibe M2) | Add an explicit note at the top of PLAN: "Row model per RESEARCH.md Decision 1 (4 co-resident N-row columns, null-padded); CONTEXT.md's earlier row-disjoint wording is SUPERSEDED." State all four struct columns have N rows. Fix the `number_of_data_points , number_of_peaks` comma wording |
+
+Q1–Q4 are load-bearing. After revision, recommend a quick codex confirm before execution (Task 1 level-builder
+is the highest-risk; its pyarrow proof is the gate).
+
+exec
+/bin/zsh -lc "sed -n '1,320p' .planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+---
+phase: 03-spectra-metadata-file-level-metadata-index
+plan: 01
+type: execute
+wave: 1
+depends_on: []
+files_modified:
+  - ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs
+  - ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs
+  - ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs
+  - ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs
+autonomous: true
+requirements: [META-01, META-02, META-03, META-04, META-05, IDX-01, IDX-02, IDX-03, IDX-04]
+
+must_haves:
+  truths:
+    - "spectra_metadata.parquet carries four top-level struct columns (spectrum, scan, precursor, selected_ion) co-resident in one file, ALL with N rows (N = spectrum count)"
+    - "spectrum and scan are present (def-level 1) on all N rows; precursor and selected_ion are null (def-level 0) on rows >= #MSn"
+    - "a general per-leaf def/rep-level computer produces correct max-def-levels for nested struct / nested-struct-in-struct / null-list / empty-list / list-with-N-items / leaf-null (NOT a flat 1)"
+    - "scan.source_index == scan.scan_index == the spectrum ordinal it describes"
+    - "precursor.source_index == the MSn fragment ordinal; precursor.precursor_index == the emitted ordinal of the parent MS1 (via Master Scan Number / scan-string parent), or null if that parent was filtered out"
+    - "number_of_data_points = spectra_data point count; number_of_peaks = spectra_peaks count when peaks were written for that ordinal, else NULL"
+    - "mzpeak-validate reports NEITHER the columns_spectra_metadata (scan) error NOR any cv_list_declared error, and introduces NO new ERROR id beyond the pre-existing reference-archive allowlist"
+    - "metadata.cv_list declares every CV prefix actually emitted (collected, not hard-coded) in mzpeak_index.json and in the spectra_metadata.parquet footer"
+  artifacts:
+    - path: "ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs"
+      provides: "General nested def/rep-level computer + list-of-struct write support"
+      contains: "NestedLevels"
+    - path: "ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs"
+      provides: "Four-table spectra_metadata facet + index metadata{} block + footer KV + collected cv_list"
+      contains: "selected_ion"
+    - path: "ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs"
+      provides: "nested level-computer proof on actual Phase-3 shapes via pyarrow"
+      contains: "NestedLevels"
+    - path: "ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs"
+      provides: "four-table null discipline, parent linkage, count discipline, CV value, instrument_config/cv_list locks, validator gate"
+      contains: "source_index"
+  key_links:
+    - from: "MzPeakSpectrumWriter.BuildMetadataFacet"
+      to: "MzPeakParquet nested level computer"
+      via: "PARAM lists + nested isolation_window/activation + scan_windows column emission"
+      pattern: "NestedLevels|BuildParamField"
+    - from: "MzPeakSpectrumWriter precursor parent linkage"
+      to: "Master Scan Number trailer / scan-string parent (MzMlSpectrumWriter/PrecursorInfo/ScanTrailer)"
+      via: "scanNumber -> emitted-ordinal map"
+      pattern: "Master Scan|precursor_index"
+---
+
+<row_model_note>
+ROW MODEL (authoritative — RESEARCH.md Decision 1): `spectra_metadata.parquet` holds FOUR
+co-resident top-level struct columns (`spectrum`, `scan`, `precursor`, `selected_ion`), each an
+independent table laid out at row position = that table's own ordinal and right-padded with
+all-null rows up to the shared file row count. ALL FOUR struct columns have N rows, where
+N = spectrum count (= 48 for small.RAW). `spectrum`/`scan` are present (def-level 1) on all N
+rows; `precursor`/`selected_ion` are present on rows 0..M-1 (M = count of emitted MSn ordinals)
+and NULL (def-level 0) on rows M..N-1. Linkage is by the `source_index` field, NEVER by row
+position. CONTEXT.md's earlier "each row populates exactly one struct, the other three are null"
+(row-disjoint) wording is SUPERSEDED by this note.
+</row_model_note>
+
+<objective>
+Turn the thin `spectra_metadata.parquet` (currently a 3-field `spectrum` struct: index/id/time) into the
+full packed-parallel table set, and populate the `mzpeak_index.json` `metadata{}` block plus the Parquet
+footer KV. This clears the last expected `mzpeak-validate` error (`required facet 'scan' absent`) without
+introducing a new one (cv_list must appear the moment CV-named columns do).
+
+Purpose: META-01..05 + IDX-01..04 — emit rich `spectrum`, the required `scan` facet, and the MSn-only
+`precursor`/`selected_ion` facets as four co-resident independent tables linked by `source_index`, with
+all CV terms as CURIE-named columns; emit the file-level metadata (instrument configurations, software,
+data processing, file description, cv_list) into both the index and the footer.
+
+Output: extended `MzPeakParquet` (general nested level computer + list-of-struct write path), rewritten
+`BuildMetadataFacet` + index/footer assembly in `MzPeakSpectrumWriter`, and NUnit locks. `mzpeak-validate
+small.mzpeak` shows the `scan`-facet error GONE and cv_list present.
+</objective>
+
+<execution_context>
+@$HOME/.claude/get-shit-done/workflows/execute-plan.md
+@$HOME/.claude/get-shit-done/templates/summary.md
+</execution_context>
+
+<context>
+@.planning/PROJECT.md
+@.planning/ROADMAP.md
+@.planning/STATE.md
+@.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md
+@.planning/phases/03-spectra-metadata-file-level-metadata-index/CONTEXT.md
+@.planning/phases/02-spectra-signal-data/02-01-SUMMARY.md
+@refs/_findings/mzpeak_groundtruth_schema.md
+
+# Files this plan extends (read before editing — do not fork)
+@ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs
+@ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs
+
+<interfaces>
+<!-- Contracts the executor uses directly. Do NOT re-derive Thermo decoding. -->
+
+Existing MzPeakParquet (extend, don't fork):
+- `struct MzPeakParam { long? Integer; double? Float; string String; bool? Boolean; string Accession; string Name; string Unit; }`
+- `StructField BuildParamField(string name)` — builds `name: struct<value:struct<integer,float,string,boolean>, accession, name, unit>` (PARAM shape, all leaves nullable).
+- `string CvColumn(string accession, string label, string unitAccession = null)` — `"MS:1000016","scan_start_time","UO:0000031"` -> `MS_1000016_scan_start_time_unit_UO_0000031`. Label MUST already be snake_case. Omit unit -> no `_unit_` suffix (use this for `isolation_window_target_mz` which has NO unit suffix in the reference).
+- `DataColumn Column(DataField field, Array defined, int[] defLevels, int[] repLevels)`
+- `Task WriteAsync(Stream, ParquetSchema, IReadOnlyDictionary<string,string> customMetadata, IDictionary<DataField,(Array defined,int[] defLevels,int[] repLevels)> columns)` — writes Zstd, one row group, iterates `schema.GetDataFields()`, looks columns up by DataField identity (NOT path string).
+
+Existing level model proven in MzPeakParquetTests (the contract the general computer must reproduce):
+- Nullable top-level struct leaf: def-levels {1=present,0=null}, no rep-levels (e.g. `spectrum/index` -> [1,0,1]).
+- Nested struct-in-struct leaf (e.g. `spectrum/mz_range/lo`): max-def = 2, def-levels [2,0,2].
+- List-of-struct leaf path `parameters/list/item/<leaf>`: rep-levels {0=new row/first elem, 1=subsequent elem}; def-levels distinguish null-list / empty-list / present-elem / leaf-null. Measured for a row with 2 items (second `val` null), then an empty list: `name` def [5,5,0,2] rep [0,1,0,0]; nullable `val` def [5,4,0,2] rep [0,1,0,0]. (max-def 5 for a non-null leaf, 4 for a leaf that is null but inside a present elem, 2 for an empty list, 0 for a null list.)
+
+Existing MzPeakSpectrumWriter helpers (Phase 1/2):
+- `static (double[] mz, float[] intensity) OrderedPairs(double[] masses, double[] intensities)` (public).
+- `WriteFacet(ParquetSchema, meta, cols)`, `AddStored(zip, name, bytes)`, `Leaf(schema, path)` (path is slash-separated, e.g. `"spectrum/index"`).
+- `BuildIndex(bool hasPeaks)` currently emits `{version, files[], metadata:{version}}` via Newtonsoft JObject/JArray, BOM-free UTF8.
+- Phase-2 loop already iterates `[firstScanNumber,lastScanNumber]`, gates on `(int)scanFilter.MSOrder` vs `ParseInput.MaxLevel`/`MsLevel`, assigns dense 0-based `ulong ordinal`, and builds `metaIndex/metaId/metaTime`. Phase 3 widens this loop's per-ordinal capture.
+
+Base SpectrumWriter (available to MzPeakSpectrumWriter):
+- `static double CalculateSelectedIonMz(IReaction reaction, double? monoisotopicMz, double? isolationWidth)`
+- `static IReaction GetReaction(IScanEvent scanEvent, int scanNumber)`
+- `protected static double CalculatePrecursorPeakIntensity(IRawDataPlus rawFile, int precursorScanNumber, double precursorMass, double? isolationWidth, bool centroid)` — confirm exact signature in SpectrumWriter.cs before calling.
+
+Precursor parent linkage (REUSE the existing mzML logic — do NOT re-derive):
+- `MzMlSpectrumWriter` derives an MSn spectrum's parent scan via the `Master Scan Number` trailer field, falling back to scan-string parent parsing; it stores parent links in `_precursorScanNumbers[""]` / `_precursorTree` and surfaces them through `PrecursorInfo`. Mine that derivation (the trailer key + the scan-string fallback) rather than a naive "last MS1 seen".
+- `ScanTrailer`: `new ScanTrailer(raw.GetTrailerExtraInformation(scanNumber))`; `.AsDouble("Ion Injection Time (ms):")`, `.AsPositiveInt("Charge State:")`, and `.AsPositiveInt("Master Scan Number:")` (confirm the exact trailer key string against MzMlSpectrumWriter/ScanTrailer in repo).
+
+OntologyMapping (public static — reuse, do not hand-roll CV dicts):
+- `Dictionary<MassAnalyzerType,CVParamType> MassAnalyzerTypes` (FTMS->MS:1000079, ITMS->MS:1000264, ...)
+- `Dictionary<IonizationModeType,CVParamType> IonizationTypes` (ESI->MS:1000073)
+- `Dictionary<ActivationType,CVParamType> DissociationTypes` (CID->MS:1000133, HCD->MS:1000422, ...)
+- `CVParamType GetInstrumentModel(string instrumentName)`; `void UpdateFTMSDefinition(string instrumentName)`; `List<CVParamType> GetDetectors(string instrumentAccession)`
+- `CVParamType` fields: `accession`, `name`, `value`, `cvRef`, `unitAccession`, `unitName`.
+
+Thermo per-scan calls (already used in MzMlSpectrumWriter; reuse the VALUE, not the mzML type):
+- `raw.GetFilterForScanNumber(n)` -> IScanFilter: `.MSOrder`, `.Polarity` (PolarityType.Positive/Negative), `.MassAnalyzer` (MassAnalyzerType), `.IonizationMode`.
+- `raw.GetScanEventForScanNumber(n)` -> IScanEvent: `.ToString()` = filter_string; `.GetReaction(i)` -> IReaction (`.PrecursorMass`, `.CollisionEnergy`, `.CollisionEnergyValid`, `.ActivationType`, `.IsolationWidth`, `.IsolationWidthOffset`).
+- `raw.GetScanStatsForScanNumber(n)` -> ScanStatistics: `.TIC`, `.BasePeakMass`, `.BasePeakIntensity`, `.LowMass`, `.HighMass` (confirm member names against the SDK in repo).
+- `raw.RetentionTimeFromScanNumber(n)` -> minutes (emit raw, NO conversion).
+- `raw.GetInstrumentData()` -> `.Model`, `.SerialNumber`.
+- `Scan.FromFile(raw,n).HasCentroidStream`, `scanEvent.ScanData == ScanDataType.Profile` (Phase-2 representation routing already does this).
+</interfaces>
+</context>
+
+<tasks>
+
+<task type="auto" tdd="true">
+  <name>Task 1: GENERAL nested def/rep-level computer + list-of-struct write support in MzPeakParquet</name>
+  <files>ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs</files>
+  <behavior>
+    - A general computer (`NestedLevels`) takes any leaf DataField in a schema of nested StructFields and ListFields plus a per-row description of presence/values, and returns the `(defined, defLevels, repLevels)` triple. It computes max-def-levels FROM THE SCHEMA SHAPE — NOT a flat 1. For the existing fixtures it reproduces the measured levels: top-struct leaf max-def 1 ([1,0,1]); nested struct-in-struct leaf max-def 2 ([2,0,2]); list-of-struct leaf path `…/list/item/…` def {5 present-elem, 4 leaf-null-in-present-elem, 2 empty-list, 0 null-list} with rep {0 first-elem/new-row, 1 subsequent-elem}.
+    - On the ACTUAL Phase-3 shapes the computer is correct: (a) a `precursor.isolation_window` nested-struct present vs null; (b) a `precursor.activation.parameters` list with null-list, empty-list, and list-with-N-items rows; (c) a `scan.scan_windows` list with one window per row; (d) a top-level struct (precursor) that is NULL on the right-padded tail rows. Each case round-trips: writing N rows then reading back via pyarrow yields the exact per-row list lengths, the exact present/null pattern per leaf, and representative leaf values.
+    - Rep-levels and def-levels produced by the computer are accepted by Parquet.Net 5.0.1 WriteColumnAsync AND by a pyarrow reader (no schema/level mismatch) for every shape above.
+  </behavior>
+  <action>
+    Extend MzPeakParquet with a GENERAL per-leaf level computer (e.g. `NestedLevels`) for arbitrary nested shapes built from StructField/ListField/DataField. Given the schema path to a leaf and a per-row presence/value description, it must correctly express ALL of: top-level struct present vs null; nested struct-in-struct (e.g. `isolation_window`) present vs null; a list that is null vs empty vs has N items; and a null leaf inside a present element. Derive each leaf's max-def-level by walking its ancestor chain (each nullable struct level and each list level contributes), and emit rep-level 0 for the first element of a new list (new row) and 1 for subsequent elements within the same list. Do NOT hard-code def-level 1: the existing tests require mz_range leaves at max-def 2 and list leaves at 5/4/2. Keep `WriteAsync` keying columns by DataField identity, unchanged. Build list fields as `new ListField(name, BuildParamField("item"))` for PARAM lists and a `ListField` over a `StructField` for scan_windows — the list element MUST be named `item` (the conventional Arrow/Parquet.Net list-item name; the leaf path is `…/list/item/…`). Reuse `BuildParamField` for the PARAM element; do NOT introduce a second PARAM struct definition. Compact code, explicit usings, no comments referencing process/phases.
+    In MzPeakParquetTests, add a test that exercises the computer on the actual Phase-3 shapes in ONE schema: a `precursor` top-level struct containing `isolation_window` (nested struct with target/offset leaves) and `activation.parameters` (PARAM list), plus a `scan` struct with `scan_windows` (list-of-struct). Write a known ragged set: a row with isolation_window present + activation.parameters of 2 items, a row with isolation_window present + EMPTY activation list, a row with a NULL activation list, a scan_windows row with one window, and null-padded TAIL rows where the whole `precursor` struct is null. Then shell out to `python3 -c` using pyarrow to read it back and print per-row list lengths, the per-leaf present/null pattern, and a representative leaf value; assert the printed values match the written shape exactly (including empty-list != null-list and the null tail). Mirror any existing pyarrow-invocation pattern in the test file; otherwise invoke `python3` via Process and parse stdout. Skip-with-warning (`Assert.Ignore`) if `python3`/pyarrow is unavailable so the suite stays green without pyarrow.
+  </action>
+  <verify>
+    <automated>cd /Users/kohlbach/Claude/mzPeak4TRFR && DOTNET_ROOT_X64=$HOME/.dotnet-x64 ~/.dotnet-x64/dotnet test ThermoRawFileParser/ThermoRawFileParser.sln --filter "MzPeakParquetTests" 2>&1 | tail -15</automated>
+  </verify>
+  <done>The general level computer reproduces the existing measured levels (top-struct max-def 1, nested struct max-def 2, list leaves 5/4/2) AND round-trips the actual Phase-3 shapes (isolation_window present/null, activation.parameters null-list/empty-list/N-items, scan_windows, null-padded precursor tail) under pyarrow — exact per-row list lengths, present/null patterns, and leaf values. Empty-list and null-list are distinguished. No other MzPeakParquetTests regress. The rep/def-level unknown (RESEARCH Open Q1 / Pitfall 3) is retired before any metadata facet is built on it — this computer underpins Tasks 2-3.</done>
+</task>
+
+<task type="auto" tdd="true">
+  <name>Task 2: rich `spectrum` + required `scan` facet as co-resident null-padded tables</name>
+  <files>ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs</files>
+  <behavior>
+    - spectra_metadata.parquet has a `scan` top-level struct with `source_index:uint64` non-null for all N emitted ordinals; `scan.source_index == scan.scan_index == row ordinal`.
+    - `spectrum` carries: index(u64), id(string nativeID `controllerType=0 controllerNumber=1 scan=N`), MS_1000511_ms_level(u8), time(f64), MS_1000465_scan_polarity(int8 +1/-1), MS_1000525_spectrum_representation (CURIE MS:1000127 centroid / MS:1000128 profile from actual array continuity), MS_1000559_spectrum_type (CURIE MS:1000579 MS1 / MS:1000580 MSn), lowest/highest observed mz (unit MS:1000040), number_of_data_points(u64), number_of_peaks(u64, NULLABLE), base_peak_mz (unit MS:1000040), base_peak_intensity (unit MS:1000131), total_ion_current (unit MS:1000131), and a `parameters` PARAM list.
+    - COUNT DISCIPLINE (representation-specific, dual model): `number_of_data_points` = the spectrum's `spectra_data` point count for that ordinal; `number_of_peaks` = the spectrum's `spectra_peaks` count when peaks were written for that ordinal, else NULL (null def-level, NOT 0).
+    - `scan` carries: source_index, scan_index, MS_1000016_scan_start_time_unit_UO_0000031 (float32, raw Thermo minutes, NO conversion), MS_1000512_filter_string, MS_1000927_ion_injection_time_unit_UO_0000028 (float32), instrument_configuration_ref (u32 = 0-based analyzer-config index), and a `scan_windows` list (lower MS_1000501 / upper MS_1000500, unit MS:1000040) from scan LowMass/HighMass.
+    - polarity is an int8 SIGN (+1/-1), NOT a CURIE; representation/type ARE CURIE strings.
+  </behavior>
+  <action>
+    Widen the existing Phase-2 per-scan loop to capture, per emitted ordinal, the rich spectrum + scan fields using the Thermo calls in the reuse table (RESEARCH Decision 2; do NOT re-decode). Map each column with `MzPeakParquet.CvColumn(accession,label,unit)` per RESEARCH Decision 3 (note: scan_start_time/ion_injection_time/scan window limits/base-peak-intensity/TIC are float32; observed-mz/base-peak-mz are double). Set `id` to the Thermo nativeID via the base `ConstructSpectrumTitle`/equivalent (`controllerType=0 controllerNumber=1 scan=N`) — keep it deterministic. ms_level from `(int)scanFilter.MSOrder`; polarity from `scanFilter.Polarity` (Positive->(sbyte)1, Negative->(sbyte)-1); representation from the actual array continuity already determined by the Phase-2 centroid/profile routing (centroid->MS:1000127, profile->MS:1000128); spectrum_type from ms_level (1->MS:1000579 else MS:1000580).
+    COUNT DISCIPLINE (RESEARCH Decision 2/3, dual model): `number_of_data_points` = the per-ordinal `spectra_data` point count (always present). `number_of_peaks` = the per-ordinal `spectra_peaks` count ONLY when peaks were written for that ordinal; when no peaks were written for that ordinal emit NULL (def-level 0) — never 0. Both counts come from the Phase-2 per-ordinal accumulators that already track which ordinals received a data array and which received a peaks array. TIC/base-peak/observed-mz from ScanStatistics / the emitted arrays.
+    Build the instrument-configuration index map: collect the DISTINCT `scanFilter.MassAnalyzer` values in first-seen order across the run; each distinct analyzer is one config (0-based). `scan.instrument_configuration_ref` = the index of that scan's analyzer in this list (RESEARCH Decision 5; reference order 0=FTMS,1=ITMS). Persist this map for Task 4's instrument_configuration_list.
+    Rewrite `BuildMetadataFacet` to assemble ONE ParquetSchema with the `spectrum` and `scan` top-level StructFields (both full-length: def-level 1 for all N rows, via the Task-1 computer). Use the Task-1 list-of-struct path for `spectrum.parameters` and `scan.scan_windows` (list element named `item`). Keep the leaf-lookup-by-path `Leaf(schema,...)` pattern. Keep footer KV `spectrum_count` and `spectrum_array_index` consistent with Phase 2.
+    Compact code, explicit usings, BOM-free, no process/phase comments.
+    Add NUnit locks in MzPeakWriterTests: convert small.RAW (existing TestRawFile), open the metadata parquet, and assert — scan facet present with source_index==scan_index==ordinal for all rows; spectrum CV column NAMES exactly match the ground-truth schema (drive the assertion off the schema field names); the scan_windows list element path is `scan/scan_windows/list/item/…` (pyarrow schema-name assertion) and parameters path is `…/parameters/list/item/…`; polarity leaf is int8 with value in {-1,1}; representation/type are CURIE strings of the expected form; number_of_data_points matches the spectra_data per-ordinal row count; on small.RAW assert a profile+centroid scan has number_of_peaks populated AND a scan with no peaks written has number_of_peaks NULL (not 0).
+  </action>
+  <verify>
+    <automated>cd /Users/kohlbach/Claude/mzPeak4TRFR && DOTNET_ROOT_X64=$HOME/.dotnet-x64 ~/.dotnet-x64/dotnet test ThermoRawFileParser/ThermoRawFileParser.sln --filter "MzPeakWriterTests" 2>&1 | tail -15</automated>
+  </verify>
+  <done>scan facet present (source_index/scan_index = ordinal); rich spectrum CV columns present with exact ground-truth names and correct leaf types (polarity int8 sign, repr/type CURIE strings); scan_start_time raw float32 minutes; instrument_configuration_ref is the 0-based analyzer index; number_of_data_points always present, number_of_peaks NULL when no peaks written (asserted on small.RAW); list element path is `…/list/item/…`; all new MzPeakWriterTests pass, Phase-2 tests still pass.</done>
+</task>
+
+<task type="auto" tdd="true">
+  <name>Task 3: `precursor` + `selected_ion` MSn facets (null-padded), parent-linked by source_index</name>
+  <files>ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs</files>
+  <behavior>
+    - precursor and selected_ion are co-resident with spectrum/scan in the SAME spectra_metadata.parquet, each a top-level struct column with N rows but def-level 1 only on rows 0..M-1 (M = #MSn, ms_level>=2 emitted ordinals) and def-level 0 (null) on rows M..N-1.
+    - For the k-th MSn spectrum (emitted ordinal s, parent MS1 emitted ordinal p): precursor[k].source_index=s, precursor[k].precursor_index=p, precursor[k].precursor_id=id(p); selected_ion[k] mirrors source_index/precursor_index. NOT swapped.
+    - PARENT LINKAGE: p is derived from the parent SCAN NUMBER (Master Scan Number trailer, falling back to scan-string parent) mapped through a `scanNumber -> emitted ordinal` map maintained during the loop. If the parent MS1 was FILTERED OUT / not emitted (no entry in the map), set precursor_index (and precursor_id) NULL but STILL emit the precursor/selected_ion entry.
+    - precursor.isolation_window carries MS_1000827_isolation_window_target_mz (NO unit suffix), MS_1000828_isolation_window_lower_offset, MS_1000829_isolation_window_upper_offset, and a parameters list; precursor.activation carries a parameters list with the dissociation-method PARAM (CID=MS:1000133 etc. via OntologyMapping.DissociationTypes) and a collision-energy PARAM (MS:1000045, unit UO:0000266) when valid.
+    - selected_ion carries MS_1000744_selected_ion_mz (unit MS:1000040), MS_1000041_charge_state (int32, null when absent — small.RAW has none), MS_1000042_intensity (unit MS:1000131).
+  </behavior>
+  <action>
+    Maintain a `Dictionary<int,ulong> scanNumberToOrdinal` populated as each ordinal is emitted (key = Thermo scan number, value = emitted ordinal). For each ms_level>=2 ordinal, derive the parent SCAN NUMBER by reusing the existing mzML parent logic: read the `Master Scan Number` trailer via `ScanTrailer`, falling back to the scan-string parent parse that `MzMlSpectrumWriter`/`PrecursorInfo` already use (do NOT re-implement — mine that derivation). Look the parent scan number up in `scanNumberToOrdinal`: if found, precursor_index=that ordinal and precursor_id=id of that ordinal; if NOT found (parent filtered out / not emitted), precursor_index=null and precursor_id=null. Then append one precursor entry and one selected_ion entry using the reuse table: reaction via base `GetReaction(scanEvent, scanNumber)`; isolation target = reaction.PrecursorMass; offsets from reaction.IsolationWidth / IsolationWidthOffset per the reuse-table math; dissociation PARAM from `OntologyMapping.DissociationTypes[reaction.ActivationType]`; collision-energy PARAM from reaction.CollisionEnergy when reaction.CollisionEnergyValid (unit UO:0000266); selected_ion_mz from base `CalculateSelectedIonMz(...)`; intensity from base `CalculatePrecursorPeakIntensity(...)`; charge from `ScanTrailer.AsPositiveInt("Charge State:")` (null path supported). source_index=s for both.
+    Add the `precursor` and `selected_ion` top-level StructFields to the same schema as Task 2. Emit them via the Task-1 computer with def-level 1 for rows 0..M-1 and 0 for rows M..N-1 (right-padded null tables). Build their `isolation_window`/`activation` nested structs and PARAM lists via the Task-1 nested path and `BuildParamField` (list element named `item`). Do NOT emit a row with only one struct populated — write all four as parallel columns of one N-row schema.
+    Compact code, explicit usings, BOM-free, no process/phase comments.
+    Add NUnit locks: assert precursor/selected_ion leaves non-null exactly on rows 0..M-1 and null on M..N-1 (M = count of ms_level>=2 emitted); sorted precursor.source_index equals the sorted set of MSn ordinals; for each MSn row, precursor.precursor_index (when non-null) is an MS1 ordinal and != precursor.source_index (guard the no-swap pitfall); activation parameters contain the expected dissociation CURIE for small.RAW (MS:1000133) and a collision-energy PARAM with unit UO:0000266; selected_ion.source_index == precursor.source_index per row. Add a test of the MS2-ONLY conversion path (convert with the MS-level filter set so MS1 survey scans are NOT emitted): assert every precursor entry is still emitted and precursor_index is NULL (parent not in the emitted-ordinal map), with no crash and no swapped linkage.
+  </action>
+  <verify>
+    <automated>cd /Users/kohlbach/Claude/mzPeak4TRFR && DOTNET_ROOT_X64=$HOME/.dotnet-x64 ~/.dotnet-x64/dotnet test ThermoRawFileParser/ThermoRawFileParser.sln --filter "MzPeakWriterTests" 2>&1 | tail -15</automated>
+  </verify>
+  <done>precursor + selected_ion present, null-padded after row M-1; source_index=MSn ordinal and precursor_index=parent MS1 emitted ordinal (via Master Scan Number / scan-string parent through the scanNumber->ordinal map), or NULL when the parent was filtered out — and the MS2-only path is tested (precursor_index null, precursor kept, no swap); isolation window + activation PARAM list (CID + CE unit UO:0000266) + selected_ion mz/charge/intensity populated; all new linkage/null-discipline tests pass; Phase-2 tests still pass.</done>
+</task>
+
+<task type="auto">
+  <name>Task 4: index metadata{} block + footer cv_list + file-level metadata, with decisive validator gate</name>
+  <files>ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs</files>
+  <action>
+    Extend `BuildIndex` to emit a full `metadata{}` block (keep `version`) and ALSO write the same blocks into the spectra_metadata.parquet footer KV (the validator schema-checks the footer; RESEARCH Decision 6). Emit, per RESEARCH Decision 4 templates:
+    - `cv_list`: GENERATED, not hard-coded. Collect the set of CV prefixes actually emitted: every CvColumn-produced column's accession+unit CV prefix, plus every PARAM `accession`/`unit` CV prefix emitted across spectrum/scan/precursor/selected_ion (Tasks 2-3) and across the metadata blocks below. For each distinct prefix emit a cv_list entry with id/version/uri. Use versions at-or-below the validator profile pins (MS 4.1.254 uri psi-ms.obo; UO 2026-01-16 uri uo.obo) to avoid the version warning. Required item keys: id, version, uri. (For small.RAW the collected set is {MS, UO}; do not assume that — derive it.)
+    - `instrument_configuration_list`: one config per distinct analyzer collected in Task 2, each with id, software_reference="ThermoRawFileParser", parameters (instrument model via OntologyMapping.GetInstrumentModel(GetInstrumentData().Model) after UpdateFTMSDefinition + serial number MS:1000529), and ordered components ionsource(order1, IonizationTypes) / analyzer(order2, MassAnalyzerTypes) / detector(order3, GetDetectors). Use TRFP's own OntologyMapping outputs; do NOT hand-craft pwiz-identical terms.
+    - `software_list`: one ThermoRawFileParser entry (id "ThermoRawFileParser", version from MainClass.Version, param MS:1003145).
+    - `data_processing_method_list`: a conversion method (MS:1000544) + the intensity-narrowing/sort provenance entry (f64->f32).
+    - `file_description`: contents (MS:1000579 MS1 spectrum, MS:1000580 MSn spectrum) + source_files[0] (id RAW1, name + location of the source RAW, params: nativeID format MS:1000768, RAW format MS:1000563, optional SHA-1 MS:1000569).
+    - `run`/`ms_run`: id, default_instrument_id 0, default_data_processing_id, default_source_file_id RAW1, optional start_time (RFC3339 from CreationDate).
+    - `sample_list`: [] and `scan_settings_list`: [] (valid empty arrays; match reference shape).
+    Keep `files[]` listing every present facet (spectra_data, spectra_metadata, spectra_peaks-if-present) with entity_type/data_kind. BOM-free UTF8, explicit usings, no process/phase comments.
+    Add NUnit locks: parse the emitted mzpeak_index.json — assert metadata.cv_list covers EXACTLY the collected CV-prefix set (compute the expected set from the emitted columns/params; assert the index cv_list AND the spectra_metadata footer cv_list both cover that set — not a hard-coded {MS,UO}); each cv_list item has id/version/uri; instrument_configuration_list has the expected component count (ionsource/analyzer/detector each) and config count equal to distinct analyzers; software_list/data_processing_method_list/file_description present with required keys. Assert the footer KV of spectra_metadata.parquet also carries the instrument/cv blocks.
+    Then run the DECISIVE end-to-end validator gate: convert small.RAW to a temp .mzpeak and run `mzpeak-validate`; parse the findings BY RULE/ERROR ID (not substring). Assert: (1) the `columns_spectra_metadata` (scan-facet) error is ABSENT; (2) any `cv_list_declared` error is ABSENT; (3) the set of ERROR ids in the output is a SUBSET of an explicit allowlist of the pre-existing reference-archive failures (`index_schema_valid:metadata` is cleared by our metadata.version, so the allowlist captures only failures we do not introduce) — i.e. NO NEW error id appears beyond that allowlist. Skip-with-warning if the validator binary is unavailable.
+  </action>
+  <verify>
+    <automated>cd /Users/kohlbach/Claude/mzPeak4TRFR && DOTNET_ROOT_X64=$HOME/.dotnet-x64 ~/.dotnet-x64/dotnet test ThermoRawFileParser/ThermoRawFileParser.sln --filter "MzPeakWriterTests" 2>&1 | tail -20</automated>
+  </verify>
+  <done>mzpeak_index.json metadata{} block + spectra_metadata footer carry a GENERATED cv_list covering exactly the emitted CV-prefix set, instrument_configuration_list, software_list, data_processing_method_list, file_description, sample_list/scan_settings_list; index/footer lock tests pass; the validator gate, parsing findings BY ERROR ID, confirms the `columns_spectra_metadata` AND `cv_list_declared` errors are absent and that no new ERROR id appears beyond the explicit pre-existing-failure allowlist (or the gate test Ignores cleanly if the validator is absent).</done>
+</task>
+
+</tasks>
+
+<threat_model>
+## Trust Boundaries
+
+| Boundary | Description |
+|----------|-------------|
+| Thermo RAW -> writer | RAW content is read-only input decoded by the vendor SDK; malformed scans already guarded by the Phase-2 per-scan try/catch + ParseInput.NewError(). |
+| writer -> .mzpeak archive | Output is a deterministic local file consumed by the reference reader / validator; no network, no untrusted consumer in this phase. |
+
+## STRIDE Threat Register
+
+| Threat ID | Category | Component | Disposition | Mitigation Plan |
+|-----------|----------|-----------|-------------|-----------------|
+| T-03-01 | Tampering | per-ordinal arrays vs four-table null discipline | mitigate | NUnit locks assert def-level discipline (precursor/selected_ion null on rows >= #MSn, count-null discipline) and source_index/precursor_index linkage via the scanNumber->ordinal map, preventing silently-misaligned tables. |
+| T-03-02 | Information disclosure | source RAW path in file_description.source_files[].location | accept | The location is the user-supplied input path written into the user's own output; no new exposure beyond existing TRFP behavior. |
+| T-03-03 | Denial of service | full in-memory accumulation of metadata for large RAW | accept | Inherited Phase-2 limitation (single row group, in-memory); large-RAW streaming is OPT/v2 scope, not regressed here. |
+| T-03-SC | Tampering | npm/pip/cargo installs | accept | Phase installs NO external packages (RESEARCH: Package Legitimacy Audit N/A); no new dependency surface. |
+</threat_model>
+
+<verification>
+Per task: `dotnet test --filter` on the named fixture (x64 Rosetta runtime).
+Per plan close (full regression): build the solution explicitly, then
+`DOTNET_ROOT_X64=$HOME/.dotnet-x64 ~/.dotnet-x64/dotnet test ThermoRawFileParser/ThermoRawFileParser.sln` — all tests green (Phase-2 baseline 34 + new Phase-3 cases), no existing test broken.
+Decisive gate: convert small.RAW via `arch -x86_64 ~/.dotnet-x64/dotnet <TRFP.dll> -i .../small.RAW -f mzpeak ...` then `mzpeak-validate <out>.mzpeak` — parse findings by error id; confirm `columns_spectra_metadata` (scan) and `cv_list_declared` are ABSENT and no new error id appears beyond the pre-existing-failure allowlist. Spot-diff our spectra_metadata column names/struct shapes/CURIE forms + the `…/list/item/…` element path against `refs/mzPeak/small.unpacked.mzpeak/spectra_metadata.parquet` with pyarrow.
+</verification>
+
+<success_criteria>
+- spectra_metadata.parquet holds four co-resident independent tables (spectrum, scan full; precursor, selected_ion null-padded after #MSn-1), all N rows, linked by source_index — META-01..04.
+- A general nested def/rep-level computer produces correct max-def-levels for nested struct / nested-struct-in-struct / null-list / empty-list / list-with-N-items / leaf-null, proven on the actual Phase-3 shapes via pyarrow — META-05, retires the rep-level risk.
+- precursor.precursor_index derived via Master Scan Number / scan-string parent through a scanNumber->ordinal map; null when the parent was filtered out; MS2-only path tested — META-03.
+- All CV terms are CURIE-named columns via CvColumn (list elements named `item`); polarity int8 sign, representation/type CURIE strings, time raw minutes float32; number_of_data_points always present, number_of_peaks NULL when no peaks written — META-02/05.
+- mzpeak_index.json metadata{} block + footer KV carry a GENERATED cv_list (collected CV prefixes), instrument_configuration_list, software_list, data_processing_method_list, file_description, sample_list/scan_settings_list — IDX-01..04.
+- `mzpeak-validate` (parsed by error id) shows `columns_spectra_metadata` and `cv_list_declared` absent and no new error id beyond the pre-existing-failure allowlist.
+</success_criteria>
+
+<output>
+Create `.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-SUMMARY.md` when done.
+</output>
+</content>
+</invoke>
+
+codex
+The revised plan has explicit new material for all seven synthesis items. I’m pulling line-numbered excerpts now so the resolution calls can cite exact locations rather than paraphrase the whole document.
+exec
+/bin/zsh -lc "nl -ba .planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md | sed -n '1,260p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+     1	---
+     2	phase: 03-spectra-metadata-file-level-metadata-index
+     3	plan: 01
+     4	type: execute
+     5	wave: 1
+     6	depends_on: []
+     7	files_modified:
+     8	  - ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs
+     9	  - ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs
+    10	  - ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs
+    11	  - ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs
+    12	autonomous: true
+    13	requirements: [META-01, META-02, META-03, META-04, META-05, IDX-01, IDX-02, IDX-03, IDX-04]
+    14	
+    15	must_haves:
+    16	  truths:
+    17	    - "spectra_metadata.parquet carries four top-level struct columns (spectrum, scan, precursor, selected_ion) co-resident in one file, ALL with N rows (N = spectrum count)"
+    18	    - "spectrum and scan are present (def-level 1) on all N rows; precursor and selected_ion are null (def-level 0) on rows >= #MSn"
+    19	    - "a general per-leaf def/rep-level computer produces correct max-def-levels for nested struct / nested-struct-in-struct / null-list / empty-list / list-with-N-items / leaf-null (NOT a flat 1)"
+    20	    - "scan.source_index == scan.scan_index == the spectrum ordinal it describes"
+    21	    - "precursor.source_index == the MSn fragment ordinal; precursor.precursor_index == the emitted ordinal of the parent MS1 (via Master Scan Number / scan-string parent), or null if that parent was filtered out"
+    22	    - "number_of_data_points = spectra_data point count; number_of_peaks = spectra_peaks count when peaks were written for that ordinal, else NULL"
+    23	    - "mzpeak-validate reports NEITHER the columns_spectra_metadata (scan) error NOR any cv_list_declared error, and introduces NO new ERROR id beyond the pre-existing reference-archive allowlist"
+    24	    - "metadata.cv_list declares every CV prefix actually emitted (collected, not hard-coded) in mzpeak_index.json and in the spectra_metadata.parquet footer"
+    25	  artifacts:
+    26	    - path: "ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs"
+    27	      provides: "General nested def/rep-level computer + list-of-struct write support"
+    28	      contains: "NestedLevels"
+    29	    - path: "ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs"
+    30	      provides: "Four-table spectra_metadata facet + index metadata{} block + footer KV + collected cv_list"
+    31	      contains: "selected_ion"
+    32	    - path: "ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs"
+    33	      provides: "nested level-computer proof on actual Phase-3 shapes via pyarrow"
+    34	      contains: "NestedLevels"
+    35	    - path: "ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs"
+    36	      provides: "four-table null discipline, parent linkage, count discipline, CV value, instrument_config/cv_list locks, validator gate"
+    37	      contains: "source_index"
+    38	  key_links:
+    39	    - from: "MzPeakSpectrumWriter.BuildMetadataFacet"
+    40	      to: "MzPeakParquet nested level computer"
+    41	      via: "PARAM lists + nested isolation_window/activation + scan_windows column emission"
+    42	      pattern: "NestedLevels|BuildParamField"
+    43	    - from: "MzPeakSpectrumWriter precursor parent linkage"
+    44	      to: "Master Scan Number trailer / scan-string parent (MzMlSpectrumWriter/PrecursorInfo/ScanTrailer)"
+    45	      via: "scanNumber -> emitted-ordinal map"
+    46	      pattern: "Master Scan|precursor_index"
+    47	---
+    48	
+    49	<row_model_note>
+    50	ROW MODEL (authoritative — RESEARCH.md Decision 1): `spectra_metadata.parquet` holds FOUR
+    51	co-resident top-level struct columns (`spectrum`, `scan`, `precursor`, `selected_ion`), each an
+    52	independent table laid out at row position = that table's own ordinal and right-padded with
+    53	all-null rows up to the shared file row count. ALL FOUR struct columns have N rows, where
+    54	N = spectrum count (= 48 for small.RAW). `spectrum`/`scan` are present (def-level 1) on all N
+    55	rows; `precursor`/`selected_ion` are present on rows 0..M-1 (M = count of emitted MSn ordinals)
+    56	and NULL (def-level 0) on rows M..N-1. Linkage is by the `source_index` field, NEVER by row
+    57	position. CONTEXT.md's earlier "each row populates exactly one struct, the other three are null"
+    58	(row-disjoint) wording is SUPERSEDED by this note.
+    59	</row_model_note>
+    60	
+    61	<objective>
+    62	Turn the thin `spectra_metadata.parquet` (currently a 3-field `spectrum` struct: index/id/time) into the
+    63	full packed-parallel table set, and populate the `mzpeak_index.json` `metadata{}` block plus the Parquet
+    64	footer KV. This clears the last expected `mzpeak-validate` error (`required facet 'scan' absent`) without
+    65	introducing a new one (cv_list must appear the moment CV-named columns do).
+    66	
+    67	Purpose: META-01..05 + IDX-01..04 — emit rich `spectrum`, the required `scan` facet, and the MSn-only
+    68	`precursor`/`selected_ion` facets as four co-resident independent tables linked by `source_index`, with
+    69	all CV terms as CURIE-named columns; emit the file-level metadata (instrument configurations, software,
+    70	data processing, file description, cv_list) into both the index and the footer.
+    71	
+    72	Output: extended `MzPeakParquet` (general nested level computer + list-of-struct write path), rewritten
+    73	`BuildMetadataFacet` + index/footer assembly in `MzPeakSpectrumWriter`, and NUnit locks. `mzpeak-validate
+    74	small.mzpeak` shows the `scan`-facet error GONE and cv_list present.
+    75	</objective>
+    76	
+    77	<execution_context>
+    78	@$HOME/.claude/get-shit-done/workflows/execute-plan.md
+    79	@$HOME/.claude/get-shit-done/templates/summary.md
+    80	</execution_context>
+    81	
+    82	<context>
+    83	@.planning/PROJECT.md
+    84	@.planning/ROADMAP.md
+    85	@.planning/STATE.md
+    86	@.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md
+    87	@.planning/phases/03-spectra-metadata-file-level-metadata-index/CONTEXT.md
+    88	@.planning/phases/02-spectra-signal-data/02-01-SUMMARY.md
+    89	@refs/_findings/mzpeak_groundtruth_schema.md
+    90	
+    91	# Files this plan extends (read before editing — do not fork)
+    92	@ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs
+    93	@ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs
+    94	
+    95	<interfaces>
+    96	<!-- Contracts the executor uses directly. Do NOT re-derive Thermo decoding. -->
+    97	
+    98	Existing MzPeakParquet (extend, don't fork):
+    99	- `struct MzPeakParam { long? Integer; double? Float; string String; bool? Boolean; string Accession; string Name; string Unit; }`
+   100	- `StructField BuildParamField(string name)` — builds `name: struct<value:struct<integer,float,string,boolean>, accession, name, unit>` (PARAM shape, all leaves nullable).
+   101	- `string CvColumn(string accession, string label, string unitAccession = null)` — `"MS:1000016","scan_start_time","UO:0000031"` -> `MS_1000016_scan_start_time_unit_UO_0000031`. Label MUST already be snake_case. Omit unit -> no `_unit_` suffix (use this for `isolation_window_target_mz` which has NO unit suffix in the reference).
+   102	- `DataColumn Column(DataField field, Array defined, int[] defLevels, int[] repLevels)`
+   103	- `Task WriteAsync(Stream, ParquetSchema, IReadOnlyDictionary<string,string> customMetadata, IDictionary<DataField,(Array defined,int[] defLevels,int[] repLevels)> columns)` — writes Zstd, one row group, iterates `schema.GetDataFields()`, looks columns up by DataField identity (NOT path string).
+   104	
+   105	Existing level model proven in MzPeakParquetTests (the contract the general computer must reproduce):
+   106	- Nullable top-level struct leaf: def-levels {1=present,0=null}, no rep-levels (e.g. `spectrum/index` -> [1,0,1]).
+   107	- Nested struct-in-struct leaf (e.g. `spectrum/mz_range/lo`): max-def = 2, def-levels [2,0,2].
+   108	- List-of-struct leaf path `parameters/list/item/<leaf>`: rep-levels {0=new row/first elem, 1=subsequent elem}; def-levels distinguish null-list / empty-list / present-elem / leaf-null. Measured for a row with 2 items (second `val` null), then an empty list: `name` def [5,5,0,2] rep [0,1,0,0]; nullable `val` def [5,4,0,2] rep [0,1,0,0]. (max-def 5 for a non-null leaf, 4 for a leaf that is null but inside a present elem, 2 for an empty list, 0 for a null list.)
+   109	
+   110	Existing MzPeakSpectrumWriter helpers (Phase 1/2):
+   111	- `static (double[] mz, float[] intensity) OrderedPairs(double[] masses, double[] intensities)` (public).
+   112	- `WriteFacet(ParquetSchema, meta, cols)`, `AddStored(zip, name, bytes)`, `Leaf(schema, path)` (path is slash-separated, e.g. `"spectrum/index"`).
+   113	- `BuildIndex(bool hasPeaks)` currently emits `{version, files[], metadata:{version}}` via Newtonsoft JObject/JArray, BOM-free UTF8.
+   114	- Phase-2 loop already iterates `[firstScanNumber,lastScanNumber]`, gates on `(int)scanFilter.MSOrder` vs `ParseInput.MaxLevel`/`MsLevel`, assigns dense 0-based `ulong ordinal`, and builds `metaIndex/metaId/metaTime`. Phase 3 widens this loop's per-ordinal capture.
+   115	
+   116	Base SpectrumWriter (available to MzPeakSpectrumWriter):
+   117	- `static double CalculateSelectedIonMz(IReaction reaction, double? monoisotopicMz, double? isolationWidth)`
+   118	- `static IReaction GetReaction(IScanEvent scanEvent, int scanNumber)`
+   119	- `protected static double CalculatePrecursorPeakIntensity(IRawDataPlus rawFile, int precursorScanNumber, double precursorMass, double? isolationWidth, bool centroid)` — confirm exact signature in SpectrumWriter.cs before calling.
+   120	
+   121	Precursor parent linkage (REUSE the existing mzML logic — do NOT re-derive):
+   122	- `MzMlSpectrumWriter` derives an MSn spectrum's parent scan via the `Master Scan Number` trailer field, falling back to scan-string parent parsing; it stores parent links in `_precursorScanNumbers[""]` / `_precursorTree` and surfaces them through `PrecursorInfo`. Mine that derivation (the trailer key + the scan-string fallback) rather than a naive "last MS1 seen".
+   123	- `ScanTrailer`: `new ScanTrailer(raw.GetTrailerExtraInformation(scanNumber))`; `.AsDouble("Ion Injection Time (ms):")`, `.AsPositiveInt("Charge State:")`, and `.AsPositiveInt("Master Scan Number:")` (confirm the exact trailer key string against MzMlSpectrumWriter/ScanTrailer in repo).
+   124	
+   125	OntologyMapping (public static — reuse, do not hand-roll CV dicts):
+   126	- `Dictionary<MassAnalyzerType,CVParamType> MassAnalyzerTypes` (FTMS->MS:1000079, ITMS->MS:1000264, ...)
+   127	- `Dictionary<IonizationModeType,CVParamType> IonizationTypes` (ESI->MS:1000073)
+   128	- `Dictionary<ActivationType,CVParamType> DissociationTypes` (CID->MS:1000133, HCD->MS:1000422, ...)
+   129	- `CVParamType GetInstrumentModel(string instrumentName)`; `void UpdateFTMSDefinition(string instrumentName)`; `List<CVParamType> GetDetectors(string instrumentAccession)`
+   130	- `CVParamType` fields: `accession`, `name`, `value`, `cvRef`, `unitAccession`, `unitName`.
+   131	
+   132	Thermo per-scan calls (already used in MzMlSpectrumWriter; reuse the VALUE, not the mzML type):
+   133	- `raw.GetFilterForScanNumber(n)` -> IScanFilter: `.MSOrder`, `.Polarity` (PolarityType.Positive/Negative), `.MassAnalyzer` (MassAnalyzerType), `.IonizationMode`.
+   134	- `raw.GetScanEventForScanNumber(n)` -> IScanEvent: `.ToString()` = filter_string; `.GetReaction(i)` -> IReaction (`.PrecursorMass`, `.CollisionEnergy`, `.CollisionEnergyValid`, `.ActivationType`, `.IsolationWidth`, `.IsolationWidthOffset`).
+   135	- `raw.GetScanStatsForScanNumber(n)` -> ScanStatistics: `.TIC`, `.BasePeakMass`, `.BasePeakIntensity`, `.LowMass`, `.HighMass` (confirm member names against the SDK in repo).
+   136	- `raw.RetentionTimeFromScanNumber(n)` -> minutes (emit raw, NO conversion).
+   137	- `raw.GetInstrumentData()` -> `.Model`, `.SerialNumber`.
+   138	- `Scan.FromFile(raw,n).HasCentroidStream`, `scanEvent.ScanData == ScanDataType.Profile` (Phase-2 representation routing already does this).
+   139	</interfaces>
+   140	</context>
+   141	
+   142	<tasks>
+   143	
+   144	<task type="auto" tdd="true">
+   145	  <name>Task 1: GENERAL nested def/rep-level computer + list-of-struct write support in MzPeakParquet</name>
+   146	  <files>ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs</files>
+   147	  <behavior>
+   148	    - A general computer (`NestedLevels`) takes any leaf DataField in a schema of nested StructFields and ListFields plus a per-row description of presence/values, and returns the `(defined, defLevels, repLevels)` triple. It computes max-def-levels FROM THE SCHEMA SHAPE — NOT a flat 1. For the existing fixtures it reproduces the measured levels: top-struct leaf max-def 1 ([1,0,1]); nested struct-in-struct leaf max-def 2 ([2,0,2]); list-of-struct leaf path `…/list/item/…` def {5 present-elem, 4 leaf-null-in-present-elem, 2 empty-list, 0 null-list} with rep {0 first-elem/new-row, 1 subsequent-elem}.
+   149	    - On the ACTUAL Phase-3 shapes the computer is correct: (a) a `precursor.isolation_window` nested-struct present vs null; (b) a `precursor.activation.parameters` list with null-list, empty-list, and list-with-N-items rows; (c) a `scan.scan_windows` list with one window per row; (d) a top-level struct (precursor) that is NULL on the right-padded tail rows. Each case round-trips: writing N rows then reading back via pyarrow yields the exact per-row list lengths, the exact present/null pattern per leaf, and representative leaf values.
+   150	    - Rep-levels and def-levels produced by the computer are accepted by Parquet.Net 5.0.1 WriteColumnAsync AND by a pyarrow reader (no schema/level mismatch) for every shape above.
+   151	  </behavior>
+   152	  <action>
+   153	    Extend MzPeakParquet with a GENERAL per-leaf level computer (e.g. `NestedLevels`) for arbitrary nested shapes built from StructField/ListField/DataField. Given the schema path to a leaf and a per-row presence/value description, it must correctly express ALL of: top-level struct present vs null; nested struct-in-struct (e.g. `isolation_window`) present vs null; a list that is null vs empty vs has N items; and a null leaf inside a present element. Derive each leaf's max-def-level by walking its ancestor chain (each nullable struct level and each list level contributes), and emit rep-level 0 for the first element of a new list (new row) and 1 for subsequent elements within the same list. Do NOT hard-code def-level 1: the existing tests require mz_range leaves at max-def 2 and list leaves at 5/4/2. Keep `WriteAsync` keying columns by DataField identity, unchanged. Build list fields as `new ListField(name, BuildParamField("item"))` for PARAM lists and a `ListField` over a `StructField` for scan_windows — the list element MUST be named `item` (the conventional Arrow/Parquet.Net list-item name; the leaf path is `…/list/item/…`). Reuse `BuildParamField` for the PARAM element; do NOT introduce a second PARAM struct definition. Compact code, explicit usings, no comments referencing process/phases.
+   154	    In MzPeakParquetTests, add a test that exercises the computer on the actual Phase-3 shapes in ONE schema: a `precursor` top-level struct containing `isolation_window` (nested struct with target/offset leaves) and `activation.parameters` (PARAM list), plus a `scan` struct with `scan_windows` (list-of-struct). Write a known ragged set: a row with isolation_window present + activation.parameters of 2 items, a row with isolation_window present + EMPTY activation list, a row with a NULL activation list, a scan_windows row with one window, and null-padded TAIL rows where the whole `precursor` struct is null. Then shell out to `python3 -c` using pyarrow to read it back and print per-row list lengths, the per-leaf present/null pattern, and a representative leaf value; assert the printed values match the written shape exactly (including empty-list != null-list and the null tail). Mirror any existing pyarrow-invocation pattern in the test file; otherwise invoke `python3` via Process and parse stdout. Skip-with-warning (`Assert.Ignore`) if `python3`/pyarrow is unavailable so the suite stays green without pyarrow.
+   155	  </action>
+   156	  <verify>
+   157	    <automated>cd /Users/kohlbach/Claude/mzPeak4TRFR && DOTNET_ROOT_X64=$HOME/.dotnet-x64 ~/.dotnet-x64/dotnet test ThermoRawFileParser/ThermoRawFileParser.sln --filter "MzPeakParquetTests" 2>&1 | tail -15</automated>
+   158	  </verify>
+   159	  <done>The general level computer reproduces the existing measured levels (top-struct max-def 1, nested struct max-def 2, list leaves 5/4/2) AND round-trips the actual Phase-3 shapes (isolation_window present/null, activation.parameters null-list/empty-list/N-items, scan_windows, null-padded precursor tail) under pyarrow — exact per-row list lengths, present/null patterns, and leaf values. Empty-list and null-list are distinguished. No other MzPeakParquetTests regress. The rep/def-level unknown (RESEARCH Open Q1 / Pitfall 3) is retired before any metadata facet is built on it — this computer underpins Tasks 2-3.</done>
+   160	</task>
+   161	
+   162	<task type="auto" tdd="true">
+   163	  <name>Task 2: rich `spectrum` + required `scan` facet as co-resident null-padded tables</name>
+   164	  <files>ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs</files>
+   165	  <behavior>
+   166	    - spectra_metadata.parquet has a `scan` top-level struct with `source_index:uint64` non-null for all N emitted ordinals; `scan.source_index == scan.scan_index == row ordinal`.
+   167	    - `spectrum` carries: index(u64), id(string nativeID `controllerType=0 controllerNumber=1 scan=N`), MS_1000511_ms_level(u8), time(f64), MS_1000465_scan_polarity(int8 +1/-1), MS_1000525_spectrum_representation (CURIE MS:1000127 centroid / MS:1000128 profile from actual array continuity), MS_1000559_spectrum_type (CURIE MS:1000579 MS1 / MS:1000580 MSn), lowest/highest observed mz (unit MS:1000040), number_of_data_points(u64), number_of_peaks(u64, NULLABLE), base_peak_mz (unit MS:1000040), base_peak_intensity (unit MS:1000131), total_ion_current (unit MS:1000131), and a `parameters` PARAM list.
+   168	    - COUNT DISCIPLINE (representation-specific, dual model): `number_of_data_points` = the spectrum's `spectra_data` point count for that ordinal; `number_of_peaks` = the spectrum's `spectra_peaks` count when peaks were written for that ordinal, else NULL (null def-level, NOT 0).
+   169	    - `scan` carries: source_index, scan_index, MS_1000016_scan_start_time_unit_UO_0000031 (float32, raw Thermo minutes, NO conversion), MS_1000512_filter_string, MS_1000927_ion_injection_time_unit_UO_0000028 (float32), instrument_configuration_ref (u32 = 0-based analyzer-config index), and a `scan_windows` list (lower MS_1000501 / upper MS_1000500, unit MS:1000040) from scan LowMass/HighMass.
+   170	    - polarity is an int8 SIGN (+1/-1), NOT a CURIE; representation/type ARE CURIE strings.
+   171	  </behavior>
+   172	  <action>
+   173	    Widen the existing Phase-2 per-scan loop to capture, per emitted ordinal, the rich spectrum + scan fields using the Thermo calls in the reuse table (RESEARCH Decision 2; do NOT re-decode). Map each column with `MzPeakParquet.CvColumn(accession,label,unit)` per RESEARCH Decision 3 (note: scan_start_time/ion_injection_time/scan window limits/base-peak-intensity/TIC are float32; observed-mz/base-peak-mz are double). Set `id` to the Thermo nativeID via the base `ConstructSpectrumTitle`/equivalent (`controllerType=0 controllerNumber=1 scan=N`) — keep it deterministic. ms_level from `(int)scanFilter.MSOrder`; polarity from `scanFilter.Polarity` (Positive->(sbyte)1, Negative->(sbyte)-1); representation from the actual array continuity already determined by the Phase-2 centroid/profile routing (centroid->MS:1000127, profile->MS:1000128); spectrum_type from ms_level (1->MS:1000579 else MS:1000580).
+   174	    COUNT DISCIPLINE (RESEARCH Decision 2/3, dual model): `number_of_data_points` = the per-ordinal `spectra_data` point count (always present). `number_of_peaks` = the per-ordinal `spectra_peaks` count ONLY when peaks were written for that ordinal; when no peaks were written for that ordinal emit NULL (def-level 0) — never 0. Both counts come from the Phase-2 per-ordinal accumulators that already track which ordinals received a data array and which received a peaks array. TIC/base-peak/observed-mz from ScanStatistics / the emitted arrays.
+   175	    Build the instrument-configuration index map: collect the DISTINCT `scanFilter.MassAnalyzer` values in first-seen order across the run; each distinct analyzer is one config (0-based). `scan.instrument_configuration_ref` = the index of that scan's analyzer in this list (RESEARCH Decision 5; reference order 0=FTMS,1=ITMS). Persist this map for Task 4's instrument_configuration_list.
+   176	    Rewrite `BuildMetadataFacet` to assemble ONE ParquetSchema with the `spectrum` and `scan` top-level StructFields (both full-length: def-level 1 for all N rows, via the Task-1 computer). Use the Task-1 list-of-struct path for `spectrum.parameters` and `scan.scan_windows` (list element named `item`). Keep the leaf-lookup-by-path `Leaf(schema,...)` pattern. Keep footer KV `spectrum_count` and `spectrum_array_index` consistent with Phase 2.
+   177	    Compact code, explicit usings, BOM-free, no process/phase comments.
+   178	    Add NUnit locks in MzPeakWriterTests: convert small.RAW (existing TestRawFile), open the metadata parquet, and assert — scan facet present with source_index==scan_index==ordinal for all rows; spectrum CV column NAMES exactly match the ground-truth schema (drive the assertion off the schema field names); the scan_windows list element path is `scan/scan_windows/list/item/…` (pyarrow schema-name assertion) and parameters path is `…/parameters/list/item/…`; polarity leaf is int8 with value in {-1,1}; representation/type are CURIE strings of the expected form; number_of_data_points matches the spectra_data per-ordinal row count; on small.RAW assert a profile+centroid scan has number_of_peaks populated AND a scan with no peaks written has number_of_peaks NULL (not 0).
+   179	  </action>
+   180	  <verify>
+   181	    <automated>cd /Users/kohlbach/Claude/mzPeak4TRFR && DOTNET_ROOT_X64=$HOME/.dotnet-x64 ~/.dotnet-x64/dotnet test ThermoRawFileParser/ThermoRawFileParser.sln --filter "MzPeakWriterTests" 2>&1 | tail -15</automated>
+   182	  </verify>
+   183	  <done>scan facet present (source_index/scan_index = ordinal); rich spectrum CV columns present with exact ground-truth names and correct leaf types (polarity int8 sign, repr/type CURIE strings); scan_start_time raw float32 minutes; instrument_configuration_ref is the 0-based analyzer index; number_of_data_points always present, number_of_peaks NULL when no peaks written (asserted on small.RAW); list element path is `…/list/item/…`; all new MzPeakWriterTests pass, Phase-2 tests still pass.</done>
+   184	</task>
+   185	
+   186	<task type="auto" tdd="true">
+   187	  <name>Task 3: `precursor` + `selected_ion` MSn facets (null-padded), parent-linked by source_index</name>
+   188	  <files>ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs</files>
+   189	  <behavior>
+   190	    - precursor and selected_ion are co-resident with spectrum/scan in the SAME spectra_metadata.parquet, each a top-level struct column with N rows but def-level 1 only on rows 0..M-1 (M = #MSn, ms_level>=2 emitted ordinals) and def-level 0 (null) on rows M..N-1.
+   191	    - For the k-th MSn spectrum (emitted ordinal s, parent MS1 emitted ordinal p): precursor[k].source_index=s, precursor[k].precursor_index=p, precursor[k].precursor_id=id(p); selected_ion[k] mirrors source_index/precursor_index. NOT swapped.
+   192	    - PARENT LINKAGE: p is derived from the parent SCAN NUMBER (Master Scan Number trailer, falling back to scan-string parent) mapped through a `scanNumber -> emitted ordinal` map maintained during the loop. If the parent MS1 was FILTERED OUT / not emitted (no entry in the map), set precursor_index (and precursor_id) NULL but STILL emit the precursor/selected_ion entry.
+   193	    - precursor.isolation_window carries MS_1000827_isolation_window_target_mz (NO unit suffix), MS_1000828_isolation_window_lower_offset, MS_1000829_isolation_window_upper_offset, and a parameters list; precursor.activation carries a parameters list with the dissociation-method PARAM (CID=MS:1000133 etc. via OntologyMapping.DissociationTypes) and a collision-energy PARAM (MS:1000045, unit UO:0000266) when valid.
+   194	    - selected_ion carries MS_1000744_selected_ion_mz (unit MS:1000040), MS_1000041_charge_state (int32, null when absent — small.RAW has none), MS_1000042_intensity (unit MS:1000131).
+   195	  </behavior>
+   196	  <action>
+   197	    Maintain a `Dictionary<int,ulong> scanNumberToOrdinal` populated as each ordinal is emitted (key = Thermo scan number, value = emitted ordinal). For each ms_level>=2 ordinal, derive the parent SCAN NUMBER by reusing the existing mzML parent logic: read the `Master Scan Number` trailer via `ScanTrailer`, falling back to the scan-string parent parse that `MzMlSpectrumWriter`/`PrecursorInfo` already use (do NOT re-implement — mine that derivation). Look the parent scan number up in `scanNumberToOrdinal`: if found, precursor_index=that ordinal and precursor_id=id of that ordinal; if NOT found (parent filtered out / not emitted), precursor_index=null and precursor_id=null. Then append one precursor entry and one selected_ion entry using the reuse table: reaction via base `GetReaction(scanEvent, scanNumber)`; isolation target = reaction.PrecursorMass; offsets from reaction.IsolationWidth / IsolationWidthOffset per the reuse-table math; dissociation PARAM from `OntologyMapping.DissociationTypes[reaction.ActivationType]`; collision-energy PARAM from reaction.CollisionEnergy when reaction.CollisionEnergyValid (unit UO:0000266); selected_ion_mz from base `CalculateSelectedIonMz(...)`; intensity from base `CalculatePrecursorPeakIntensity(...)`; charge from `ScanTrailer.AsPositiveInt("Charge State:")` (null path supported). source_index=s for both.
+   198	    Add the `precursor` and `selected_ion` top-level StructFields to the same schema as Task 2. Emit them via the Task-1 computer with def-level 1 for rows 0..M-1 and 0 for rows M..N-1 (right-padded null tables). Build their `isolation_window`/`activation` nested structs and PARAM lists via the Task-1 nested path and `BuildParamField` (list element named `item`). Do NOT emit a row with only one struct populated — write all four as parallel columns of one N-row schema.
+   199	    Compact code, explicit usings, BOM-free, no process/phase comments.
+   200	    Add NUnit locks: assert precursor/selected_ion leaves non-null exactly on rows 0..M-1 and null on M..N-1 (M = count of ms_level>=2 emitted); sorted precursor.source_index equals the sorted set of MSn ordinals; for each MSn row, precursor.precursor_index (when non-null) is an MS1 ordinal and != precursor.source_index (guard the no-swap pitfall); activation parameters contain the expected dissociation CURIE for small.RAW (MS:1000133) and a collision-energy PARAM with unit UO:0000266; selected_ion.source_index == precursor.source_index per row. Add a test of the MS2-ONLY conversion path (convert with the MS-level filter set so MS1 survey scans are NOT emitted): assert every precursor entry is still emitted and precursor_index is NULL (parent not in the emitted-ordinal map), with no crash and no swapped linkage.
+   201	  </action>
+   202	  <verify>
+   203	    <automated>cd /Users/kohlbach/Claude/mzPeak4TRFR && DOTNET_ROOT_X64=$HOME/.dotnet-x64 ~/.dotnet-x64/dotnet test ThermoRawFileParser/ThermoRawFileParser.sln --filter "MzPeakWriterTests" 2>&1 | tail -15</automated>
+   204	  </verify>
+   205	  <done>precursor + selected_ion present, null-padded after row M-1; source_index=MSn ordinal and precursor_index=parent MS1 emitted ordinal (via Master Scan Number / scan-string parent through the scanNumber->ordinal map), or NULL when the parent was filtered out — and the MS2-only path is tested (precursor_index null, precursor kept, no swap); isolation window + activation PARAM list (CID + CE unit UO:0000266) + selected_ion mz/charge/intensity populated; all new linkage/null-discipline tests pass; Phase-2 tests still pass.</done>
+   206	</task>
+   207	
+   208	<task type="auto">
+   209	  <name>Task 4: index metadata{} block + footer cv_list + file-level metadata, with decisive validator gate</name>
+   210	  <files>ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs</files>
+   211	  <action>
+   212	    Extend `BuildIndex` to emit a full `metadata{}` block (keep `version`) and ALSO write the same blocks into the spectra_metadata.parquet footer KV (the validator schema-checks the footer; RESEARCH Decision 6). Emit, per RESEARCH Decision 4 templates:
+   213	    - `cv_list`: GENERATED, not hard-coded. Collect the set of CV prefixes actually emitted: every CvColumn-produced column's accession+unit CV prefix, plus every PARAM `accession`/`unit` CV prefix emitted across spectrum/scan/precursor/selected_ion (Tasks 2-3) and across the metadata blocks below. For each distinct prefix emit a cv_list entry with id/version/uri. Use versions at-or-below the validator profile pins (MS 4.1.254 uri psi-ms.obo; UO 2026-01-16 uri uo.obo) to avoid the version warning. Required item keys: id, version, uri. (For small.RAW the collected set is {MS, UO}; do not assume that — derive it.)
+   214	    - `instrument_configuration_list`: one config per distinct analyzer collected in Task 2, each with id, software_reference="ThermoRawFileParser", parameters (instrument model via OntologyMapping.GetInstrumentModel(GetInstrumentData().Model) after UpdateFTMSDefinition + serial number MS:1000529), and ordered components ionsource(order1, IonizationTypes) / analyzer(order2, MassAnalyzerTypes) / detector(order3, GetDetectors). Use TRFP's own OntologyMapping outputs; do NOT hand-craft pwiz-identical terms.
+   215	    - `software_list`: one ThermoRawFileParser entry (id "ThermoRawFileParser", version from MainClass.Version, param MS:1003145).
+   216	    - `data_processing_method_list`: a conversion method (MS:1000544) + the intensity-narrowing/sort provenance entry (f64->f32).
+   217	    - `file_description`: contents (MS:1000579 MS1 spectrum, MS:1000580 MSn spectrum) + source_files[0] (id RAW1, name + location of the source RAW, params: nativeID format MS:1000768, RAW format MS:1000563, optional SHA-1 MS:1000569).
+   218	    - `run`/`ms_run`: id, default_instrument_id 0, default_data_processing_id, default_source_file_id RAW1, optional start_time (RFC3339 from CreationDate).
+   219	    - `sample_list`: [] and `scan_settings_list`: [] (valid empty arrays; match reference shape).
+   220	    Keep `files[]` listing every present facet (spectra_data, spectra_metadata, spectra_peaks-if-present) with entity_type/data_kind. BOM-free UTF8, explicit usings, no process/phase comments.
+   221	    Add NUnit locks: parse the emitted mzpeak_index.json — assert metadata.cv_list covers EXACTLY the collected CV-prefix set (compute the expected set from the emitted columns/params; assert the index cv_list AND the spectra_metadata footer cv_list both cover that set — not a hard-coded {MS,UO}); each cv_list item has id/version/uri; instrument_configuration_list has the expected component count (ionsource/analyzer/detector each) and config count equal to distinct analyzers; software_list/data_processing_method_list/file_description present with required keys. Assert the footer KV of spectra_metadata.parquet also carries the instrument/cv blocks.
+   222	    Then run the DECISIVE end-to-end validator gate: convert small.RAW to a temp .mzpeak and run `mzpeak-validate`; parse the findings BY RULE/ERROR ID (not substring). Assert: (1) the `columns_spectra_metadata` (scan-facet) error is ABSENT; (2) any `cv_list_declared` error is ABSENT; (3) the set of ERROR ids in the output is a SUBSET of an explicit allowlist of the pre-existing reference-archive failures (`index_schema_valid:metadata` is cleared by our metadata.version, so the allowlist captures only failures we do not introduce) — i.e. NO NEW error id appears beyond that allowlist. Skip-with-warning if the validator binary is unavailable.
+   223	  </action>
+   224	  <verify>
+   225	    <automated>cd /Users/kohlbach/Claude/mzPeak4TRFR && DOTNET_ROOT_X64=$HOME/.dotnet-x64 ~/.dotnet-x64/dotnet test ThermoRawFileParser/ThermoRawFileParser.sln --filter "MzPeakWriterTests" 2>&1 | tail -20</automated>
+   226	  </verify>
+   227	  <done>mzpeak_index.json metadata{} block + spectra_metadata footer carry a GENERATED cv_list covering exactly the emitted CV-prefix set, instrument_configuration_list, software_list, data_processing_method_list, file_description, sample_list/scan_settings_list; index/footer lock tests pass; the validator gate, parsing findings BY ERROR ID, confirms the `columns_spectra_metadata` AND `cv_list_declared` errors are absent and that no new ERROR id appears beyond the explicit pre-existing-failure allowlist (or the gate test Ignores cleanly if the validator is absent).</done>
+   228	</task>
+   229	
+   230	</tasks>
+   231	
+   232	<threat_model>
+   233	## Trust Boundaries
+   234	
+   235	| Boundary | Description |
+   236	|----------|-------------|
+   237	| Thermo RAW -> writer | RAW content is read-only input decoded by the vendor SDK; malformed scans already guarded by the Phase-2 per-scan try/catch + ParseInput.NewError(). |
+   238	| writer -> .mzpeak archive | Output is a deterministic local file consumed by the reference reader / validator; no network, no untrusted consumer in this phase. |
+   239	
+   240	## STRIDE Threat Register
+   241	
+   242	| Threat ID | Category | Component | Disposition | Mitigation Plan |
+   243	|-----------|----------|-----------|-------------|-----------------|
+   244	| T-03-01 | Tampering | per-ordinal arrays vs four-table null discipline | mitigate | NUnit locks assert def-level discipline (precursor/selected_ion null on rows >= #MSn, count-null discipline) and source_index/precursor_index linkage via the scanNumber->ordinal map, preventing silently-misaligned tables. |
+   245	| T-03-02 | Information disclosure | source RAW path in file_description.source_files[].location | accept | The location is the user-supplied input path written into the user's own output; no new exposure beyond existing TRFP behavior. |
+   246	| T-03-03 | Denial of service | full in-memory accumulation of metadata for large RAW | accept | Inherited Phase-2 limitation (single row group, in-memory); large-RAW streaming is OPT/v2 scope, not regressed here. |
+   247	| T-03-SC | Tampering | npm/pip/cargo installs | accept | Phase installs NO external packages (RESEARCH: Package Legitimacy Audit N/A); no new dependency surface. |
+   248	</threat_model>
+   249	
+   250	<verification>
+   251	Per task: `dotnet test --filter` on the named fixture (x64 Rosetta runtime).
+   252	Per plan close (full regression): build the solution explicitly, then
+   253	`DOTNET_ROOT_X64=$HOME/.dotnet-x64 ~/.dotnet-x64/dotnet test ThermoRawFileParser/ThermoRawFileParser.sln` — all tests green (Phase-2 baseline 34 + new Phase-3 cases), no existing test broken.
+   254	Decisive gate: convert small.RAW via `arch -x86_64 ~/.dotnet-x64/dotnet <TRFP.dll> -i .../small.RAW -f mzpeak ...` then `mzpeak-validate <out>.mzpeak` — parse findings by error id; confirm `columns_spectra_metadata` (scan) and `cv_list_declared` are ABSENT and no new error id appears beyond the pre-existing-failure allowlist. Spot-diff our spectra_metadata column names/struct shapes/CURIE forms + the `…/list/item/…` element path against `refs/mzPeak/small.unpacked.mzpeak/spectra_metadata.parquet` with pyarrow.
+   255	</verification>
+   256	
+   257	<success_criteria>
+   258	- spectra_metadata.parquet holds four co-resident independent tables (spectrum, scan full; precursor, selected_ion null-padded after #MSn-1), all N rows, linked by source_index — META-01..04.
+   259	- A general nested def/rep-level computer produces correct max-def-levels for nested struct / nested-struct-in-struct / null-list / empty-list / list-with-N-items / leaf-null, proven on the actual Phase-3 shapes via pyarrow — META-05, retires the rep-level risk.
+   260	- precursor.precursor_index derived via Master Scan Number / scan-string parent through a scanNumber->ordinal map; null when the parent was filtered out; MS2-only path tested — META-03.
+
+exec
+/bin/zsh -lc "nl -ba .planning/phases/03-spectra-metadata-file-level-metadata-index/REVIEW-SYNTHESIS.md | sed -n '1,120p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+     1	# Phase 3 plan review synthesis (plan gate)
+     2	
+     3	codex = SHIP-WITH-FIXES; vibe = SHIP-WITH-FIXES. Raw: `REVIEW-codex.md`, `REVIEW-vibe.md`.
+     4	No REWORK, but several HIGH correctness items must be folded in before execution.
+     5	
+     6	## Fixes to fold into 03-01-PLAN.md
+     7	
+     8	| # | Sev | Finding | Resolution |
+     9	|---|-----|---------|------------|
+    10	| Q1 | HIGH | **Nested def/rep level computation is the crux and is under-specified** (codex CH3, vibe M1). Nested struct/list leaves need max-def-levels >1 (existing tests: `mz_range/lo`=2; list leaves 5/4/2). "def-level=1" is wrong for isolation_window / activation.parameters / scan_windows / padded tails / empty-vs-null lists | **Task 1 builds a GENERAL per-leaf level computer** covering: top-struct present/null, nested-struct present/null, null-list, empty-list, list-with-N-items, leaf-null. Prove it with pyarrow on the ACTUAL Phase-3 shapes (isolation_window struct, activation.parameters list, scan_windows list) — not just a toy. This helper is the foundation for Tasks 2-3 |
+    11	| Q2 | HIGH | **Precursor parent linkage** naive `lastMs1Ordinal` breaks filtered / MS2-only / ranged runs (codex CH2) | Maintain a `scanNumber → emitted ordinal` map; derive the precursor's parent scan via the mzML logic already in the codebase (`Master Scan Number` trailer / scan-string parent fallback — reuse MzMlSpectrumWriter/PrecursorInfo); map parent scan number → emitted ordinal. If the parent was filtered out / not emitted, define behavior explicitly (null `precursor_index`, keep precursor) and TEST the MS2-only path |
+    12	| Q3 | HIGH | **Counts are representation-specific** (codex CH1). Plan populates data_points always + 0 peaks | In our DUAL model: `number_of_data_points` = the spectrum's `spectra_data` point count; `number_of_peaks` = its `spectra_peaks` count when peaks were written for that ordinal, else NULL (def-level null, not 0). Assert on small.RAW: a profile+centroid scan has both populated; a scan with no peaks has `number_of_peaks` null |
+    13	| Q4 | HIGH | **Validator gate too weak** — only checks the scan-error string (codex CH4) | Parse validator output by rule/error id: assert `columns_spectra_metadata`(scan) AND `cv_list_declared` are ABSENT, and that no NEW ERROR id appears beyond an explicit allowlist (the pre-existing reference-archive failures). Make the gate decisive about "no new errors" |
+    14	| Q5 | MED | **List element must be named `item`** not `element` (codex CM1) — Arrow/Parquet.Net path is `…/list/item/…` | `BuildParamField("item")` for list elements; add a pyarrow schema-name assertion (`parameters/list/item/...`) |
+    15	| Q6 | MED | **cv_list drift guard** (codex CM2, vibe H1) | Generate `cv_list` by collecting CV prefixes from CvColumn usage + every PARAM `accession`/`unit` emitted; assert the index AND footer cv_list cover the set. Not hard-coded MS/UO |
+    16	| Q7 | DOC | **CONTEXT row-disjoint model contradicts RESEARCH** (vibe B2) + N-row schema ambiguity (vibe B1) + counts wording (vibe M2) | Add an explicit note at the top of PLAN: "Row model per RESEARCH.md Decision 1 (4 co-resident N-row columns, null-padded); CONTEXT.md's earlier row-disjoint wording is SUPERSEDED." State all four struct columns have N rows. Fix the `number_of_data_points , number_of_peaks` comma wording |
+    17	
+    18	Q1–Q4 are load-bearing. After revision, recommend a quick codex confirm before execution (Task 1 level-builder
+    19	is the highest-risk; its pyarrow proof is the gate).
+
+exec
+/bin/zsh -lc "nl -ba .planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md | sed -n '257,280p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+   257	<success_criteria>
+   258	- spectra_metadata.parquet holds four co-resident independent tables (spectrum, scan full; precursor, selected_ion null-padded after #MSn-1), all N rows, linked by source_index — META-01..04.
+   259	- A general nested def/rep-level computer produces correct max-def-levels for nested struct / nested-struct-in-struct / null-list / empty-list / list-with-N-items / leaf-null, proven on the actual Phase-3 shapes via pyarrow — META-05, retires the rep-level risk.
+   260	- precursor.precursor_index derived via Master Scan Number / scan-string parent through a scanNumber->ordinal map; null when the parent was filtered out; MS2-only path tested — META-03.
+   261	- All CV terms are CURIE-named columns via CvColumn (list elements named `item`); polarity int8 sign, representation/type CURIE strings, time raw minutes float32; number_of_data_points always present, number_of_peaks NULL when no peaks written — META-02/05.
+   262	- mzpeak_index.json metadata{} block + footer KV carry a GENERATED cv_list (collected CV prefixes), instrument_configuration_list, software_list, data_processing_method_list, file_description, sample_list/scan_settings_list — IDX-01..04.
+   263	- `mzpeak-validate` (parsed by error id) shows `columns_spectra_metadata` and `cv_list_declared` absent and no new error id beyond the pre-existing-failure allowlist.
+   264	</success_criteria>
+   265	
+   266	<output>
+   267	Create `.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-SUMMARY.md` when done.
+   268	</output>
+   269	</content>
+   270	</invoke>
+
+codex
+Q1/Q2 look substantially strengthened on paper. I’m checking the existing parent-linkage code references now, because “reuse/mine mzML logic” is only resolved if the plan points execution to a real path and covers the filtered parent case.
+exec
+/bin/zsh -lc 'rg -n "Master Scan|PrecursorInfo|_precursorScanNumbers|_precursorTree|AsPositiveInt|scan-string|parent" ThermoRawFileParser -S' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+ThermoRawFileParser/README.md:155:                               file to the input file parent directory.
+ThermoRawFileParser/MainClass.cs:344:                    "The output file. Specifying none writes the output file to the input file parent directory.",
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:120:                _precursorScanNumbers[""] = scanNumber;
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:128:                    if (_precursorScanNumbers.ContainsKey(result.Groups[1].Value))
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:130:                        _precursorScanNumbers.Remove(result.Groups[1].Value);
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:133:                    _precursorScanNumbers.Add(result.Groups[1].Value, scanNumber);
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:137:                var trailerMasterScan = trailerData.AsPositiveInt("Master Scan Number:");
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:154:                    _precursorTree[-2] = new PrecursorInfo(0, msLevel, FindLastReaction(scanEvent, msLevel), null);
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:177:                int? charge = trailerData.AsPositiveInt("Charge State:");
+ThermoRawFileParser/Writer/ScanTrailer.cs:104:        public int? AsPositiveInt(string key)
+ThermoRawFileParser/Query/ProxiSpectrumReader.cs:135:                        int? charge = trailerData.AsPositiveInt("Charge State:");
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:159:            int? trailer_charge = trailerData.AsPositiveInt("Charge State:");
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:178:                _precursorScanNumbers[""] = scanNumber;
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:179:                _precursorTree[scanNumber] = new PrecursorInfo();
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:213:                    if (_precursorScanNumbers.ContainsKey(result.Groups[1].Value))
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:215:                        _precursorScanNumbers.Remove(result.Groups[1].Value);
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:218:                    _precursorScanNumbers.Add(result.Groups[1].Value, scanNumber);
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:222:                var trailerMasterScan = trailerData.AsPositiveInt("Master Scan Number:");
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:233:                if (precursor_scan == -2 || !_precursorTree.ContainsKey(precursor_scan))
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:236:                    _precursorTree[precursor_scan] = new PrecursorInfo(0, msLevel, FindLastReaction(scanEvent, msLevel), null);
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:244:                        scanEvent.GetReaction(_precursorTree[precursor_scan].ReactionCount);
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:250:                        if (msLevel == _precursorTree[precursor_scan].MSLevel)
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:257:                                $"Tribrid decision tree fix failed - cannot get reaction# {_precursorTree[precursor_scan].ReactionCount} from {scanEvent.ToString()}",
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:266:                    _precursorTree[scanNumber] = new PrecursorInfo(precursor_scan, msLevel, reactionCount, null);
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:275:                    _precursorTree[scanNumber] = new PrecursorInfo(precursor_scan, 1, 0, null);
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:345:            var prevPrecursors = _precursorTree[precursorScanNumber];
+ThermoRawFileParser/Writer/MetadataWriter.cs:93:                                int? charge = trailerData.AsPositiveInt("Charge State:");
+ThermoRawFileParser/Writer/PrecursorInfo.cs:6:    public class PrecursorInfo
+ThermoRawFileParser/Writer/PrecursorInfo.cs:21:        public PrecursorInfo()
+ThermoRawFileParser/Writer/PrecursorInfo.cs:28:        public PrecursorInfo(int scan, int level, int reactionCount, MzML.PrecursorType[] precursors)
+ThermoRawFileParser/Writer/SpectrumWriter.cs:49:        private protected readonly Dictionary<string, int> _precursorScanNumbers = new Dictionary<string, int>();
+ThermoRawFileParser/Writer/SpectrumWriter.cs:52:        private protected Dictionary<int, PrecursorInfo> _precursorTree = new Dictionary<int, PrecursorInfo>();
+ThermoRawFileParser/Writer/SpectrumWriter.cs:56:        // Filter string regex to extract an parent entry
+ThermoRawFileParser/Writer/SpectrumWriter.cs:67:            _precursorScanNumbers[""] = -1;
+ThermoRawFileParser/Writer/SpectrumWriter.cs:68:            _precursorTree[-1] = new PrecursorInfo();
+ThermoRawFileParser/Writer/SpectrumWriter.cs:307:            string parentFilter = String.Join(" ", parts.Take(last));
+ThermoRawFileParser/Writer/SpectrumWriter.cs:308:            if (_precursorScanNumbers.ContainsKey(parentFilter))
+ThermoRawFileParser/Writer/SpectrumWriter.cs:310:                return _precursorScanNumbers[parentFilter];
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1280:            int? charge = trailerData.AsPositiveInt("Charge State:");
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1336:                _precursorScanNumbers[""] = scanNumber;
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1337:                _precursorTree[scanNumber] = new PrecursorInfo();
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1405:                    if (_precursorScanNumbers.ContainsKey(result.Groups[1].Value))
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1407:                        _precursorScanNumbers.Remove(result.Groups[1].Value);
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1410:                    _precursorScanNumbers.Add(result.Groups[1].Value, scanNumber);
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1414:                var trailerMasterScan = trailerData.AsPositiveInt("Master Scan Number:");
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1425:                if (_precursorScanNumber == -2 || !_precursorTree.ContainsKey(_precursorScanNumber))
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1428:                    _precursorTree[_precursorScanNumber] = new PrecursorInfo(0, msLevel, FindLastReaction(scanEvent, msLevel), new PrecursorType[0]);
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1466:                            scanEvent.GetReaction(_precursorTree[_precursorScanNumber].ReactionCount);
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1472:                            if (msLevel == _precursorTree[_precursorScanNumber].MSLevel)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1479:                                    $"Tribrid decision tree fix failed - cannot get reaction# {_precursorTree[_precursorScanNumber].ReactionCount} from {scanEvent.ToString()}",
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1490:                        _precursorTree[scanNumber] = new PrecursorInfo(_precursorScanNumber, msLevel, reactionCount, spectrum.precursorList.precursor);
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1499:                        _precursorTree[scanNumber] = new PrecursorInfo(_precursorScanNumber, 1, 0, new PrecursorType[0]);
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2353:        /// <param name="reactionCount">Number of activation reactions (see PrecursorInfo for details)</param>
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2361:            var prevPrecursors = _precursorTree[precursorScanNumber];
+
+exec
+/bin/zsh -lc 'rg -n "CalculatePrecursorPeakIntensity|GetReaction|CalculateSelectedIonMz|ConstructSpectrumTitle|class ScanTrailer" ThermoRawFileParser -S' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+ThermoRawFileParser/Query/ProxiSpectrumReader.cs:112:                            reaction = SpectrumWriter.GetReaction(scanEvent, scanNumber);
+ThermoRawFileParser/Query/ProxiSpectrumReader.cs:154:                                SpectrumWriter.CalculateSelectedIonMz(reaction, monoisotopicMz, isolationWidth);
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:244:                        scanEvent.GetReaction(_precursorTree[precursor_scan].ReactionCount);
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:348:            var reaction = scanEvent.GetReaction(reactionCount);
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:355:            var selectedIonMz = CalculateSelectedIonMz(reaction, monoisotopicMz, isolationWidth);
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:372:                reaction = scanEvent.GetReaction(reactionCount);
+ThermoRawFileParser/Writer/MetadataWriter.cs:76:                                var reaction = scanEvent.GetReaction(0);
+ThermoRawFileParser/Writer/ScanTrailer.cs:9:    public class ScanTrailer
+ThermoRawFileParser/Writer/SpectrumWriter.cs:135:        protected static string ConstructSpectrumTitle(int instrumentType, int instrumentNumber, int scanNumber)
+ThermoRawFileParser/Writer/SpectrumWriter.cs:148:        public static double CalculateSelectedIonMz(IReaction reaction, double? monoisotopicMz,
+ThermoRawFileParser/Writer/SpectrumWriter.cs:190:        public static IReaction GetReaction(IScanEvent scanEvent, int scanNumber)
+ThermoRawFileParser/Writer/SpectrumWriter.cs:198:                    reaction = scanEvent.GetReaction(0);
+ThermoRawFileParser/Writer/SpectrumWriter.cs:202:                    reaction = scanEvent.GetReaction(order - 2);
+ThermoRawFileParser/Writer/SpectrumWriter.cs:227:        protected static double CalculatePrecursorPeakIntensity(IRawDataPlus rawFile, int precursorScanNumber,
+ThermoRawFileParser/Writer/SpectrumWriter.cs:325:                    scanEvent.GetReaction(lastReactionIndex + 1);
+ThermoRawFileParser/Writer/SpectrumWriter.cs:340:                var lastActivation = scanEvent.GetReaction(lastReactionIndex).ActivationType;
+ThermoRawFileParser/Writer/SpectrumWriter.cs:341:                var beforeLastActivation = scanEvent.GetReaction(lastReactionIndex - 1).ActivationType;
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1256:                id = ConstructSpectrumTitle((int)Device.MS, 1, scanNumber),
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1466:                            scanEvent.GetReaction(_precursorTree[_precursorScanNumber].ReactionCount);
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2052:            reaction = scanEvent.GetReaction(0);
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2108:                id = ConstructSpectrumTitle((int) Device.Pda, instrumentNumber, scanNumber),
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2369:            reaction = scanEvent.GetReaction(reactionCount);
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2379:                spectrumRef = ConstructSpectrumTitle((int)Device.MS, 1, precursorScanNumber);
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2392:            var selectedIonMz = CalculateSelectedIonMz(reaction, monoisotopicMz, isolationWidth);
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2420:                var selectedIonIntensity = CalculatePrecursorPeakIntensity(_rawFile, precursorScanNumber, reaction.PrecursorMass, isolationWidth,
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2521:                reaction = scanEvent.GetReaction(reactionCount);
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:149:                    precursorReference = ConstructSpectrumTitle((int)Device.MS, 1, _precursorScanNumber);
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:161:                var reaction = GetReaction(scanEvent, scanNumber);
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:166:                    mgfSpectrumText.AppendLine($"TITLE={ConstructSpectrumTitle((int)Device.MS, 1, scanNumber)}");
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:171:                        $"TITLE={ConstructSpectrumTitle((int)Device.MS, 1, scanNumber)} [PRECURSOR={precursorReference}]");
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:186:                        CalculateSelectedIonMz(reaction, monoisotopicMz, isolationWidth);
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:189:                        CalculatePrecursorPeakIntensity(rawFile, _precursorScanNumber, reaction.PrecursorMass, isolationWidth,
+
+codex
+The repo does contain the parent tracking state and the Master Scan Number plus filter-string fallback in existing writers. I’m checking whether the revised plan accidentally leaves any executable ambiguity around extracting that into the mzPeak writer.
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs | sed -n '1328,1505p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+  1328	                {
+  1329	                    name = "ms level",
+  1330	                    accession = "MS:1000511",
+  1331	                    value = msLevel.ToString(),
+  1332	                    cvRef = "MS"
+  1333	                });
+  1334	
+  1335	                // Keep track of scan number for precursor reference
+  1336	                _precursorScanNumbers[""] = scanNumber;
+  1337	                _precursorTree[scanNumber] = new PrecursorInfo();
+  1338	
+  1339	            }
+  1340	            else
+  1341	            {
+  1342	                Match result = null;
+  1343	
+  1344	                if (msLevel > 1)
+  1345	                {
+  1346	                    spectrumCvParams.Add(new CVParamType
+  1347	                    {
+  1348	                        accession = "MS:1000580",
+  1349	                        cvRef = "MS",
+  1350	                        name = "MSn spectrum",
+  1351	                        value = ""
+  1352	                    });
+  1353	
+  1354	                    spectrumCvParams.Add(new CVParamType
+  1355	                    {
+  1356	                        name = "ms level",
+  1357	                        accession = "MS:1000511",
+  1358	                        value = msLevel.ToString(),
+  1359	                        cvRef = "MS"
+  1360	                    });
+  1361	
+  1362	                    // Keep track of scan number and isolation m/z for precursor reference                   
+  1363	                    result = _filterStringIsolationMzPattern.Match(scanEvent.ToString());
+  1364	                }
+  1365	                else if (msLevel == (int)MSOrderType.Par)
+  1366	                {
+  1367	                    spectrumCvParams.Add(new CVParamType
+  1368	                    {
+  1369	                        accession = "MS:1000341",
+  1370	                        cvRef = "MS",
+  1371	                        name = "precursor ion spectrum",
+  1372	                        value = ""
+  1373	                    });
+  1374	
+  1375	                    // Keep track of scan number and isolation m/z for precursor reference                   
+  1376	                    result = _filterStringParentMzPattern.Match(scanEvent.ToString());
+  1377	                }
+  1378	                else if (msLevel == (int)MSOrderType.Nl)
+  1379	                {
+  1380	                    spectrumCvParams.Add(new CVParamType
+  1381	                    {
+  1382	                        accession = "MS:1000326",
+  1383	                        cvRef = "MS",
+  1384	                        name = "constant neutral loss spectrum",
+  1385	                        value = ""
+  1386	                    });
+  1387	                }
+  1388	                else if (msLevel == (int)MSOrderType.Ng)
+  1389	                {
+  1390	                    spectrumCvParams.Add(new CVParamType
+  1391	                    {
+  1392	                        accession = "MS:1000325",
+  1393	                        cvRef = "MS",
+  1394	                        name = "constant neutral gain spectrum",
+  1395	                        value = ""
+  1396	                    });
+  1397	                }
+  1398	                else
+  1399	                {
+  1400	                    throw new ArgumentOutOfRangeException($"Unknown msLevel: {msLevel}");
+  1401	                }
+  1402	
+  1403	                if (result != null && result.Success)
+  1404	                {
+  1405	                    if (_precursorScanNumbers.ContainsKey(result.Groups[1].Value))
+  1406	                    {
+  1407	                        _precursorScanNumbers.Remove(result.Groups[1].Value);
+  1408	                    }
+  1409	
+  1410	                    _precursorScanNumbers.Add(result.Groups[1].Value, scanNumber);
+  1411	                }
+  1412	
+  1413	                //update precursor scan if it is provided in trailer data
+  1414	                var trailerMasterScan = trailerData.AsPositiveInt("Master Scan Number:");
+  1415	                if (trailerMasterScan.HasValue)
+  1416	                {
+  1417	                    _precursorScanNumber = trailerMasterScan.Value;
+  1418	                }
+  1419	                else //try getting it from the scan filter
+  1420	                {
+  1421	                    _precursorScanNumber = GetParentFromScanString(result == null ? "" : result.Groups[1].Value);
+  1422	                }
+  1423	
+  1424	                //finding precursor scan failed
+  1425	                if (_precursorScanNumber == -2 || !_precursorTree.ContainsKey(_precursorScanNumber))
+  1426	                {
+  1427	                    Log.Warn($"Cannot find precursor scan for scan# {scanNumber}");
+  1428	                    _precursorTree[_precursorScanNumber] = new PrecursorInfo(0, msLevel, FindLastReaction(scanEvent, msLevel), new PrecursorType[0]);
+  1429	                    ParseInput.NewWarn();
+  1430	                }
+  1431	
+  1432	
+  1433	                if (msLevel == (int)MSOrderType.Ng)
+  1434	                {
+  1435	                    // Neutral loss/gain spectra do not have precursor information
+  1436	                    spectrum.productList = ConstructProductList(scanNumber, scanEvent, out double neutralgain);
+  1437	                    spectrumUserParams.Add(new UserParamType
+  1438	                    {
+  1439	                        name = "neutral gain",
+  1440	                        type = "xsd:float",
+  1441	                        value = neutralgain.ToString(),
+  1442	                        unitAccession = "MS:1000040",
+  1443	                        unitCvRef = "MS",
+  1444	                        unitName = "m/z"
+  1445	                    });
+  1446	                }
+  1447	                else if (msLevel == (int)MSOrderType.Nl)
+  1448	                {
+  1449	                    spectrum.productList = ConstructProductList(scanNumber, scanEvent, out double neutralloss);
+  1450	                    spectrumUserParams.Add(new UserParamType
+  1451	                    {
+  1452	                        name = "neutral loss",
+  1453	                        type = "xsd:float",
+  1454	                        value = neutralloss.ToString(),
+  1455	                        unitAccession = "MS:1000040",
+  1456	                        unitCvRef = "MS",
+  1457	                        unitName = "m/z"
+  1458	                    });
+  1459	                }
+  1460	                else
+  1461	                { 
+  1462	                    try
+  1463	                    {
+  1464	                        try //since there is no direct way to get the number of reactions available, it is necessary to try and fail
+  1465	                        {
+  1466	                            scanEvent.GetReaction(_precursorTree[_precursorScanNumber].ReactionCount);
+  1467	                        }
+  1468	                        catch (ArgumentOutOfRangeException ex)
+  1469	                        {
+  1470	                            Log.Debug($"Using Tribrid decision tree fix for scan# {scanNumber}");
+  1471	                            //Is it a decision tree scheduled scan on tribrid?
+  1472	                            if (msLevel == _precursorTree[_precursorScanNumber].MSLevel)
+  1473	                            {
+  1474	                                _precursorScanNumber = GetParentFromScanString(result.Groups[1].Value);
+  1475	                            }
+  1476	                            else
+  1477	                            {
+  1478	                                throw new RawFileParserException(
+  1479	                                    $"Tribrid decision tree fix failed - cannot get reaction# {_precursorTree[_precursorScanNumber].ReactionCount} from {scanEvent.ToString()}",
+  1480	                                    ex);
+  1481	                            }
+  1482	                        }
+  1483	
+  1484	                        // Construct and set the precursor list element of the spectrum
+  1485	                        spectrum.precursorList =
+  1486	                            ConstructPrecursorList(_precursorScanNumber, scanEvent, charge, monoisotopicMz, isolationWidth,
+  1487	                                SPSMasses, out var reactionCount);
+  1488	
+  1489	                        //save precursor information for later reference
+  1490	                        _precursorTree[scanNumber] = new PrecursorInfo(_precursorScanNumber, msLevel, reactionCount, spectrum.precursorList.precursor);
+  1491	                    }
+  1492	                    catch (Exception e)
+  1493	                    {
+  1494	                        var extra = (e.InnerException is null) ? "" : $"\n{e.InnerException.StackTrace}";
+  1495	
+  1496	                        Log.Warn($"Failed creating precursor list for scan# {scanNumber} - precursor information for this and dependent scans will be empty\nException details:{e.Message}\n{e.StackTrace}\n{extra}");
+  1497	                        ParseInput.NewWarn();
+  1498	
+  1499	                        _precursorTree[scanNumber] = new PrecursorInfo(_precursorScanNumber, 1, 0, new PrecursorType[0]);
+  1500	
+  1501	                    }
+  1502	                }
+  1503	            }
+  1504	
+  1505	            // Scan polarity            
+
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/Writer/SpectrumWriter.cs | sed -n '45,80p;135,235p;290,352p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+    45	        /// </summary>
+    46	        private static LimitedSizeDictionary<int, MZArray> precursorCache;
+    47	
+    48	        // Precursor scan number (value) and isolation m/z (key) for reference in the precursor element of an MSn spectrum
+    49	        private protected readonly Dictionary<string, int> _precursorScanNumbers = new Dictionary<string, int>();
+    50	
+    51	        //Precursor information for scans
+    52	        private protected Dictionary<int, PrecursorInfo> _precursorTree = new Dictionary<int, PrecursorInfo>();
+    53	
+    54	        // Filter string regex to extract an isoaltion entry
+    55	        private protected readonly Regex _filterStringIsolationMzPattern = new Regex(@"ms\d+ (.+?) \[");
+    56	        // Filter string regex to extract an parent entry
+    57	        private protected readonly Regex _filterStringParentMzPattern = new Regex(@"pr (.+?) \[");
+    58	
+    59	        /// <summary>
+    60	        /// Constructor.
+    61	        /// </summary>
+    62	        /// <param name="parseInput">the parse input object</param>
+    63	        protected SpectrumWriter(ParseInput parseInput)
+    64	        {
+    65	            ParseInput = parseInput;
+    66	            precursorCache = new LimitedSizeDictionary<int, MZArray>(10);
+    67	            _precursorScanNumbers[""] = -1;
+    68	            _precursorTree[-1] = new PrecursorInfo();
+    69	        }
+    70	
+    71	        /// <inheritdoc />
+    72	        public abstract void Write(IRawDataPlus rawFile, int firstScanNumber, int lastScanNumber);
+    73	
+    74	        /// <summary>
+    75	        /// Configure the output writer
+    76	        /// </summary>
+    77	        /// <param name="extension">The extension of the output file</param>
+    78	        protected void ConfigureWriter(string extension)
+    79	        {
+    80	            if (ParseInput.StdOut)
+   135	        protected static string ConstructSpectrumTitle(int instrumentType, int instrumentNumber, int scanNumber)
+   136	        {
+   137	            return $"controllerType={instrumentType} controllerNumber={instrumentNumber} scan={scanNumber}";
+   138	        }
+   139	
+   140	        /// <summary>
+   141	        /// Calculate the selected ion m/z value. This is necessary because the precursor mass found in the reaction
+   142	        /// isn't always the monoisotopic mass.
+   143	        /// https://github.com/ProteoWizard/pwiz/blob/master/pwiz/data/vendor_readers/Thermo/SpectrumList_Thermo.cpp#L564-L574
+   144	        /// </summary>
+   145	        /// <param name="reaction">the scan event reaction</param>
+   146	        /// <param name="monoisotopicMz">the monoisotopic m/z value</param>
+   147	        /// <param name="isolationWidth">the scan event reaction</param>
+   148	        public static double CalculateSelectedIonMz(IReaction reaction, double? monoisotopicMz,
+   149	            double? isolationWidth)
+   150	        {
+   151	            var selectedIonMz = reaction.PrecursorMass;
+   152	
+   153	            // take the isolation width from the reaction if no value was found in the trailer data
+   154	            if (isolationWidth == null || isolationWidth < ZeroDelta)
+   155	            {
+   156	                isolationWidth = reaction.IsolationWidth;
+   157	            }
+   158	
+   159	            isolationWidth /= 2;
+   160	
+   161	            if (monoisotopicMz != null && monoisotopicMz > ZeroDelta
+   162	                                       && Math.Abs(
+   163	                                           reaction.PrecursorMass - monoisotopicMz.Value) >
+   164	                                       PrecursorMzDelta)
+   165	            {
+   166	                selectedIonMz = monoisotopicMz.Value;
+   167	
+   168	                // check if the monoisotopic mass lies in the precursor mass isolation window
+   169	                // otherwise take the precursor mass                                    
+   170	                if (isolationWidth <= 2.0)
+   171	                {
+   172	                    if ((selectedIonMz <
+   173	                         (reaction.PrecursorMass - DefaultIsolationWindowLowerOffset * 2)) ||
+   174	                        (selectedIonMz >
+   175	                         (reaction.PrecursorMass + DefaultIsolationWindowUpperOffset)))
+   176	                    {
+   177	                        selectedIonMz = reaction.PrecursorMass;
+   178	                    }
+   179	                }
+   180	                else if ((selectedIonMz < (reaction.PrecursorMass - isolationWidth)) ||
+   181	                         (selectedIonMz > (reaction.PrecursorMass + isolationWidth)))
+   182	                {
+   183	                    selectedIonMz = reaction.PrecursorMass;
+   184	                }
+   185	            }
+   186	
+   187	            return selectedIonMz;
+   188	        }
+   189	
+   190	        public static IReaction GetReaction(IScanEvent scanEvent, int scanNumber)
+   191	        {
+   192	            IReaction reaction = null;
+   193	            try
+   194	            {
+   195	                var order = (int)scanEvent.MSOrder;
+   196	                if (order < 0)
+   197	                {
+   198	                    reaction = scanEvent.GetReaction(0);
+   199	                }
+   200	                else if (order > 1)
+   201	                {
+   202	                    reaction = scanEvent.GetReaction(order - 2);
+   203	                }
+   204	                else
+   205	                {
+   206	                    Log.Warn($"Attempting to get reaction for MS{order} scan# {scanNumber} failed");
+   207	                }
+   208	                    
+   209	            }
+   210	            catch (ArgumentOutOfRangeException)
+   211	            {
+   212	                Log.Warn("No reaction found for scan " + scanNumber);
+   213	            }
+   214	
+   215	            return reaction;
+   216	        }
+   217	
+   218	        /// <summary>
+   219	        /// Calculate the precursor peak intensity (similar to modern MSConvert).
+   220	        /// Sum intensities of all peaks in the isolation window.
+   221	        /// </summary>
+   222	        /// <param name="rawFile">the RAW file object</param>
+   223	        /// <param name="precursorScanNumber">the precursor scan number</param>
+   224	        /// <param name="precursorMass">the precursor mass</param>
+   225	        /// <param name="isolationWidth">the isolation width</param>
+   226	        /// <param name="useProfile">profile/centroid switch</param>
+   227	        protected static double CalculatePrecursorPeakIntensity(IRawDataPlus rawFile, int precursorScanNumber,
+   228	            double precursorMass, double? isolationWidth, bool useProfile)
+   229	        {
+   230	            double precursorIntensity = 0;
+   231	            double halfWidth = isolationWidth is null || isolationWidth == 0 ? 0 : DefaultIsolationWindowLowerOffset; // that is how it is made in MSConvert (why?)
+   232	
+   233	            double[] masses;
+   234	            double[] intensities;
+   235	
+   290	            return precursorIntensity;
+   291	        }
+   292	
+   293	        private protected int GetParentFromScanString(string scanString)
+   294	        {
+   295	            var parts = Regex.Split(scanString, " ");
+   296	
+   297	            //find the position of the first (from the end) precursor with a different mass 
+   298	            //to account for possible supplementary activations written in the filter
+   299	            var lastIonMass = parts.Last().Split('@').First();
+   300	            int last = parts.Length;
+   301	            while (last > 0 &&
+   302	                   parts[last - 1].Split('@').First() == lastIonMass)
+   303	            {
+   304	                last--;
+   305	            }
+   306	
+   307	            string parentFilter = String.Join(" ", parts.Take(last));
+   308	            if (_precursorScanNumbers.ContainsKey(parentFilter))
+   309	            {
+   310	                return _precursorScanNumbers[parentFilter];
+   311	            }
+   312	
+   313	            return -2; //unsuccessful parsing
+   314	        }
+   315	
+   316	        private protected int FindLastReaction(IScanEvent scanEvent, int msLevel)
+   317	        {
+   318	            int lastReactionIndex = msLevel - 2;
+   319	
+   320	            //iteratively trying find the last available index for reaction
+   321	            while (true)
+   322	            {
+   323	                try
+   324	                {
+   325	                    scanEvent.GetReaction(lastReactionIndex + 1);
+   326	                }
+   327	                catch (IndexOutOfRangeException)
+   328	                {
+   329	                    //stop trying
+   330	                    break;
+   331	                }
+   332	
+   333	                lastReactionIndex++;
+   334	            }
+   335	
+   336	            //supplemental activation flag is on -> one of the levels (not necissirily the last one) used supplemental activation
+   337	            //check last two activations
+   338	            if (scanEvent.SupplementalActivation == TriState.On)
+   339	            {
+   340	                var lastActivation = scanEvent.GetReaction(lastReactionIndex).ActivationType;
+   341	                var beforeLastActivation = scanEvent.GetReaction(lastReactionIndex - 1).ActivationType;
+   342	
+   343	                if ((beforeLastActivation == ActivationType.ElectronTransferDissociation || beforeLastActivation == ActivationType.ElectronCaptureDissociation) &&
+   344	                    (lastActivation == ActivationType.CollisionInducedDissociation || lastActivation == ActivationType.HigherEnergyCollisionalDissociation))
+   345	                    return lastReactionIndex - 1; //ETD or ECD followed by HCD or CID -> supplemental activation in the last level (move the last reaction one step back)
+   346	                else
+   347	                    return lastReactionIndex;
+   348	            }
+   349	            else //just use the last one
+   350	            {
+   351	                return lastReactionIndex;
+   352	            }
+
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/Writer/ScanTrailer.cs | sed -n '1,130p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+     1	﻿using System.Collections.Generic;
+     2	using System.Globalization;
+     3	using System.Linq;
+     4	using System.Text.RegularExpressions;
+     5	using ThermoFisher.CommonCore.Data.Interfaces;
+     6	
+     7	namespace ThermoRawFileParser.Writer
+     8	{
+     9	    public class ScanTrailer
+    10	    {
+    11	        public int Length
+    12	        {
+    13	            get => data.Count;
+    14	        }
+    15	
+    16	        public string[] Labels
+    17	        {
+    18	            get => data.Keys.ToArray();
+    19	        }
+    20	
+    21	        public string[] Values
+    22	        {
+    23	            get => data.Values.ToArray();
+    24	        }
+    25	
+    26	        private readonly Dictionary<string, string> data;
+    27	
+    28	        public ScanTrailer(ILogEntryAccess trailerData)
+    29	        {
+    30	            data = new Dictionary<string, string>();
+    31	
+    32	            for (int i = 0; i < trailerData.Length; i++)
+    33	            {
+    34	                data[trailerData.Labels[i]] = trailerData.Values[i].Trim();
+    35	            }
+    36	        }
+    37	
+    38	        public ScanTrailer()
+    39	        {
+    40	            data = new Dictionary<string, string>();
+    41	        }
+    42	
+    43	        /// <summary>
+    44	        /// Try returning selected trailer element as boolean value,
+    45	        /// if the element does not exist or cannot be converted to boolean return null
+    46	        /// </summary>
+    47	        /// <param name="key">name of the element</param>
+    48	        public bool? AsBool(string key)
+    49	        {
+    50	            if (data.ContainsKey(key))
+    51	            {
+    52	                var stringValue = data[key].ToLower();
+    53	
+    54	                switch (stringValue)
+    55	                {
+    56	                    case "on":
+    57	                    case "true":
+    58	                    case "yes":
+    59	                        return true;
+    60	                    default:
+    61	                        return false;
+    62	                }
+    63	            }
+    64	
+    65	            return null;
+    66	        }
+    67	
+    68	        /// <summary>
+    69	        /// Try returning selected trailer element as double value,
+    70	        /// if the element does not exist or cannot be converted to double return null
+    71	        /// </summary>
+    72	        /// <param name="key">name of the element</param>
+    73	        public double? AsDouble(string key)
+    74	        {
+    75	            if (data.ContainsKey(key))
+    76	            {
+    77	                if (double.TryParse(data[key], NumberStyles.Any,
+    78	                    CultureInfo.CurrentCulture, out var result)) return result;
+    79	            }
+    80	
+    81	            return null;
+    82	        }
+    83	
+    84	        /// <summary>
+    85	        /// Try returning selected trailer element as integer value,
+    86	        /// if the element does not exist or cannot be converted to integer return null
+    87	        /// </summary>
+    88	        /// <param name="key">name of the element</param>
+    89	        public int? AsInt(string key)
+    90	        {
+    91	            if (data.ContainsKey(key))
+    92	            {
+    93	                if (int.TryParse(data[key], out var result)) return result;
+    94	            }
+    95	
+    96	            return null;
+    97	        }
+    98	
+    99	        /// <summary>
+   100	        /// Try returning selected trailer element as strictly positive (non zero) integer value,
+   101	        /// if the element does not exist or cannot be converted to strictly positive integer return null
+   102	        /// </summary>
+   103	        /// <param name="key">name of the element</param>
+   104	        public int? AsPositiveInt(string key)
+   105	        {
+   106	            int? value = AsInt(key);
+   107	
+   108	            if (value != null && value > 0) return value;
+   109	            else return null;
+   110	        }
+   111	
+   112	        /// <summary>
+   113	        /// Try returning selected trailer element as string,
+   114	        /// alias to `Get`
+   115	        /// </summary>
+   116	        /// <param name="key">name of the element</param>
+   117	        public string AsString(string key)
+   118	        {
+   119	            return Get(key);
+   120	        }
+   121	
+   122	        /// <summary>
+   123	        /// Try getting selected trailer element by name,
+   124	        /// if the element does not exist return null
+   125	        /// </summary>
+   126	        /// <param name="key">name of the element</param>
+   127	        public string Get(string key)
+   128	        {
+   129	            if (data.ContainsKey(key))
+   130	            {
+
+codex
+One potential nuance is whether “parent MS1” is intentionally scoped to small.RAW/MS2, or whether MSn should allow an MS2 parent for MS3. I’m checking the phase research wording before calling that a new issue.
+exec
+/bin/zsh -lc 'rg -n "precursor_index|parent MS1|parent|MSn|MS3|source_index|selected_ion" .planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md .planning/phases/03-spectra-metadata-file-level-metadata-index/CONTEXT.md refs/_findings/mzpeak_groundtruth_schema.md -S' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+.planning/phases/03-spectra-metadata-file-level-metadata-index/CONTEXT.md:16:  (`spectrum`, `scan`, `precursor`, `selected_ion`). Each ROW populates exactly one struct; the other
+.planning/phases/03-spectra-metadata-file-level-metadata-index/CONTEXT.md:18:  `selected_ion` link back to their spectrum via `source_index` = the spectrum's dense ordinal.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/CONTEXT.md:20:  then `precursor`, then `selected_ion` (or interleaved per the reference; follow what the reference
+.planning/phases/03-spectra-metadata-file-level-metadata-index/CONTEXT.md:24:  MS:1000128 profile), `MS_1000559_spectrum_type` (CURIE MS:1000579 MS1 / MS:1000580 MSn), observed mz
+.planning/phases/03-spectra-metadata-file-level-metadata-index/CONTEXT.md:29:  (lower/upper), `source_index`.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/CONTEXT.md:30:- **`precursor`** (MSn only): isolation_window (target mz / lower offset / upper offset), activation
+.planning/phases/03-spectra-metadata-file-level-metadata-index/CONTEXT.md:31:  (PARAM list: dissociation method CURIE + collision energy), `precursor_id`, `source_index`.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/CONTEXT.md:32:- **`selected_ion`** (MSn only): `MS_1000744_selected_ion_mz`, `MS_1000041_charge_state`,
+.planning/phases/03-spectra-metadata-file-level-metadata-index/CONTEXT.md:33:  `MS_1000042_intensity`, `source_index`.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/CONTEXT.md:61:- Build + full NUnit green (add tests: per-row null discipline across the 4 structs; source_index linkage;
+.planning/phases/03-spectra-metadata-file-level-metadata-index/CONTEXT.md:62:  CV column names/values; MSn rows present for MS2 scans; instrument_config/cv_list shape).
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:11:top-level struct columns (`spectrum`, `scan`, `precursor`, `selected_ion`) are **four independent
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:14:`spectrum[i]` AND `scan[i]` AND (if `i < #MS2`) `precursor[i]`/`selected_ion[i]`. Linkage is by the
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:15:`source_index` field, never by row position. The exact algorithm is in "Decision 1" below.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:32:`source_index`; reuse the exact `MzMlSpectrumWriter` extraction calls; emit metadata blocks into BOTH
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:51:  (`spectrum`, `scan`, `precursor`, `selected_ion`). `scan`/`precursor`/`selected_ion` link back to their
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:52:  spectrum via `source_index`. **[RESEARCH CORRECTION — see Decision 1: the structs are NOT row-disjoint;
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:56:- **`scan`:** scan_start_time (UO_0000031 minute), filter_string, ion_injection_time, instrument_configuration_ref, scan_windows, source_index — confirmed.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:57:- **`precursor`** (MSn only): isolation_window + activation PARAM list; **`selected_ion`** (MSn only): selected_ion_mz, charge_state, intensity, source_index — confirmed.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:76:| META-03 | `precursor` facet (MSn) | Decision 1 (precursor table mechanics) + ConstructPrecursorList reuse |
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:77:| META-04 | `selected_ion` facet (MSn) | Decision 1 + selected-ion reuse rows |
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:98:- `scan.source_index` non-null on rows **0..47** (48 entries; `scan[i].source_index == scan[i].scan_index == i`).
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:99:- `precursor.source_index` non-null on rows **0..33** (34 entries = the 34 MS2 spectra); **null on rows 34..47**.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:100:- `selected_ion.source_index` non-null on rows **0..33** (34 entries); null on 34..47.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:103:> even when the entry is logically null. The leaf fields (`source_index` etc.) are the truth: they are
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:104:> null for the padded tail. Implement this as: write the precursor/selected_ion struct column with a
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:109:- `scan.source_index = i` (= row, = the spectrum it describes). `scan.scan_index = i` too.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:110:- `precursor.source_index` = the **MS2 spectrum's** ordinal (the fragment scan). NOT the row. e.g. precursor row 0 has `source_index=2` (spectrum 2 is the first MS2). Sorted precursor.source_index == sorted list of MS2 spectrum indices exactly.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:111:- `precursor.precursor_index` = the **MS1 parent spectrum's** ordinal (the survey scan the precursor was selected from). Measured distinct values {1, 8, 15, 22, 29, 35, 42} — each is an MS1 spectrum index. `precursor.precursor_id` = that MS1's nativeID. (Five consecutive MS2 share precursor_index=1 → all fragmented from MS1 spectrum index 1, i.e. scan=2.)
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:112:- `selected_ion.source_index` == `precursor.source_index` per row (both point at the same MS2 fragment spectrum); `selected_ion.precursor_index` == `precursor.precursor_index` per row.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:116:| row | spectrum.index / ms_level / repr / type | scan.source_index / filter / rt(min) / iit | precursor.source_index / precursor_index / iso_target | selected_ion source_index / mz / charge |
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:137:     with scan.source_index = i, scan.scan_index = i. (full def-level for all N rows)
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:139:     For the k-th MS2 spectrum (whose ordinal is s, and whose MS1 parent ordinal is p):
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:140:         precursor[k].source_index    = s          (the MS2 fragment spectrum ordinal)
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:141:         precursor[k].precursor_index = p          (the MS1 parent ordinal)
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:145:4. Build the SELECTED_ION table: one entry per MS2, SAME order as precursor, same source_index/precursor_index.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:150:     - selected_ion column: def-level 1 for rows 0..M-1, def-level 0 (null) for rows M..N-1
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:153:The MS1-parent ordinal `p` is the most-recent MS1 spectrum before the MS2 in scan order — the
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:157:> **Pitfall:** precursor.source_index is the MS2 ordinal, precursor.precursor_index is the MS1 ordinal.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:158:> Do not swap them. The selected_ion mirrors the precursor exactly.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:191:| `selected_ion.MS_1000744_selected_ion_mz` | `CalculateSelectedIonMz(reaction, monoisotopicMz, isolationWidth)` | 2392 |
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:192:| `selected_ion.MS_1000041_charge_state` (int32) | `trailerData.AsPositiveInt("Charge State:")` (null if absent — small.RAW has none) | 1280 |
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:193:| `selected_ion.MS_1000042_intensity` | `CalculatePrecursorPeakIntensity(...)` | 2420 |
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:194:| MS1-parent ordinal (precursor.precursor_index) | track "last MS1 scan seen" as `MzMlSpectrumWriter` does via `_precursorScanNumbers[""]` | 1336 |
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:221:| selected ion mz | `selected_ion.MS_1000744_..unit_MS_1000040` | double scalar, unit in name | — | |
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:222:| charge state | `selected_ion.MS_1000041_charge_state` | **int32 scalar** | null in small.RAW | NOT CURIE |
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:223:| selected ion intensity | `selected_ion.MS_1000042_..unit_MS_1000131` | float scalar | — | |
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:273:      {"accession": "MS:1000580", "name": "MSn spectrum", "value": null, "unit": null}
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:378:3. **`columns_spectra_metadata` (the persisting Phase-2 error):** requires the `scan` facet present with `scan.source_index:uint`. Adding the scan struct clears it. (Decision 7.)
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:393:scan      : REQUIRED facet; required column source_index:uint    <-- the missing facet
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:394:precursor : optional facet; if present, source_index:uint required
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:395:selected_ion : optional facet; if present, source_index:uint required
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:400:Non-CV columns (`index`, `id`, `time`, `source_index`, `filter_string`, `data_processing_ref`, etc.) are skipped.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:401:**Minimum to clear the gate:** emit `scan` with `source_index:uint`. Everything else in CONTEXT is fidelity.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:418:- **New for Phase 3:** (a) multiple top-level struct columns in ONE schema with DIFFERENT def-level arrays (spectrum/scan full, precursor/selected_ion padded-null); (b) nested struct-in-struct (`isolation_window`, `value`); (c) `large_list<struct>` (PARAM lists, scan_windows). The `MzPeakParquet.BuildParamField` already builds the PARAM `StructField` (MzPeakParquet.cs:25-38) but is **not yet wired into a list/write path** — Phase 3 must extend `WriteAsync`/`Column` to emit repeated (rep-level) list-of-struct columns. **This is the one genuine technical spike** (flagged in groundtruth_schema.md:137-144).
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:430:       PRECURSOR table[k]    <- source_index=i, precursor_index=lastMS1ordinal, iso window, activation PARAMs
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:431:       SELECTED_ION table[k] <- source_index=i, precursor_index=lastMS1ordinal, mz, charge, intensity
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:436:  N rows. spectrum/scan def-level=1 for all N; precursor/selected_ion def-level=1 for k<M else 0.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:437:  ParquetSchema(spectrum, scan, precursor, selected_ion) -> WriteFacet
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:445:- **Swapping precursor source_index/precursor_index:** source_index=MS2 ordinal, precursor_index=MS1 parent ordinal.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:458:| last-MS1-parent tracking | scan re-scan | mirror `_precursorScanNumbers[""]` pattern | already the established approach |
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:472:**How to avoid:** Build four independent tables; precursor table has M=#MS2 entries at rows 0..M-1, source_index=MS2 ordinal.
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:473:**Warning signs:** precursor.source_index == row index (should be the MS2 ordinal, which differs once MS1/MS2 interleave).
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:501:| META-01 | scan facet present, source_index=row | unit | `dotnet test --filter MzPeakWriterTests` |
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:502:| META-01..04 | per-struct def-level null discipline (precursor/selected_ion null on rows >= #MS2) | unit | same |
+.planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md:503:| META-03/04 | precursor.source_index==MS2 ordinals; precursor_index==MS1 parent ordinal | unit | same |
+refs/_findings/mzpeak_groundtruth_schema.md:35:the others are null. (`scan`/`precursor`/`selected_ion` reference back via `source_index`.)
+refs/_findings/mzpeak_groundtruth_schema.md:45:MS_1000559_spectrum_type: string             (CURIE: MS:1000579 MS1 / MS:1000580 MSn)
+refs/_findings/mzpeak_groundtruth_schema.md:62:source_index: uint64
+refs/_findings/mzpeak_groundtruth_schema.md:81:source_index: uint64
+refs/_findings/mzpeak_groundtruth_schema.md:82:precursor_index: uint64
+refs/_findings/mzpeak_groundtruth_schema.md:92:### selected_ion
+refs/_findings/mzpeak_groundtruth_schema.md:94:source_index: uint64
+refs/_findings/mzpeak_groundtruth_schema.md:95:precursor_index: uint64
+refs/_findings/mzpeak_groundtruth_schema.md:96:MS_1000744_selected_ion_mz_unit_MS_1000040: double
+refs/_findings/mzpeak_groundtruth_schema.md:112:selected_ion: struct<...>     (same shape as spectra selected_ion)
+
+exec
+/bin/zsh -lc "sed -n '1,260p' .planning/phases/03-spectra-metadata-file-level-metadata-index/RESEARCH.md" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+# Phase 3: Spectra Metadata + File-Level Metadata/Index - Research
+
+**Researched:** 2026-06-14
+**Domain:** mzPeak packed-parallel metadata tables (Parquet nested structs) + `mzpeak_index.json` metadata block, Thermo extraction reuse, CV mapping, mzpeak-validate conformance
+**Confidence:** HIGH (every claim below is from a pyarrow dump of the reference archive, the validator profile source, or a file:line in the project tree)
+
+## Summary
+
+The "packed parallel tables" model in CONTEXT.md is **almost right but the per-row null
+discipline is wrong**. A pyarrow dump of the reference `spectra_metadata.parquet` shows the four
+top-level struct columns (`spectrum`, `scan`, `precursor`, `selected_ion`) are **four independent
+tables co-resident in one file, each laid out at row position = that table's own ordinal, right-padded
+with null-field rows to the shared file row count (48)**. They are NOT row-disjoint: row `i` carries
+`spectrum[i]` AND `scan[i]` AND (if `i < #MS2`) `precursor[i]`/`selected_ion[i]`. Linkage is by the
+`source_index` field, never by row position. The exact algorithm is in "Decision 1" below.
+
+All Thermo extraction the phase needs already exists verbatim in `MzMlSpectrumWriter.cs` — one
+method (`ConstructScanList`, line 2690) yields scan_start_time/filter_string/ion_injection_time/
+scan_windows; `ConstructPrecursorList` (line 2355) yields isolation window + activation +
+selected-ion; the spectrum-level block (line 1505-1674) yields polarity/TIC/base-peak/observed-mz.
+`OntologyMapping` + the instrument-config loop (line 755) yield the instrument components. The plan
+reuses these calls; it does NOT re-decode Thermo.
+
+The validator is the decisive gate and resolving it is simpler than feared: **the official reference
+archive itself FAILS `mzpeak-validate` with the same two errors**, one of which Phase 3 must avoid.
+The metadata `meta_*_valid` rules read **Parquet footer KV blobs, not the index**, and self-gate on
+absence. So Phase 3's only hard new requirement beyond the `scan` facet is **emitting `metadata.cv_list`
+in the index** (declaring MS + UO), because the moment CV-named columns appear, `cv_list_declared`
+fires if cv_list is absent.
+
+**Primary recommendation:** Build the four struct columns as independent right-padded tables linked by
+`source_index`; reuse the exact `MzMlSpectrumWriter` extraction calls; emit metadata blocks into BOTH
+the index `metadata{}` AND the `spectra_metadata.parquet` footer KV (the footer is what the validator
+schema-checks); always emit `metadata.cv_list` with MS + UO.
+
+## Architectural Responsibility Map
+
+| Capability | Primary Tier | Secondary Tier | Rationale |
+|------------|-------------|----------------|-----------|
+| Per-scan metadata extraction | Thermo RAW reader (`IRawDataPlus`) | `MzMlSpectrumWriter` helpers | The decode logic already lives in the mzML path; reuse, don't re-derive |
+| Packed-parallel table assembly | `MzPeakSpectrumWriter` | `MzPeakParquet` helper | Phase-2 owns the per-ordinal loop and the low-level Parquet writer |
+| Nested struct / list-of-struct Parquet | `MzPeakParquet` (Parquet.Net low-level) | — | POCO serializer cannot express nullable parallel struct columns |
+| CV term → CURIE mapping | `OntologyMapping` | hard-coded constants for fixed terms | Instrument/dissociation dicts exist; representation/type/polarity are fixed literals |
+| File-level metadata JSON | `MzPeakSpectrumWriter.BuildIndex` + new footer writer | `MetadataWriter`/`OntologyMapping` for instrument data | Index + footer are both written here |
+| Conformance gate | `mzpeak-validate` (external) | NUnit | Validator profile is authoritative |
+
+## User Constraints (from CONTEXT.md)
+
+### Locked Decisions
+- **Packed parallel tables** in one `spectra_metadata.parquet` = four nullable TOP-LEVEL struct columns
+  (`spectrum`, `scan`, `precursor`, `selected_ion`). `scan`/`precursor`/`selected_ion` link back to their
+  spectrum via `source_index`. **[RESEARCH CORRECTION — see Decision 1: the structs are NOT row-disjoint;
+  each is an independent table right-padded to the shared row count. CONTEXT.md's "Each ROW populates
+  exactly one struct; the other three are null" is contradicted by the reference archive.]**
+- **Rich `spectrum` fields** (CV-accession column names) — confirmed exactly against the reference schema (Decision 3).
+- **`scan`:** scan_start_time (UO_0000031 minute), filter_string, ion_injection_time, instrument_configuration_ref, scan_windows, source_index — confirmed.
+- **`precursor`** (MSn only): isolation_window + activation PARAM list; **`selected_ion`** (MSn only): selected_ion_mz, charge_state, intensity, source_index — confirmed.
+- **`mzpeak_index.json` metadata{}** block: instrument_configuration_list, software_list, data_processing_method_list, file_description, cv_list, sample_list/scan_settings_list — confirmed; **also emit into the parquet footer (Decision 4/6).**
+- **CV mapping:** reuse `OntologyMapping` + `MzMlSpectrumWriter` extraction — confirmed available (Decision 2/5).
+
+### Claude's Discretion
+- Whether instrument metadata blocks go in index-only, footer-only, or both. **Recommendation: BOTH** (Decision 6 — the validator only checks the footer; the reference duplicates into both).
+- Exact CV versions in cv_list (Decision 4 — recommend matching the validator pins to avoid the version warning).
+
+### Deferred Ideas (OUT OF SCOPE)
+- Chromatogram metadata facet (Phase 4).
+- Row-group batching / large-RAW streaming (v2/OPT per Phase-2 SUMMARY).
+- `ion_mobility_value`/`ion_mobility_type`, `mz_delta_model`, `auxiliary_arrays` (timsTOF / advanced — emit as null/empty; not in small.RAW).
+
+## Phase Requirements
+
+| ID | Description | Research Support |
+|----|-------------|------------------|
+| META-01 | `scan` facet (clears the validator error) | Decision 1 (algorithm) + Decision 2 (ConstructScanList reuse) + Decision 7 (columns.json contract) |
+| META-02 | Rich `spectrum` fields | Decision 3 (exact schema + CV values) + spectrum-level reuse table |
+| META-03 | `precursor` facet (MSn) | Decision 1 (precursor table mechanics) + ConstructPrecursorList reuse |
+| META-04 | `selected_ion` facet (MSn) | Decision 1 + selected-ion reuse rows |
+| META-05 | PARAM lists (activation, scan params, scan_windows) | PARAM shape (`MzPeakParquet.BuildParamField`) + Decision 3 CV table |
+| IDX-01 | instrument_configuration_list | Decision 5 (OntologyMapping reuse) + Decision 6 (index+footer) |
+| IDX-02 | software_list / data_processing_method_list / file_description | Decision 4 (templates) |
+| IDX-03 | cv_list (MS, UO superset) | Decision 4 + Decision 6 (MANDATORY — validator `cv_list_declared`) |
+| IDX-04 | sample_list / scan_settings_list (may be empty) | Decision 4 templates |
+
+---
+
+## DECISIONS (per unknown)
+
+### Decision 1 — Ground-truth row mechanics & the EXACT row-emission algorithm
+
+**Source:** pyarrow dump of `refs/mzPeak/small.unpacked.mzpeak/spectra_metadata.parquet` (48 rows). [VERIFIED: pyarrow 12.0.1]
+
+**Layout (the corrected model):** Four independent struct columns, each an independent logical table
+whose k-th entry sits at **row k**, right-padded with rows whose leaf fields are all null up to the file
+row count = `max(table lengths)` = spectrum count = 48.
+
+Measured null pattern (proper Arrow leaf-null check):
+- `spectrum.index` non-null on rows **0..47** (48 entries — one per emitted ordinal).
+- `scan.source_index` non-null on rows **0..47** (48 entries; `scan[i].source_index == scan[i].scan_index == i`).
+- `precursor.source_index` non-null on rows **0..33** (34 entries = the 34 MS2 spectra); **null on rows 34..47**.
+- `selected_ion.source_index` non-null on rows **0..33** (34 entries); null on 34..47.
+
+> NOTE: a naive `to_pydict()` makes the struct look "present" on every row because Arrow returns a dict
+> even when the entry is logically null. The leaf fields (`source_index` etc.) are the truth: they are
+> null for the padded tail. Implement this as: write the precursor/selected_ion struct column with a
+> definition-level array that is 0 (null) for rows >= 34.
+
+**Linkage semantics (measured):**
+- `spectrum.index = i` (dense 0-based ordinal — the Phase-2 join key). `id` = the Thermo nativeID string `controllerType=0 controllerNumber=1 scan=N`.
+- `scan.source_index = i` (= row, = the spectrum it describes). `scan.scan_index = i` too.
+- `precursor.source_index` = the **MS2 spectrum's** ordinal (the fragment scan). NOT the row. e.g. precursor row 0 has `source_index=2` (spectrum 2 is the first MS2). Sorted precursor.source_index == sorted list of MS2 spectrum indices exactly.
+- `precursor.precursor_index` = the **MS1 parent spectrum's** ordinal (the survey scan the precursor was selected from). Measured distinct values {1, 8, 15, 22, 29, 35, 42} — each is an MS1 spectrum index. `precursor.precursor_id` = that MS1's nativeID. (Five consecutive MS2 share precursor_index=1 → all fragmented from MS1 spectrum index 1, i.e. scan=2.)
+- `selected_ion.source_index` == `precursor.source_index` per row (both point at the same MS2 fragment spectrum); `selected_ion.precursor_index` == `precursor.precursor_index` per row.
+
+**Representative rows (measured):**
+
+| row | spectrum.index / ms_level / repr / type | scan.source_index / filter / rt(min) / iit | precursor.source_index / precursor_index / iso_target | selected_ion source_index / mz / charge |
+|-----|------------------------------------------|--------------------------------------------|-------------------------------------------------------|------------------------------------------|
+| 0 | 0 / 1 / MS:1000128 / MS:1000579 | 0 / `FTMS + p ESI Full ms [200.00-2000.00]` / 0.00494 / 68.23 | 2 / 1 / 810.789 | 2 / 810.789 / None |
+| 1 | 1 / 1 / MS:1000128 / MS:1000579 | 1 / `ITMS + p ESI Full ms [200.00-2000.00]` / 0.00790 / 2.08 | 3 / 1 / 837.345 | 3 / 837.345 / None |
+| 2 | 2 / 2 / MS:1000127 / MS:1000580 | 2 / `ITMS + c ESI d Full ms2 810.79@cid35.00 [210.00-1635.00]` / 0.01122 / 7.99 | 4 / 1 / 725.362 | 4 / 725.362 / None |
+| 5 | 5 / 2 / MS:1000127 / MS:1000580 | 5 / `...ms2 558.87@cid35.00...` / 0.04862 / 66.48 | 9 / 8 / 810.753 | 9 / 810.753 / None |
+| 7 | 7 / 1 / MS:1000128 / MS:1000579 | 7 / `FTMS + p ESI Full ms...` / 0.07502 / 61.13 | 11 / 8 / 644.057 | 11 / 644.057 / None |
+| 33 | 33 / 2 / MS:1000127 / MS:1000580 | 33 / ... | 47 / 42 / ... | 47 / ... / None |
+| 34..47 | 34..47 / (MS1 or MS2) / ... | 34..47 / ... / ... | **null** | **null** |
+
+(Note row 0 is an MS1 spectrum but precursor row 0 describes a *different* spectrum (#2). The two tables are parallel, not aligned.)
+
+**EXACT row-emission algorithm the writer must follow:**
+
+```
+Inputs from the Phase-2 loop, in emitted-ordinal order:
+  spectra[]      : one entry per emitted ordinal i (0..N-1), each with ms_level, id, time, etc.
+  N = spectra.Count   (= 48 for small.RAW)
+
+1. Build the SPECTRUM table: N entries, entry i = spectrum metadata for ordinal i. (full def-level for all N rows)
+2. Build the SCAN table: N entries, entry i = scan metadata for ordinal i,
+     with scan.source_index = i, scan.scan_index = i. (full def-level for all N rows)
+3. Build the PRECURSOR table: one entry per MS2 (ms_level >= 2) spectrum, in ascending ordinal order.
+     For the k-th MS2 spectrum (whose ordinal is s, and whose MS1 parent ordinal is p):
+         precursor[k].source_index    = s          (the MS2 fragment spectrum ordinal)
+         precursor[k].precursor_index = p          (the MS1 parent ordinal)
+         precursor[k].precursor_id    = id of spectrum p
+         precursor[k].isolation_window / activation = from ConstructPrecursorList logic
+   Let M = #MS2.  (M = 34 for small.RAW)
+4. Build the SELECTED_ION table: one entry per MS2, SAME order as precursor, same source_index/precursor_index.
+5. ROW COUNT = N (= max(N, N, M, M)).  Write all four as columns of one ParquetSchema with N rows:
+     - spectrum column: def-level 1 for rows 0..N-1
+     - scan column:     def-level 1 for rows 0..N-1
+     - precursor column:    def-level 1 for rows 0..M-1, def-level 0 (null) for rows M..N-1
+     - selected_ion column: def-level 1 for rows 0..M-1, def-level 0 (null) for rows M..N-1
+```
+
+The MS1-parent ordinal `p` is the most-recent MS1 spectrum before the MS2 in scan order — the
+`MzMlSpectrumWriter` already tracks this via `_precursorScanNumbers[""]` / `_precursorTree`
+(MzMlSpectrumWriter.cs:1336-1337). The plan can mirror that (track "last MS1 ordinal seen").
+
+> **Pitfall:** precursor.source_index is the MS2 ordinal, precursor.precursor_index is the MS1 ordinal.
+> Do not swap them. The selected_ion mirrors the precursor exactly.
+
+---
+
+### Decision 2 — Thermo extraction reuse table (the gold)
+
+**Source:** `ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs`. Every call below already exists; the plan
+reuses it. [VERIFIED: file:line in repo]
+
+| mzPeak column (target) | Thermo call / value | file:line |
+|------------------------|---------------------|-----------|
+| `scan.MS_1000016_scan_start_time` (minutes) | `_rawFile.RetentionTimeFromScanNumber(scanNumber)` | 2722 |
+| `scan.MS_1000512_filter_string` | `scanEvent.ToString()` (the IScanEvent) | 2730 |
+| `scan.MS_1000927_ion_injection_time` | `trailerData.AsDouble("Ion Injection Time (ms):")` | 1282 |
+| `scan.scan_windows[0].MS_1000501_..lower` | `scanStat.LowMass` (`GetScanStatsForScanNumber`) | 2781 (stat src 1244) |
+| `scan.scan_windows[0].MS_1000500_..upper` | `scanStat.HighMass` | 2791 |
+| `scan.instrument_configuration_ref` | index of `scanFilter.MassAnalyzer` in `_massAnalyzers` (0-based; ref impl ground truth uses 0=FTMS,1=ITMS) | 2710 |
+| `spectrum.MS_1000511_ms_level` | `(int)scanFilter.MSOrder` | 1250 |
+| `spectrum.MS_1000465_scan_polarity` (int8 +1/-1) | `scanFilter.Polarity` (`PolarityType.Positive`→+1, `Negative`→-1) | 1506-1531 |
+| `spectrum.MS_1000525_spectrum_representation` | `mzData.isCentroided` → MS:1000127 else MS:1000128 | 1587-1607 |
+| `spectrum.MS_1000559_spectrum_type` | ms_level==1 → MS:1000579 else MS:1000580 | 1317-1360 |
+| `spectrum.MS_1000285_total_ion_current` | `scanStats.TIC` | 1538 |
+| `spectrum.MS_1000504_base_peak_mz` | `mzData.basePeakMass` | 1623 |
+| `spectrum.MS_1000505_base_peak_intensity` | `mzData.basePeakIntensity` | 1638 |
+| `spectrum.MS_1000528_lowest_observed_mz` | `mzData.masses[0]` (ascending) | 1612 |
+| `spectrum.MS_1000527_highest_observed_mz` | `mzData.masses[last]` | 1613 |
+| `spectrum.MS_1003060_number_of_data_points` (MS1/profile) | array length of the data facet for that ordinal | (Phase-2 accumulator) |
+| `spectrum.MS_1003059_number_of_peaks` (MS2/centroid) | peak count for that ordinal | (Phase-2 accumulator) |
+| `precursor.isolation_window.MS_1000827_target_mz` | `reaction.PrecursorMass` (`scanEvent.GetReaction(n)`) | 2375/2448 |
+| `precursor.isolation_window.MS_1000828_lower_offset` | `isolationWidth.Value - offset`, `offset = width/2 + reaction.IsolationWidthOffset` | 2456-2462 |
+| `precursor.isolation_window.MS_1000829_upper_offset` | `offset` | 2473 |
+| `precursor.activation` PARAM: dissociation method | `OntologyMapping.DissociationTypes[reaction.ActivationType]` | 2500 |
+| `precursor.activation` PARAM: collision energy | `reaction.CollisionEnergy` (when `reaction.CollisionEnergyValid`), unit UO:0000266 | 2485-2497 |
+| `selected_ion.MS_1000744_selected_ion_mz` | `CalculateSelectedIonMz(reaction, monoisotopicMz, isolationWidth)` | 2392 |
+| `selected_ion.MS_1000041_charge_state` (int32) | `trailerData.AsPositiveInt("Charge State:")` (null if absent — small.RAW has none) | 1280 |
+| `selected_ion.MS_1000042_intensity` | `CalculatePrecursorPeakIntensity(...)` | 2420 |
+| MS1-parent ordinal (precursor.precursor_index) | track "last MS1 scan seen" as `MzMlSpectrumWriter` does via `_precursorScanNumbers[""]` | 1336 |
+| ion injection time / charge / monoiso source | `new ScanTrailer(_rawFile.GetTrailerExtraInformation(scanNumber))` | 1271 |
+
+Supporting key methods to mine wholesale: `ConstructScanList(scanNumber, scanStat, scanFilter, scanEvent, monoisotopicMz, ionInjectionTime)` (2690-2803) and `ConstructPrecursorList(...)` (2355-2483). They already emit the exact CV accessions and units the mzPeak columns need.
+
+---
+
+### Decision 3 — CV value table
+
+**Source:** pyarrow dump of reference `parameters`/`isolation_window`/`activation` + `OntologyMapping.cs`. [VERIFIED: pyarrow + file:line]
+
+| Concept | mzPeak column / location | Form | Value(s) | Notes |
+|---------|--------------------------|------|----------|-------|
+| ms level | `spectrum.MS_1000511_ms_level` | **uint8 scalar** | 1, 2, ... | raw int, NOT a CURIE |
+| polarity | `spectrum.MS_1000465_scan_polarity` | **int8 scalar** | **+1** (positive) / **-1** (negative) | confirmed: distinct value {1} in reference. NOT a CURIE. Maps from `PolarityType.Positive→+1`, `Negative→-1`. (mzML uses MS:1000130/129 strings; mzPeak collapses to a signed int8.) |
+| representation | `spectrum.MS_1000525_spectrum_representation` | **CURIE string** | **MS:1000127** centroid / **MS:1000128** profile | reference MS1(FT profile)=MS:1000128, MS2(IT centroid)=MS:1000127. Reflects actual array continuity, NOT ms_level. |
+| spectrum type | `spectrum.MS_1000559_spectrum_type` | **CURIE string** | **MS:1000579** (ms_level 1) / **MS:1000580** (ms_level >=2) | |
+| lowest/highest obs mz | `spectrum.MS_1000528.._unit_MS_1000040`, `MS_1000527.._unit_MS_1000040` | double scalar, unit baked in column name (MS:1000040 m/z) | — | |
+| base peak mz / intensity | `MS_1000504_..unit_MS_1000040` (double) / `MS_1000505_..unit_MS_1000131` (float) | scalar, unit in name | — | MS:1000131 = number of detector counts |
+| total ion current | `MS_1000285_..unit_MS_1000131` | float scalar | — | |
+| scan_start_time | `scan.MS_1000016_scan_start_time_unit_UO_0000031` | **float32 scalar**, unit UO:0000031 (minute) baked in name | — | see Decision 3b |
+| ion injection time | `scan.MS_1000927_..unit_UO_0000028` | float32 scalar, unit UO:0000028 (ms) in name | — | |
+| filter string | `scan.MS_1000512_filter_string` | large_string scalar | the filter | not CV-valued |
+| scan window lower/upper | `scan.scan_windows[].MS_1000501_.._unit_MS_1000040`, `MS_1000500_..` | float32 scalar, unit in name | — | |
+| isolation target/offsets | `precursor.isolation_window.MS_1000827_target_mz` / `MS_1000828_lower_offset` / `MS_1000829_upper_offset` | float32 scalars | reference offsets = 1.0/1.0 | NOTE: target column has NO `_unit_` suffix in reference. |
+| dissociation method | `precursor.activation.parameters[]` PARAM entry | **PARAM with accession+name** | **CID MS:1000133**, **HCD MS:1000422** (beam-type CID), **ETD MS:1000598**, IRMPD MS:1000262, ECD MS:1000250, PQD MS:1000599, ETD-neg MS:1003247, UVPD MS:1003246, PTCR MS:1003249 | reference small.RAW uses **MS:1000133 "collision-induced dissociation"** — matches `OntologyMapping.DissociationTypes[CID]` exactly. (The mapping_report.md mislabels MS:1000133 as HCD — that is a report error; MS:1000133=CID, MS:1000422=HCD.) |
+| collision energy | `precursor.activation.parameters[]` PARAM entry | **PARAM float value + unit** | accession **MS:1000045**, name "collision energy", value=35.0, **unit UO:0000266** (electronvolt) | confirmed in reference dump |
+| selected ion mz | `selected_ion.MS_1000744_..unit_MS_1000040` | double scalar, unit in name | — | |
+| charge state | `selected_ion.MS_1000041_charge_state` | **int32 scalar** | null in small.RAW | NOT CURIE |
+| selected ion intensity | `selected_ion.MS_1000042_..unit_MS_1000131` | float scalar | — | |
+| mass resolving power (example scan param) | `scan.parameters[]` PARAM | PARAM integer value | accession MS:1000800, value=100000 (reference) | optional; small.RAW has it. Plan may omit or carry if available. |
+
+**Column-name convention:** built by `MzPeakParquet.CvColumn(accession, label, unitAccession)` → `MS_1000016_scan_start_time_unit_UO_0000031`. Verified helper exists (MzPeakParquet.cs:42). Note `isolation_window_target_mz` is the one column with NO unit suffix in the reference — match that.
+
+### Decision 3b — Time unit gotcha (CONFIRMED: no conversion)
+
+Reference `scan.MS_1000016_scan_start_time_unit_UO_0000031` is **float32, unit minute (UO:0000031)**.
+`_rawFile.RetentionTimeFromScanNumber(scanNumber)` returns **minutes** (MzMlSpectrumWriter.cs:2722 emits
+it with `unitAccession="UO:0000031" unitName="minute"` directly, no scaling). **No conversion needed —
+emit the raw Thermo value as float32 with unit minute.** (Unlike mzML pipelines that sometimes store
+seconds; TRFP and mzPeak both use minutes here.) [VERIFIED: file:line 2722-2725 + pyarrow column name]
+
+---
+
+### Decision 4 — `mzpeak_index.json` metadata{} block (exact JSON shapes)
+
+**Source:** `cat refs/mzPeak/small.unpacked.mzpeak/mzpeak_index.json` + `refs/mzPeak/schema/*.json` + validator `schema/json/*.json`. [VERIFIED]
+
+**Index top level:** `{ "version": "0.9", "files": [...], "metadata": { ... } }`. The validator index
+schema **requires** `files` (each item: name, entity_type∈{spectrum,mass spectrum,chromatogram,wavelength spectrum,image,other}, data_kind∈{metadata,data arrays,peaks,other}) and `metadata` (object, **required `version`**).
+
+> The reference puts `version` at index top level only; the validator reads `metadata.version`. Phase 1
+> already writes `metadata.version` (MzPeakSpectrumWriter.cs:283-286). Keep it. The reference's absence of
+> `metadata.version` is exactly why it FAILS `index_schema_valid` (Decision 6).
+
+**Required keys per sub-schema** (from `refs/mzPeak/schema/` and validator `schema/json/`):
+- `instrument_configuration` item requires: `id` (int), `components` (array), `parameters` (array), `software_reference` (string). Each component requires `component_type` ∈ {ionsource,analyzer,detector}, `order` (int), `parameters` (array).
+- `data_processing_method`: properties `id`, `methods[]` (each: order, software_reference, parameters) — no top-level `required` declared.
+- `software`: properties `id`, `version`, `parameters` — no `required` declared.
+- `sample` requires: `id`, `name`, `parameters`.
+- `ms_run` requires: `id`, `default_instrument_id` (int), `default_data_processing_id` (string), `default_source_file_id` (string); optional `start_time` (RFC3339), `parameters`.
+- `file_description`: `contents[]` (PARAM), `source_files[]` (each requires id, name, location, parameters).
+- `cv_list` item requires: **`id`, `version`, `uri`** (full_name optional).
+- `param`: requires **`name`**; optional accession (CURIE pattern `\S+:\S+` or null), value, unit.
+
+**Exact metadata{} template (drop-in for small.RAW, derived from reference + TRFP-available data):**
+
+
+codex
+I found one wording detail worth validating: the plan says “def-level 0” for a null `number_of_peaks`, while the general nested-level builder may calculate a higher null definition level inside a present `spectrum` struct. I’m checking the current schema conventions before deciding whether that is a real plan bug or just shorthand for “null, not zero.”
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs | sed -n '1,220p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+     1	using System;
+     2	using System.Collections.Generic;
+     3	using System.IO;
+     4	using System.Linq;
+     5	using System.Threading.Tasks;
+     6	using Parquet;
+     7	using Parquet.Data;
+     8	using Parquet.Schema;
+     9	
+    10	namespace ThermoRawFileParser.Writer
+    11	{
+    12	    public struct MzPeakParam
+    13	    {
+    14	        public long? Integer;
+    15	        public double? Float;
+    16	        public string String;
+    17	        public bool? Boolean;
+    18	        public string Accession;
+    19	        public string Name;
+    20	        public string Unit;
+    21	    }
+    22	
+    23	    public static class MzPeakParquet
+    24	    {
+    25	        public static StructField BuildParamField(string name)
+    26	        {
+    27	            var value = new StructField("value",
+    28	                new DataField<long>("integer", true),
+    29	                new DataField<double>("float", true),
+    30	                new DataField<string>("string", true),
+    31	                new DataField<bool>("boolean", true));
+    32	
+    33	            return new StructField(name,
+    34	                value,
+    35	                new DataField<string>("accession", true),
+    36	                new DataField<string>("name", true),
+    37	                new DataField<string>("unit", true));
+    38	        }
+    39	
+    40	        // The label must already be normalized to snake_case by the caller; this method
+    41	        // performs no label normalization and only rewrites the ':' in CURIE accessions to '_'.
+    42	        public static string CvColumn(string accession, string label, string unitAccession = null)
+    43	        {
+    44	            var head = accession.Replace(':', '_') + "_" + label;
+    45	            if (unitAccession == null) return head;
+    46	            return head + "_unit_" + unitAccession.Replace(':', '_');
+    47	        }
+    48	
+    49	        public static DataColumn Column(DataField field, Array defined, int[] defLevels, int[] repLevels)
+    50	        {
+    51	            if (defLevels == null) return new DataColumn(field, defined);
+    52	            return new DataColumn(field, defined, defLevels, repLevels);
+    53	        }
+    54	
+    55	        public static async Task WriteAsync(Stream output, ParquetSchema schema,
+    56	            IReadOnlyDictionary<string, string> customMetadata,
+    57	            IDictionary<DataField, (Array defined, int[] defLevels, int[] repLevels)> columns)
+    58	        {
+    59	            using (var writer = await ParquetWriter.CreateAsync(schema, output).ConfigureAwait(false))
+    60	            {
+    61	                writer.CompressionMethod = CompressionMethod.Zstd;
+    62	                if (customMetadata != null) writer.CustomMetadata = customMetadata;
+    63	
+    64	                using (var rg = writer.CreateRowGroup())
+    65	                {
+    66	                    foreach (var field in schema.GetDataFields())
+    67	                    {
+    68	                        var triple = columns[field];
+    69	                        await rg.WriteColumnAsync(Column(field, triple.defined, triple.defLevels, triple.repLevels))
+    70	                            .ConfigureAwait(false);
+    71	                    }
+    72	                }
+    73	            }
+    74	        }
+    75	    }
+    76	}
+
+exec
+/bin/zsh -lc "rg -n \"def-level 0|number_of_peaks|DataField<|BuildParamField|StructField\\(\" ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs -S" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:190:            var point = new StructField("point",
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:191:                new DataField<ulong>("spectrum_index"),
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:192:                new DataField<double>("mz"),
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:193:                new DataField<float>("intensity"));
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:215:            var spectrum = new StructField("spectrum",
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:216:                new DataField<ulong>("index"),
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:217:                new DataField<string>("id", false),
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:218:                new DataField<double>("time", false));
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:31:        public void BuildParamField_LeafOrder()
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:33:            var field = MzPeakParquet.BuildParamField("parameters");
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:34:            var schema = new ParquetSchema(new StructField("row", field));
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:52:            var paramItem = new StructField("item",
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:53:                new DataField<string>("name"),
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:54:                new DataField<double>("val", true));
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:56:            var spectrum = new StructField("spectrum",
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:57:                new DataField<ulong>("index"), paramsList);
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:77:            var mzRange = new StructField("mz_range",
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:78:                new DataField<double>("lo"), new DataField<double>("hi"));
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:79:            var paramItem = new StructField("item",
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:80:                new DataField<string>("name"), new DataField<double>("val", true));
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:82:            var spectrum = new StructField("spectrum",
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:83:                new DataField<ulong>("index"), mzRange, paramsList);
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:84:            var scan = new StructField("scan",
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:85:                new DataField<ulong>("source_index"), new DataField<float>("rt"));
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:140:            var spectrum = new StructField("spectrum", MzPeakParquet.BuildParamField("p"));
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs:202:            var spectrum = new StructField("spectrum", new DataField<ulong>("index"));
+
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs | sed -n '1,240p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+     1	using System;
+     2	using System.Collections.Generic;
+     3	using System.IO;
+     4	using System.Linq;
+     5	using NUnit.Framework;
+     6	using Parquet;
+     7	using Parquet.Data;
+     8	using Parquet.Schema;
+     9	using ThermoRawFileParser.Writer;
+    10	
+    11	namespace ThermoRawFileParserTest
+    12	{
+    13	    [TestFixture]
+    14	    public class MzPeakParquetTests
+    15	    {
+    16	        private static DataField Leaf(ParquetSchema schema, string dotPath)
+    17	        {
+    18	            return schema.GetDataFields().First(d => d.Path.ToString() == dotPath);
+    19	        }
+    20	
+    21	        [Test]
+    22	        public void CvColumn_EmbedsAccessionAndLabel()
+    23	        {
+    24	            Assert.That(MzPeakParquet.CvColumn("MS:1000511", "ms_level"),
+    25	                Is.EqualTo("MS_1000511_ms_level"));
+    26	            Assert.That(MzPeakParquet.CvColumn("MS:1000016", "scan_start_time", "UO:0000031"),
+    27	                Is.EqualTo("MS_1000016_scan_start_time_unit_UO_0000031"));
+    28	        }
+    29	
+    30	        [Test]
+    31	        public void BuildParamField_LeafOrder()
+    32	        {
+    33	            var field = MzPeakParquet.BuildParamField("parameters");
+    34	            var schema = new ParquetSchema(new StructField("row", field));
+    35	            var leaves = schema.GetDataFields().Select(d => d.Path.ToString()).ToArray();
+    36	
+    37	            Assert.That(leaves, Is.EqualTo(new[]
+    38	            {
+    39	                "row/parameters/value/integer",
+    40	                "row/parameters/value/float",
+    41	                "row/parameters/value/string",
+    42	                "row/parameters/value/boolean",
+    43	                "row/parameters/accession",
+    44	                "row/parameters/name",
+    45	                "row/parameters/unit"
+    46	            }));
+    47	        }
+    48	
+    49	        [Test]
+    50	        public void Column_DefRepLevels_MatchCheatSheet()
+    51	        {
+    52	            var paramItem = new StructField("item",
+    53	                new DataField<string>("name"),
+    54	                new DataField<double>("val", true));
+    55	            var paramsList = new ListField("parameters", paramItem);
+    56	            var spectrum = new StructField("spectrum",
+    57	                new DataField<ulong>("index"), paramsList);
+    58	            var schema = new ParquetSchema(spectrum);
+    59	
+    60	            var nameLeaf = Leaf(schema, "spectrum/parameters/list/item/name");
+    61	            var indexLeaf = Leaf(schema, "spectrum/index");
+    62	
+    63	            var nameCol = MzPeakParquet.Column(nameLeaf, new[] { "a", "b" },
+    64	                new[] { 5, 5, 0, 2 }, new[] { 0, 1, 0, 0 });
+    65	            var indexCol = MzPeakParquet.Column(indexLeaf, new ulong[] { 10, 11 },
+    66	                new[] { 1, 0, 1 }, null);
+    67	
+    68	            Assert.That(nameCol.DefinitionLevels, Is.EqualTo(new[] { 5, 5, 0, 2 }));
+    69	            Assert.That(nameCol.RepetitionLevels, Is.EqualTo(new[] { 0, 1, 0, 0 }));
+    70	            Assert.That(indexCol.DefinitionLevels, Is.EqualTo(new[] { 1, 0, 1 }));
+    71	            Assert.That(indexCol.RepetitionLevels, Is.Null);
+    72	        }
+    73	
+    74	        [Test]
+    75	        public void RoundTrip_NestedStruct_ListOfStruct_ParallelNullableTopLevel()
+    76	        {
+    77	            var mzRange = new StructField("mz_range",
+    78	                new DataField<double>("lo"), new DataField<double>("hi"));
+    79	            var paramItem = new StructField("item",
+    80	                new DataField<string>("name"), new DataField<double>("val", true));
+    81	            var paramsList = new ListField("parameters", paramItem);
+    82	            var spectrum = new StructField("spectrum",
+    83	                new DataField<ulong>("index"), mzRange, paramsList);
+    84	            var scan = new StructField("scan",
+    85	                new DataField<ulong>("source_index"), new DataField<float>("rt"));
+    86	            var schema = new ParquetSchema(spectrum, scan);
+    87	
+    88	            var cols = new Dictionary<DataField, (Array, int[], int[])>
+    89	            {
+    90	                [Leaf(schema, "spectrum/index")] = (new ulong[] { 10, 11 }, new[] { 1, 0, 1 }, null),
+    91	                [Leaf(schema, "spectrum/mz_range/lo")] = (new[] { 100.5, 50.0 }, new[] { 2, 0, 2 }, null),
+    92	                [Leaf(schema, "spectrum/mz_range/hi")] = (new[] { 2000.0, 60.0 }, new[] { 2, 0, 2 }, null),
+    93	                [Leaf(schema, "spectrum/parameters/list/item/name")] =
+    94	                    (new[] { "a", "b" }, new[] { 5, 5, 0, 2 }, new[] { 0, 1, 0, 0 }),
+    95	                [Leaf(schema, "spectrum/parameters/list/item/val")] =
+    96	                    (new[] { 1.5 }, new[] { 5, 4, 0, 2 }, new[] { 0, 1, 0, 0 }),
+    97	                [Leaf(schema, "scan/source_index")] = (new ulong[] { 10 }, new[] { 0, 1, 0 }, null),
+    98	                [Leaf(schema, "scan/rt")] = (new[] { 1.23f }, new[] { 0, 1, 0 }, null)
+    99	            };
+   100	
+   101	            var ms = new MemoryStream();
+   102	            MzPeakParquet.WriteAsync(ms, schema, new Dictionary<string, string> { ["k"] = "v" },
+   103	                cols.ToDictionary(kv => kv.Key, kv => kv.Value)).GetAwaiter().GetResult();
+   104	
+   105	            ms.Position = 0;
+   106	            using (var reader = ParquetReader.CreateAsync(ms).Result)
+   107	            {
+   108	                var rg = reader.OpenRowGroupReader(0);
+   109	
+   110	                // On read, Data holds only the defined values; nulls live in DefinitionLevels.
+   111	                var indexCol = rg.ReadColumnAsync(Leaf(schema, "spectrum/index")).Result;
+   112	                Assert.That(indexCol.Data, Is.EqualTo(new ulong[] { 10, 11 }));
+   113	                Assert.That(indexCol.DefinitionLevels, Is.EqualTo(new[] { 1, 0, 1 }));
+   114	
+   115	                var loCol = rg.ReadColumnAsync(Leaf(schema, "spectrum/mz_range/lo")).Result;
+   116	                Assert.That(loCol.Data, Is.EqualTo(new[] { 100.5, 50.0 }));
+   117	                Assert.That(loCol.DefinitionLevels, Is.EqualTo(new[] { 2, 0, 2 }));
+   118	
+   119	                var scanCol = rg.ReadColumnAsync(Leaf(schema, "scan/source_index")).Result;
+   120	                Assert.That(scanCol.Data, Is.EqualTo(new ulong[] { 10 }));
+   121	                Assert.That(scanCol.DefinitionLevels, Is.EqualTo(new[] { 0, 1, 0 }));
+   122	
+   123	                // list-of-struct: 2 items in row0 (second val null), empty list in row2.
+   124	                // String leaves read back with nulls embedded inline; def levels are the lock.
+   125	                var nameCol = rg.ReadColumnAsync(Leaf(schema, "spectrum/parameters/list/item/name")).Result;
+   126	                Assert.That(nameCol.Data, Is.EqualTo(new[] { "a", "b", null, null }));
+   127	                Assert.That(nameCol.DefinitionLevels, Is.EqualTo(new[] { 5, 5, 0, 2 }));
+   128	                Assert.That(nameCol.RepetitionLevels, Is.EqualTo(new[] { 0, 1, 0, 0 }));
+   129	
+   130	                // val is an explicitly-nullable leaf; it reads back with nulls embedded inline.
+   131	                var valCol = rg.ReadColumnAsync(Leaf(schema, "spectrum/parameters/list/item/val")).Result;
+   132	                Assert.That(valCol.Data, Is.EqualTo(new double?[] { 1.5, null, null, null }));
+   133	                Assert.That(valCol.DefinitionLevels, Is.EqualTo(new[] { 5, 4, 0, 2 }));
+   134	            }
+   135	        }
+   136	
+   137	        [Test]
+   138	        public void RoundTrip_Param_NullableAccessionUnitString()
+   139	        {
+   140	            var spectrum = new StructField("spectrum", MzPeakParquet.BuildParamField("p"));
+   141	            var schema = new ParquetSchema(spectrum);
+   142	
+   143	            // Union-as-struct discipline: each PARAM row populates EXACTLY ONE of the four value
+   144	            // leaves; the other three are null. Row0 populates integer; row1 populates string.
+   145	            // value/* leaves: maxDef=4 (4=non-null, 3=null). accession/name/unit: maxDef=3 (3=non-null, 2=null).
+   146	            var cols = new Dictionary<DataField, (Array, int[], int[])>
+   147	            {
+   148	                [Leaf(schema, "spectrum/p/value/integer")] = (new long[] { 7 }, new[] { 4, 3 }, null),
+   149	                [Leaf(schema, "spectrum/p/value/float")] = (new double[0], new[] { 3, 3 }, null),
+   150	                [Leaf(schema, "spectrum/p/value/string")] = (new[] { "hello" }, new[] { 3, 4 }, null),
+   151	                [Leaf(schema, "spectrum/p/value/boolean")] = (new bool[0], new[] { 3, 3 }, null),
+   152	                [Leaf(schema, "spectrum/p/accession")] = (new[] { "MS:1000511" }, new[] { 3, 2 }, null),
+   153	                [Leaf(schema, "spectrum/p/name")] = (new[] { "ms level", "intensity" }, new[] { 3, 3 }, null),
+   154	                [Leaf(schema, "spectrum/p/unit")] = (new[] { "UO:0000031" }, new[] { 3, 2 }, null)
+   155	            };
+   156	
+   157	            var ms = new MemoryStream();
+   158	            MzPeakParquet.WriteAsync(ms, schema, new Dictionary<string, string>(),
+   159	                cols.ToDictionary(kv => kv.Key, kv => kv.Value)).GetAwaiter().GetResult();
+   160	
+   161	            ms.Position = 0;
+   162	            using (var reader = ParquetReader.CreateAsync(ms).Result)
+   163	            {
+   164	                var rg = reader.OpenRowGroupReader(0);
+   165	
+   166	                // integer: row0 populated (def 4), row1 null (def 3).
+   167	                var integer = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/value/integer")).Result;
+   168	                Assert.That(integer.Data, Is.EqualTo(new long?[] { 7, null }));
+   169	                Assert.That(integer.DefinitionLevels, Is.EqualTo(new[] { 4, 3 }));
+   170	
+   171	                // string: row0 null (def 3), row1 populated (def 4).
+   172	                var str = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/value/string")).Result;
+   173	                Assert.That(str.Data, Is.EqualTo(new[] { null, "hello" }));
+   174	                Assert.That(str.DefinitionLevels, Is.EqualTo(new[] { 3, 4 }));
+   175	
+   176	                // float never populated: both rows null (def 3).
+   177	                var fl = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/value/float")).Result;
+   178	                Assert.That(fl.DefinitionLevels, Is.EqualTo(new[] { 3, 3 }));
+   179	
+   180	                // boolean never populated: both rows null (def 3).
+   181	                var boolean = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/value/boolean")).Result;
+   182	                Assert.That(boolean.DefinitionLevels, Is.EqualTo(new[] { 3, 3 }));
+   183	
+   184	                // accession: row0 present (def 3), row1 null (def 2).
+   185	                var acc = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/accession")).Result;
+   186	                Assert.That(acc.Data, Is.EqualTo(new[] { "MS:1000511", null }));
+   187	                Assert.That(acc.DefinitionLevels, Is.EqualTo(new[] { 3, 2 }));
+   188	
+   189	                var unit = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/unit")).Result;
+   190	                Assert.That(unit.Data, Is.EqualTo(new[] { "UO:0000031", null }));
+   191	                Assert.That(unit.DefinitionLevels, Is.EqualTo(new[] { 3, 2 }));
+   192	
+   193	                // name populated on both rows.
+   194	                var name = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/name")).Result;
+   195	                Assert.That(name.Data, Is.EqualTo(new[] { "ms level", "intensity" }));
+   196	            }
+   197	        }
+   198	
+   199	        [Test]
+   200	        public void WrittenFile_ReportsZstdCompression()
+   201	        {
+   202	            var spectrum = new StructField("spectrum", new DataField<ulong>("index"));
+   203	            var schema = new ParquetSchema(spectrum);
+   204	            var cols = new Dictionary<DataField, (Array, int[], int[])>
+   205	            {
+   206	                [Leaf(schema, "spectrum/index")] = (new ulong[] { 0 }, new[] { 1 }, null)
+   207	            };
+   208	
+   209	            var ms = new MemoryStream();
+   210	            MzPeakParquet.WriteAsync(ms, schema, new Dictionary<string, string>(),
+   211	                cols.ToDictionary(kv => kv.Key, kv => kv.Value)).GetAwaiter().GetResult();
+   212	
+   213	            ms.Position = 0;
+   214	            using (var reader = ParquetReader.CreateAsync(ms).Result)
+   215	            {
+   216	                var columns = reader.Metadata.RowGroups[0].Columns;
+   217	                Assert.That(columns, Is.Not.Empty);
+   218	                foreach (var c in columns)
+   219	                    Assert.That(c.MetaData.Codec, Is.EqualTo(Parquet.Meta.CompressionCodec.ZSTD));
+   220	
+   221	                var rg = reader.OpenRowGroupReader(0);
+   222	                var col = rg.ReadColumnAsync(Leaf(schema, "spectrum/index")).Result;
+   223	                Assert.That(col.Data, Is.EqualTo(new ulong[] { 0 }));
+   224	            }
+   225	        }
+   226	    }
+   227	}
+
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs | sed -n '170,240p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+   170	            var sortedInten = new float[n];
+   171	            for (int i = 0; i < n; i++)
+   172	            {
+   173	                sortedMz[i] = masses[order[i]];
+   174	                sortedInten[i] = (float)intensities[order[i]];
+   175	            }
+   176	            return (sortedMz, sortedInten);
+   177	        }
+   178	
+   179	        private static void AddStored(ZipArchive zip, string name, byte[] bytes)
+   180	        {
+   181	            var entry = zip.CreateEntry(name, CompressionLevel.NoCompression);
+   182	            using (var s = entry.Open())
+   183	            {
+   184	                s.Write(bytes, 0, bytes.Length);
+   185	            }
+   186	        }
+   187	
+   188	        private static byte[] BuildPointFacet(List<ulong> index, List<double> mz, List<float> intensity, int spectrumCount)
+   189	        {
+   190	            var point = new StructField("point",
+   191	                new DataField<ulong>("spectrum_index"),
+   192	                new DataField<double>("mz"),
+   193	                new DataField<float>("intensity"));
+   194	            var schema = new ParquetSchema(point);
+   195	
+   196	            var cols = new Dictionary<DataField, (Array, int[], int[])>
+   197	            {
+   198	                [Leaf(schema, "point/spectrum_index")] = (index.ToArray(), null, null),
+   199	                [Leaf(schema, "point/mz")] = (mz.ToArray(), null, null),
+   200	                [Leaf(schema, "point/intensity")] = (intensity.ToArray(), null, null)
+   201	            };
+   202	
+   203	            var meta = new Dictionary<string, string>
+   204	            {
+   205	                ["spectrum_count"] = spectrumCount.ToString(),
+   206	                ["spectrum_data_point_count"] = index.Count.ToString(),
+   207	                ["spectrum_array_index"] = SpectrumArrayIndex
+   208	            };
+   209	
+   210	            return WriteFacet(schema, meta, cols);
+   211	        }
+   212	
+   213	        private static byte[] BuildMetadataFacet(List<ulong> index, List<string> id, List<double> time)
+   214	        {
+   215	            var spectrum = new StructField("spectrum",
+   216	                new DataField<ulong>("index"),
+   217	                new DataField<string>("id", false),
+   218	                new DataField<double>("time", false));
+   219	            var schema = new ParquetSchema(spectrum);
+   220	
+   221	            var n = index.Count;
+   222	            var def = new int[n];
+   223	            for (int i = 0; i < n; i++) def[i] = 1;
+   224	
+   225	            var cols = new Dictionary<DataField, (Array, int[], int[])>
+   226	            {
+   227	                [Leaf(schema, "spectrum/index")] = (index.ToArray(), def, null),
+   228	                [Leaf(schema, "spectrum/id")] = (id.ToArray(), def, null),
+   229	                [Leaf(schema, "spectrum/time")] = (time.ToArray(), def, null)
+   230	            };
+   231	
+   232	            var meta = new Dictionary<string, string>
+   233	            {
+   234	                ["spectrum_count"] = n.ToString(),
+   235	                ["spectrum_data_point_count"] = "0"
+   236	            };
+   237	
+   238	            return WriteFacet(schema, meta, cols);
+   239	        }
+   240	
+
+codex
+Q1 RESOLVED: Task 1 now requires a general schema-derived `NestedLevels` computer and pyarrow proof on real `isolation_window`, `activation.parameters`, `scan_windows`, empty-vs-null lists, and null-padded precursor tails at [03-01-PLAN.md:148](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:148)-[159](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:159).
+
+Q2 RESOLVED: Task 3 requires `scanNumber -> emitted ordinal`, Master Scan Number plus scan-string fallback, null `precursor_index` when parent is filtered/not emitted, and an MS2-only test at [03-01-PLAN.md:190](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:190)-[205](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:205).
+
+Q3 RESOLVED: Count semantics are corrected to `spectra_data` point count plus nullable `spectra_peaks` count, with small.RAW assertions for populated vs null peaks at [03-01-PLAN.md:167](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:167)-[178](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:178).
+
+Q4 RESOLVED: Validator gate now parses by rule/error id and asserts absent `columns_spectra_metadata`, absent `cv_list_declared`, and no new ERROR ids beyond an allowlist at [03-01-PLAN.md:222](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:222)-[227](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:227).
+
+Q5 RESOLVED: PARAM/list elements are explicitly named `item`, with schema path assertions for `.../list/item/...` at [03-01-PLAN.md:153](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:153) and [03-01-PLAN.md:176](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:176)-[178](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:178).
+
+Q6 RESOLVED: `cv_list` is generated from emitted `CvColumn` and PARAM accession/unit prefixes, checked in both index and footer, not hard-coded to MS/UO at [03-01-PLAN.md:212](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:212)-[221](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:221).
+
+Q7 RESOLVED: The plan now has an authoritative row-model note superseding CONTEXT, states all four structs have N rows, and fixes counts wording at [03-01-PLAN.md:49](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:49)-[58](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:58) and [03-01-PLAN.md:167](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:167)-[174](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:174).
+
+NEW issues:
+N1: Minor wording hazard in Task 2: [03-01-PLAN.md:174](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-spectra-metadata-file-level-metadata-index/03-01-PLAN.md:174) says null `number_of_peaks` is “def-level 0”; for a nullable leaf inside present `spectrum`, this should say “emit NULL via `NestedLevels`, never value 0” so the builder computes the correct leaf-null level.
+
+VERDICT: SHIP-WITH-FIXES
+tokens used
+58.709
