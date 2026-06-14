@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Xml.Serialization;
-using IO.Mgf;
 using NUnit.Framework;
 using Parquet;
 using ThermoRawFileParser;
@@ -108,8 +107,6 @@ namespace ThermoRawFileParserTest
         [Test]
         public void TestMgf()
         {
-            if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture != System.Runtime.InteropServices.Architecture.X64)
-                Assert.Ignore("mzLib MassSpectrometry.dll is x64-only; MGF round-trip validation runs under x64.");
             // Get temp path for writing the test MGF
             var tempFilePath = Path.GetTempPath();
 
@@ -130,8 +127,6 @@ namespace ThermoRawFileParserTest
         [Test]
         public void TestFolderMgfs()
         {
-            if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture != System.Runtime.InteropServices.Architecture.X64)
-                Assert.Ignore("mzLib MassSpectrometry.dll is x64-only; MGF round-trip validation runs under x64.");
             // Get temp path for writing the test MGF
             var tempInPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
             var tempOutPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
@@ -160,13 +155,10 @@ namespace ThermoRawFileParserTest
             Directory.Delete(tempOutPath, true);
         }
 
-        // Kept out of the test method bodies so the x64-only mzLib MassSpectrometry assembly is
-        // only loaded (at JIT time) on x64; the tests Assert.Ignore on other architectures first.
-        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static void AssertMgfSpectra(string mgfPath, int expected)
         {
-            var mgfData = Mgf.LoadAllStaticData(mgfPath);
-            Assert.That(mgfData.NumSpectra, Is.EqualTo(expected));
+            var count = File.ReadLines(mgfPath).Count(l => l.Trim() == "BEGIN IONS");
+            Assert.That(count, Is.EqualTo(expected));
         }
 
         [Test]
