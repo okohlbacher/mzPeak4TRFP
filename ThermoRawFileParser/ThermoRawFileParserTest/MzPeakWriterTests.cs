@@ -1518,6 +1518,14 @@ namespace ThermoRawFileParserTest
             }
         }
 
+        // Known v1 baseline totals for small.RAW (captured from the certified v1 conversion). Asserting
+        // the literal numbers — not just self-consistency — catches self-consistent semantic drift.
+        private const int V1SpectrumCount = 48;
+        private const int V1DataPointCount = 305213;
+        private const int V1PeakSpectrumCount = 7;
+        private const int V1PeakPointCount = 12890;
+        private const int V1TicPointCount = 48;
+
         [Test]
         public void SmallRaw_Identical_To_V1_Invariants()
         {
@@ -1539,14 +1547,44 @@ namespace ThermoRawFileParserTest
                 Assert.That(data.Mz.Length, Is.EqualTo(data.PointCount),
                     "footer spectrum_data_point_count == point rows");
 
+                // Known v1 baseline totals on the data facet.
+                Assert.That(data.SpectrumCount, Is.EqualTo(V1SpectrumCount), "v1 baseline spectrum count");
+                Assert.That(data.PointCount, Is.EqualTo(V1DataPointCount), "v1 baseline total data points");
+
                 // Footer KV present and correct on the streamed data facet.
                 using (var ms = new MemoryStream(ReadEntry(archive, "spectra_data.parquet")))
                 using (var reader = ParquetReader.CreateAsync(ms).Result)
                 {
                     var kv = reader.CustomMetadata;
-                    Assert.That(kv["spectrum_count"], Is.EqualTo(data.SpectrumCount.ToString()));
-                    Assert.That(kv["spectrum_data_point_count"], Is.EqualTo(data.PointCount.ToString()));
+                    Assert.That(kv["spectrum_count"], Is.EqualTo(V1SpectrumCount.ToString()));
+                    Assert.That(kv["spectrum_data_point_count"], Is.EqualTo(V1DataPointCount.ToString()));
                     Assert.That(kv.ContainsKey("spectrum_array_index"), Is.True);
+                }
+
+                // Known v1 baseline totals + footer KV on the streamed peaks facet.
+                var peaks = ReadAllRowGroups(ReadEntry(archive, "spectra_peaks.parquet"));
+                Assert.That(peaks.SpectrumCount, Is.EqualTo(V1PeakSpectrumCount), "v1 baseline peak-bearing spectra");
+                Assert.That(peaks.PointCount, Is.EqualTo(V1PeakPointCount), "v1 baseline total peak points");
+                Assert.That(peaks.Mz.Length, Is.EqualTo(V1PeakPointCount), "peak point rows == footer count");
+                using (var ms = new MemoryStream(ReadEntry(archive, "spectra_peaks.parquet")))
+                using (var reader = ParquetReader.CreateAsync(ms).Result)
+                {
+                    var kv = reader.CustomMetadata;
+                    Assert.That(kv["spectrum_count"], Is.EqualTo(V1PeakSpectrumCount.ToString()));
+                    Assert.That(kv["spectrum_data_point_count"], Is.EqualTo(V1PeakPointCount.ToString()));
+                    Assert.That(kv.ContainsKey("spectrum_array_index"), Is.True);
+                }
+
+                // Known v1 baseline TIC point count + footer KV on the streamed chrom-data facet.
+                var chrom = ReadChromFacet(ReadEntry(archive, "chromatograms_data.parquet"));
+                Assert.That(chrom.Time.Length, Is.EqualTo(V1TicPointCount), "v1 baseline TIC point count");
+                using (var ms = new MemoryStream(ReadEntry(archive, "chromatograms_data.parquet")))
+                using (var reader = ParquetReader.CreateAsync(ms).Result)
+                {
+                    var kv = reader.CustomMetadata;
+                    Assert.That(kv.ContainsKey("chromatogram_data_point_count"), Is.True);
+                    Assert.That(kv.ContainsKey("chromatogram_array_index"), Is.True);
+                    Assert.That(kv.ContainsKey("chromatogram_tic_source"), Is.True);
                 }
 
                 // cv_list covers the chrom-data prefixes (derived prefixes MS/UO, not whole CURIEs).
@@ -1581,33 +1619,147 @@ namespace ThermoRawFileParserTest
             }), "all nine chrom-data accessions are registered before cv_list is finalized");
         }
 
+        // Runs the production MzPeakSpectrumWriter.Write loop against small.RAW into a temp directory.
+        // failScan: throw AFTER that scan's filter key is staged (a real post-key read failure).
+        // dropParentBeforeChild: just before that child's precursor is built, drop its resolved parent's
+        //   ordinal from the live map — a parent that was read but never emitted, so the child must not read
+        //   a selected-ion intensity through it. Returns the archive path.
+        private static string WriteWithInjection(string dir, int? failScan, int? dropParentBeforeChild)
+        {
+            var input = new ParseInput(TestRawFile, null, dir, OutputFormat.MzPeak);
+            var writer = new MzPeakSpectrumWriter(input);
+            if (failScan.HasValue)
+            {
+                writer.AfterFilterKeyStaged = scan =>
+                {
+                    if (scan == failScan.Value)
+                        throw new InvalidOperationException($"injected read failure on scan {scan}");
+                };
+            }
+            if (dropParentBeforeChild.HasValue)
+            {
+                writer.BeforeBuildPrecursor = (scan, scanToOrdinal) =>
+                {
+                    if (scan != dropParentBeforeChild.Value) return;
+                    // Strip every emitted parent so this child cannot resolve a precursor_index, while its
+                    // parent scan number is still positive — exactly the read-but-not-emitted condition.
+                    scanToOrdinal.Clear();
+                };
+            }
+            using (var raw = RawFileReaderFactory.ReadFile(TestRawFile))
+            {
+                raw.SelectInstrument(Device.MS, 1);
+                writer.Write(raw, raw.RunHeaderEx.FirstSpectrum, raw.RunHeaderEx.LastSpectrum);
+            }
+            return Path.Combine(dir, "small.mzpeak");
+        }
+
+        // Maps each MSn child's own ordinal (source_index) to its precursor_index (parent ordinal, null
+        // when the parent was not emitted) and its selected-ion intensity (null when not read).
+        private static (Dictionary<ulong, ulong?> precursorIndex, Dictionary<ulong, float?> selIntensity)
+            ReadMsnChildMaps(byte[] metaBytes)
+        {
+            using (var ms = new MemoryStream(metaBytes))
+            using (var reader = ParquetReader.CreateAsync(ms).Result)
+            {
+                var schema = reader.Schema;
+                var rg = reader.OpenRowGroupReader(0);
+
+                var preSrc = rg.ReadColumnAsync(Leaf(schema, "precursor/source_index")).Result;
+                var preIdx = rg.ReadColumnAsync(Leaf(schema, "precursor/precursor_index")).Result;
+                var siSrc = rg.ReadColumnAsync(Leaf(schema, "selected_ion/source_index")).Result;
+                var siInt = rg.ReadColumnAsync(Leaf(schema,
+                    "selected_ion/MS_1000042_intensity_unit_MS_1000131")).Result;
+
+                var precursorIndex = ZipNullable<ulong>(preSrc.Data, preIdx.Data);
+                var selIntensity = ZipNullable<float>(siSrc.Data, siInt.Data);
+                return (precursorIndex, selIntensity);
+            }
+        }
+
+        // Pairs a nullable source_index column (one defined value per MSn row, null on the padded tail)
+        // with a value column that holds a value only where present, producing source_index -> value?
+        // (null where the value itself is absent). Rows whose source_index is null are skipped.
+        private static Dictionary<ulong, T?> ZipNullable<T>(Array keys, Array values) where T : struct
+        {
+            var map = new Dictionary<ulong, T?>();
+            for (int i = 0; i < keys.Length; i++)
+            {
+                var key = keys.GetValue(i);
+                if (key == null) continue;
+                var v = values.GetValue(i);
+                map[(ulong)key] = v == null ? (T?)null : (T)v;
+            }
+            return map;
+        }
+
         [Test]
         public void FailedParent_DoesNotPoison_LaterChild_PrecursorResolution()
         {
-            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
-            var writer = new MzPeakSpectrumWriter(input);
-            var scanToOrdinal = new Dictionary<int, ulong>();
-            ulong ordinal = 0;
+            // Part A — staging isolation: a post-key read failure on an MS1 must consume no ordinal and no
+            // precursor-map entry. Skip scan 8 (an MS1) through the real Write loop and assert the output
+            // stays dense and every precursor_index still points at a real emitted ordinal.
+            var dirA = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            Directory.CreateDirectory(dirA);
+            try
+            {
+                var archive = WriteWithInjection(dirA, failScan: 8, dropParentBeforeChild: null);
 
-            const string parentKey = "FTMS + p NSI Full ms";
+                var data = ReadAllRowGroups(ReadEntry(archive, "spectra_data.parquet"));
+                var metaIdx = ReadMetadataIndices(ReadEntry(archive, "spectra_metadata.parquet"));
 
-            // Scan 10 is an MS1 parent that FAILS after computing its filterKey: the commit is never
-            // applied, so _precursorScanNumbers[parentKey] is NOT written for scan 10.
-            // (No CommitScanForTest call == the skip path.)
+                Assert.That(data.SpectrumCount, Is.EqualTo(metaIdx.Length),
+                    "metadata rows == data spectrum_count after the skip");
+                Assert.That(metaIdx.OrderBy(x => x).ToArray(),
+                    Is.EqualTo(Enumerable.Range(0, data.SpectrumCount).Select(i => (ulong)i).ToArray()),
+                    "ordinals dense 0..N-1 despite the skipped scan");
+                Assert.That(data.SpectrumCount, Is.EqualTo(V1SpectrumCount - 1),
+                    "exactly one scan was skipped");
 
-            // Scan 20 is a later VALID MS1 parent sharing the same filter prefix: it commits.
-            var parentOrdinal = writer.CommitScanForTest(parentKey, 20, ref ordinal, scanToOrdinal);
+                var (pre, _) = ReadMsnChildMaps(ReadEntry(archive, "spectra_metadata.parquet"));
+                foreach (var v in pre.Values.Where(v => v.HasValue))
+                    Assert.That(v.Value, Is.LessThan((ulong)data.SpectrumCount),
+                        "no precursor_index may dangle past the emitted set");
+            }
+            finally
+            {
+                Directory.Delete(dirA, true);
+            }
 
-            // Scan 30 is an MSn child of that filter prefix: it must resolve to scan 20's ordinal,
-            // never to the skipped scan 10.
-            var resolved = writer.ResolveParentOrdinalForTest(parentKey, scanToOrdinal);
+            // Part B — the C1 isolation guard: drive the real Write loop so that, at the moment an MSn child
+            // builds its precursor, its resolved parent has a positive scan number but no emitted ordinal
+            // (read-but-not-committed). The child must end with NO precursor_index and NO selected-ion
+            // intensity — it must not read intensity through the absent parent. Before the C1 fix the
+            // intensity was computed from the parent's scan regardless, and this fails.
+            const int childScan = 3; // the first MSn child in small.RAW
+            var dirB = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            Directory.CreateDirectory(dirB);
+            try
+            {
+                var archive = WriteWithInjection(dirB, failScan: null, dropParentBeforeChild: childScan);
+                var (pre, si) = ReadMsnChildMaps(ReadEntry(archive, "spectra_metadata.parquet"));
 
-            Assert.That(resolved, Is.EqualTo(parentOrdinal),
-                "child resolves to the later valid parent, not the skipped scan");
-            Assert.That(scanToOrdinal.ContainsKey(10), Is.False,
-                "skipped scan 10 consumed no ordinal");
-            Assert.That(ordinal, Is.EqualTo(1UL), "only the one committed scan advanced the ordinal");
-            Assert.That(scanToOrdinal[20], Is.EqualTo(0UL), "ordinals stay dense from 0");
+                // childScan is the third scan; with all scans emitted its ordinal is childScan-1.
+                ulong childOrdinal = (ulong)(childScan - 1);
+                Assert.That(pre.ContainsKey(childOrdinal), Is.True, "the targeted child must be present");
+                Assert.That(pre[childOrdinal], Is.Null,
+                    "a child whose parent was not emitted must have a null precursor_index");
+                Assert.That(si[childOrdinal], Is.Null,
+                    "a child with no emitted parent must not read a selected-ion intensity through it");
+
+                // The universal C1 invariant across all children: intensity present implies parent present.
+                foreach (var child in si.Keys)
+                {
+                    bool parentPresent = pre.TryGetValue(child, out var p) && p.HasValue;
+                    if (si[child] != null)
+                        Assert.That(parentPresent, Is.True,
+                            "selected-ion intensity may only exist when the parent was emitted");
+                }
+            }
+            finally
+            {
+                Directory.Delete(dirB, true);
+            }
         }
 
         [Test]
@@ -1624,10 +1776,10 @@ namespace ThermoRawFileParserTest
             var input = new ParseInput(raw, null, dir, OutputFormat.MzPeak);
             try
             {
-                // ROB-01 contract: an unreadable scan must NEVER abort the conversion with an unhandled
-                // throw; it is logged and ParseInput.NewError()-counted instead. This corpus file is a
-                // Finnigan RAW whose scan-event index is corrupt: every scan raises "Cannot get scan
-                // event". The robustness path must absorb every one of them without crashing.
+                // An unreadable scan must NEVER abort the conversion with an unhandled throw; it is logged
+                // and ParseInput.NewError()-counted instead. This corpus file is a Finnigan RAW whose
+                // scan-event index is corrupt: every scan raises "Cannot get scan event". The conversion
+                // must absorb every one of them without crashing.
                 Assert.DoesNotThrow(() => RawFileParser.Parse(input),
                     "bad scans must not abort the conversion with an unhandled exception");
                 Assert.That(input.Errors, Is.GreaterThanOrEqualTo(1),
@@ -1637,7 +1789,7 @@ namespace ThermoRawFileParserTest
                 if (File.Exists(archive))
                 {
                     // If any scan was readable, the produced archive must hold facet/metadata parity and
-                    // dense ordinals despite the skips (ROB-02).
+                    // dense ordinals despite the skips.
                     var data = ReadAllRowGroups(ReadEntry(archive, "spectra_data.parquet"));
                     var metaIdx = ReadMetadataIndices(ReadEntry(archive, "spectra_metadata.parquet"));
 

@@ -128,27 +128,26 @@ namespace ThermoRawFileParser.Writer
         {
         }
 
-        // Test seam mirroring the per-scan commit ordering for the shared precursor-resolution map. A
-        // scan whose read/build fails NEVER calls Commit*, so the precursor-map entry is not written and
-        // a later child cannot resolve its parent through the skipped scan. Returns the assigned ordinal.
-        internal ulong CommitScanForTest(string filterKey, int scanNumber, ref ulong ordinal,
-            IDictionary<int, ulong> scanNumberToOrdinal)
-        {
-            var assigned = ordinal;
-            scanNumberToOrdinal[scanNumber] = assigned;
-            _precursorScanNumbers[filterKey] = scanNumber;
-            ordinal++;
-            return assigned;
-        }
+        // Per-scan injection point: when set, it is invoked AFTER the scan's filter key is staged but
+        // BEFORE the scan commits. Throwing here reproduces a read/build failure on an already-keyed scan
+        // so a test can prove that a skipped parent commits no precursor-map entry and a later child never
+        // resolves through it. Production runs leave it null.
+        internal Action<int> AfterFilterKeyStaged;
 
-        // Resolve a child's parent scan number via the same shared map the writer uses, then map it to an
-        // emitted ordinal (null when the parent was skipped/filtered and never committed).
-        internal ulong? ResolveParentOrdinalForTest(string parentFilterKey,
-            IDictionary<int, ulong> scanNumberToOrdinal)
+        // Per-MSn injection point invoked just before a child's precursor is built, with the child scan
+        // number and the live scan->ordinal map. A test can drop the resolved parent's ordinal here to
+        // reproduce a parent that was read but never emitted, proving the child does not read a selected-ion
+        // intensity through that absent parent. Production runs leave it null.
+        internal Action<int, IDictionary<int, ulong>> BeforeBuildPrecursor;
+
+        // Everything staged from a single scan, held in locals until the scan fully succeeds. A read/build
+        // failure discards the whole struct: no ordinal, no rows, no precursor-map entry are committed.
+        private sealed class StagedScan
         {
-            if (!_precursorScanNumbers.TryGetValue(parentFilterKey, out var parentScan)) return null;
-            if (parentScan <= 0) return null;
-            return scanNumberToOrdinal.TryGetValue(parentScan, out var ord) ? ord : (ulong?)null;
+            public double[] Mz, PeakMz;
+            public float[] Inten, PeakInten;
+            public Record Rec;
+            public string FilterKey;
         }
 
         public override void Write(IRawDataPlus raw, int firstScanNumber, int lastScanNumber)
@@ -171,94 +170,24 @@ namespace ThermoRawFileParser.Writer
 
             ulong ordinal = 0;
 
-            var dataFacet = new PointFacetStream(Cap);
-            var peaksFacet = new PointFacetStream(Cap);
-            var chromFacet = new ChromDataFacetStream(Cap);
+            // Constructed INSIDE the try so a temp-file/handle open that throws for a later facet still
+            // disposes and deletes every facet created so far (the finally guards each handle for null).
+            PointFacetStream dataFacet = null;
+            PointFacetStream peaksFacet = null;
+            ChromDataFacetStream chromFacet = null;
 
             try
             {
+                dataFacet = new PointFacetStream(Cap);
+                peaksFacet = new PointFacetStream(Cap);
+                chromFacet = new ChromDataFacetStream(Cap);
+
                 for (var scanNumber = firstScanNumber; scanNumber <= lastScanNumber; scanNumber++)
                 {
-                    // Per-scan all-or-nothing staging: every read/build lands in locals first; nothing
-                    // touches shared/streaming state until the scan fully succeeds. A read/build failure
-                    // logs + NewError + skips, consuming no ordinal, no rows, no precursor-map entry.
-                    double[] stagedMz = null, stagedPeakMz = null;
-                    float[] stagedInten = null, stagedPeakInten = null;
-                    Record rec = null;
-                    string filterKey = null;
-                    bool stage;
-
+                    StagedScan staged;
                     try
                     {
-                        var scanFilter = raw.GetFilterForScanNumber(scanNumber);
-                        int level = (int)scanFilter.MSOrder;
-                        if (level > ParseInput.MaxLevel || !ParseInput.MsLevel.Contains(level)) continue;
-
-                        var scanEvent = raw.GetScanEventForScanNumber(scanNumber);
-                        var mzData = ReadMZData(raw, scanEvent, scanNumber, false, false, false);
-
-                        var (mz, inten) = OrderedPairs(mzData.masses, mzData.intensities);
-                        if (mz.Length == 0) continue;
-                        stagedMz = mz;
-                        stagedInten = inten;
-
-                        ulong? peakCount = null;
-                        if (scanEvent.ScanData == ScanDataType.Profile && Scan.FromFile(raw, scanNumber).HasCentroidStream)
-                        {
-                            var peakData = ReadMZData(raw, scanEvent, scanNumber, true, false, false);
-                            var (pMz, pInten) = OrderedPairs(peakData.masses, peakData.intensities);
-                            if (pMz.Length > 0)
-                            {
-                                stagedPeakMz = pMz;
-                                stagedPeakInten = pInten;
-                                peakCount = (ulong)pMz.Length;
-                            }
-                        }
-
-                        var scanStats = raw.GetScanStatsForScanNumber(scanNumber);
-                        var trailer = new ScanTrailer(raw.GetTrailerExtraInformation(scanNumber));
-
-                        // Mirror the mzML parent-derivation bookkeeping: map each scan's filter prefix to
-                        // its scan number so an MSn child can resolve its parent via the scan string.
-                        var filterMatch = level == 1
-                            ? null
-                            : (level == 2
-                                ? _filterStringIsolationMzPattern.Match(scanEvent.ToString())
-                                : _filterStringParentMzPattern.Match(scanEvent.ToString()));
-                        filterKey = level == 1 ? "" : (filterMatch != null && filterMatch.Success ? filterMatch.Groups[1].Value : "");
-
-                        rec = new Record
-                        {
-                            Ordinal = ordinal,
-                            ScanNumber = scanNumber,
-                            MsLevel = level,
-                            Id = ConstructSpectrumTitle((int)Device.MS, 1, scanNumber),
-                            Time = raw.RetentionTimeFromScanNumber(scanNumber),
-                            Polarity = scanFilter.Polarity == PolarityType.Negative ? (sbyte)-1 : (sbyte)1,
-                            Representation = mzData.isCentroided ? "MS:1000127" : "MS:1000128",
-                            SpectrumType = level == 1 ? "MS:1000579" : "MS:1000580",
-                            LowestMz = mz[0],
-                            HighestMz = mz[mz.Length - 1],
-                            BasePeakMz = mzData.basePeakMass ?? 0.0,
-                            BasePeakIntensity = (float)(mzData.basePeakIntensity ?? 0.0),
-                            TotalIonCurrent = (float)scanStats.TIC,
-                            DataPointCount = (ulong)mz.Length,
-                            PeakCount = peakCount,
-                            ScanStartTime = (float)raw.RetentionTimeFromScanNumber(scanNumber),
-                            FilterString = scanEvent.ToString(),
-                            IonInjectionTime = (float)(trailer.AsDouble("Ion Injection Time (ms):") ?? 0.0),
-                            InstrumentConfigRef = AnalyzerIndex(scanFilter.MassAnalyzer, scanFilter.IonizationMode),
-                            WindowLower = (float)scanStats.LowMass,
-                            WindowUpper = (float)scanStats.HighMass
-                        };
-
-                        if (level >= 2)
-                        {
-                            BuildPrecursor(raw, scanNumber, scanEvent, scanFilter, trailer, scanNumberToOrdinal,
-                                filterKey, rec);
-                        }
-
-                        stage = true;
+                        staged = StageScan(raw, scanNumber, ordinal, scanNumberToOrdinal);
                     }
                     catch (Exception ex)
                     {
@@ -268,21 +197,22 @@ namespace ThermoRawFileParser.Writer
                         continue;
                     }
 
-                    if (!stage) continue;
+                    // Out-of-range or empty scan: skip silently, consuming no ordinal.
+                    if (staged == null) continue;
 
                     // Commit block: scan fully succeeded. Apply ALL staged state atomically, including the
-                    // shared precursor-resolution map (S2) — a scan that failed above never reaches here,
-                    // so it cannot poison a later child's parent lookup. A write/flush/IO failure here is
-                    // FATAL (bytes may already be on disk) and must propagate, never be swallowed as a skip.
-                    dataFacet.Append(ordinal, stagedMz, stagedInten);
-                    if (stagedPeakMz != null)
+                    // shared precursor-resolution map — a scan that failed above never reaches here, so it
+                    // cannot poison a later child's parent lookup. A write/flush/IO failure here is FATAL
+                    // (bytes may already be on disk) and must propagate, never be swallowed as a skip.
+                    dataFacet.Append(ordinal, staged.Mz, staged.Inten);
+                    if (staged.PeakMz != null)
                     {
-                        peaksFacet.Append(ordinal, stagedPeakMz, stagedPeakInten);
+                        peaksFacet.Append(ordinal, staged.PeakMz, staged.PeakInten);
                         peakSpectra.Add(ordinal);
                     }
-                    records.Add(rec);
+                    records.Add(staged.Rec);
                     scanNumberToOrdinal[scanNumber] = ordinal;
-                    _precursorScanNumbers[filterKey] = scanNumber;
+                    _precursorScanNumbers[staged.FilterKey] = scanNumber;
                     ordinal++;
                 }
 
@@ -350,13 +280,104 @@ namespace ThermoRawFileParser.Writer
             }
             finally
             {
-                dataFacet.Dispose();
-                peaksFacet.Dispose();
-                chromFacet.Dispose();
-                TryDelete(dataFacet.TempPath);
-                TryDelete(peaksFacet.TempPath);
-                TryDelete(chromFacet.TempPath);
+                dataFacet?.Dispose();
+                peaksFacet?.Dispose();
+                chromFacet?.Dispose();
+                TryDelete(dataFacet?.TempPath);
+                TryDelete(peaksFacet?.TempPath);
+                TryDelete(chromFacet?.TempPath);
             }
+        }
+
+        // Reads and builds everything for one scan into per-scan locals, touching NO shared/streaming
+        // state. Returns null for an out-of-range or empty scan (a clean skip); returns the staged scan on
+        // success. Any read/build failure throws and is handled by the caller as an error-counted skip, so
+        // a failed scan never commits an ordinal, rows, or a precursor-map entry.
+        private StagedScan StageScan(IRawDataPlus raw, int scanNumber, ulong ordinal,
+            IDictionary<int, ulong> scanNumberToOrdinal)
+        {
+            var scanFilter = raw.GetFilterForScanNumber(scanNumber);
+            int level = (int)scanFilter.MSOrder;
+            if (level > ParseInput.MaxLevel || !ParseInput.MsLevel.Contains(level)) return null;
+
+            var scanEvent = raw.GetScanEventForScanNumber(scanNumber);
+            var mzData = ReadMZData(raw, scanEvent, scanNumber, false, false, false);
+
+            var (mz, inten) = OrderedPairs(mzData.masses, mzData.intensities);
+            if (mz.Length == 0) return null;
+
+            double[] peakMz = null;
+            float[] peakInten = null;
+            ulong? peakCount = null;
+            if (scanEvent.ScanData == ScanDataType.Profile && Scan.FromFile(raw, scanNumber).HasCentroidStream)
+            {
+                var peakData = ReadMZData(raw, scanEvent, scanNumber, true, false, false);
+                var (pMz, pInten) = OrderedPairs(peakData.masses, peakData.intensities);
+                if (pMz.Length > 0)
+                {
+                    peakMz = pMz;
+                    peakInten = pInten;
+                    peakCount = (ulong)pMz.Length;
+                }
+            }
+
+            var scanStats = raw.GetScanStatsForScanNumber(scanNumber);
+            var trailer = new ScanTrailer(raw.GetTrailerExtraInformation(scanNumber));
+
+            // Mirror the mzML parent-derivation bookkeeping: map each scan's filter prefix to its scan
+            // number so an MSn child can resolve its parent via the scan string.
+            var filterMatch = level == 1
+                ? null
+                : (level == 2
+                    ? _filterStringIsolationMzPattern.Match(scanEvent.ToString())
+                    : _filterStringParentMzPattern.Match(scanEvent.ToString()));
+            var filterKey = level == 1 ? "" : (filterMatch != null && filterMatch.Success ? filterMatch.Groups[1].Value : "");
+
+            // Failure injection point: the filter key is staged but nothing has committed. A throw here is
+            // indistinguishable from a real post-key read failure and must leave no trace of this scan.
+            AfterFilterKeyStaged?.Invoke(scanNumber);
+
+            var rec = new Record
+            {
+                Ordinal = ordinal,
+                ScanNumber = scanNumber,
+                MsLevel = level,
+                Id = ConstructSpectrumTitle((int)Device.MS, 1, scanNumber),
+                Time = raw.RetentionTimeFromScanNumber(scanNumber),
+                Polarity = scanFilter.Polarity == PolarityType.Negative ? (sbyte)-1 : (sbyte)1,
+                Representation = mzData.isCentroided ? "MS:1000127" : "MS:1000128",
+                SpectrumType = level == 1 ? "MS:1000579" : "MS:1000580",
+                LowestMz = mz[0],
+                HighestMz = mz[mz.Length - 1],
+                BasePeakMz = mzData.basePeakMass ?? 0.0,
+                BasePeakIntensity = (float)(mzData.basePeakIntensity ?? 0.0),
+                TotalIonCurrent = (float)scanStats.TIC,
+                DataPointCount = (ulong)mz.Length,
+                PeakCount = peakCount,
+                ScanStartTime = (float)raw.RetentionTimeFromScanNumber(scanNumber),
+                FilterString = scanEvent.ToString(),
+                IonInjectionTime = (float)(trailer.AsDouble("Ion Injection Time (ms):") ?? 0.0),
+                InstrumentConfigRef = AnalyzerIndex(scanFilter.MassAnalyzer, scanFilter.IonizationMode),
+                WindowLower = (float)scanStats.LowMass,
+                WindowUpper = (float)scanStats.HighMass
+            };
+
+            if (level >= 2)
+            {
+                BeforeBuildPrecursor?.Invoke(scanNumber, scanNumberToOrdinal);
+                BuildPrecursor(raw, scanNumber, scanEvent, scanFilter, trailer, scanNumberToOrdinal,
+                    filterKey, rec);
+            }
+
+            return new StagedScan
+            {
+                Mz = mz,
+                Inten = inten,
+                PeakMz = peakMz,
+                PeakInten = peakInten,
+                Rec = rec,
+                FilterKey = filterKey
+            };
         }
 
         private static void TryDelete(string path)
@@ -671,11 +692,23 @@ namespace ThermoRawFileParser.Writer
             rec.SelectedIonMz = CalculateSelectedIonMz(reaction, monoisotopicMz, isolationWidth);
             rec.ChargeState = charge;
 
-            if (rec.SelectedIonMz > ZeroDelta && parentScan > 0)
+            // Selected-ion intensity is read FROM the parent spectrum, so it is only meaningful when
+            // the parent was actually emitted (a committed ordinal). A parent that was skipped/filtered
+            // out or whose read fails must never force this otherwise-readable child to fail: gate on
+            // the parent ordinal being known, and treat any parent-read error as "intensity unknown".
+            if (rec.SelectedIonMz > ZeroDelta && rec.PrecursorIndex.HasValue)
             {
-                rec.SelectedIonIntensity = (float)CalculatePrecursorPeakIntensity(raw, parentScan,
-                    reaction.PrecursorMass, isolationWidth,
-                    ParseInput.NoPeakPicking.Contains(rec.MsLevel - 1));
+                try
+                {
+                    rec.SelectedIonIntensity = (float)CalculatePrecursorPeakIntensity(raw, parentScan,
+                        reaction.PrecursorMass, isolationWidth,
+                        ParseInput.NoPeakPicking.Contains(rec.MsLevel - 1));
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn($"Scan #{scanNumber}: parent #{parentScan} intensity unreadable, " +
+                             $"selected-ion intensity left null: {ex.Message}");
+                }
             }
         }
 
@@ -741,18 +774,39 @@ namespace ThermoRawFileParser.Writer
                 _idx = Leaf(_schema, "point/spectrum_index");
                 _mz = Leaf(_schema, "point/mz");
                 _int = Leaf(_schema, "point/intensity");
-                _sink = new FileStream(TempPath, FileMode.Create, FileAccess.Write);
-                _handle = MzPeakParquet.OpenAsync(_sink, _schema, null).GetAwaiter().GetResult();
+                try
+                {
+                    _sink = new FileStream(TempPath, FileMode.Create, FileAccess.Write);
+                    _handle = MzPeakParquet.OpenAsync(_sink, _schema, null).GetAwaiter().GetResult();
+                }
+                catch
+                {
+                    // Self-clean a partially-opened facet: the caller never receives a reference to dispose,
+                    // so release the sink and delete the temp file here before the exception propagates.
+                    _handle?.Dispose();
+                    _sink?.Dispose();
+                    TryDelete(TempPath);
+                    throw;
+                }
             }
 
+            // The cap is a HARD upper bound on the in-memory buffer: a single scan's points are split
+            // across as many row groups as needed (a scan MAY span row groups in the point layout),
+            // filling the remaining capacity, flushing at the cap, then continuing with the same ordinal.
             public void Append(ulong ordinal, double[] mz, float[] intensity)
             {
-                for (int i = 0; i < mz.Length; i++)
+                int i = 0;
+                while (i < mz.Length)
                 {
-                    _bIdx.Add(ordinal); _bMz.Add(mz[i]); _bInt.Add(intensity[i]);
+                    int room = _cap - _bIdx.Count;
+                    int take = Math.Min(room, mz.Length - i);
+                    for (int j = 0; j < take; j++, i++)
+                    {
+                        _bIdx.Add(ordinal); _bMz.Add(mz[i]); _bInt.Add(intensity[i]);
+                    }
+                    if (_bIdx.Count >= _cap) Flush();
                 }
                 PointCount += mz.Length;
-                if (_bIdx.Count >= _cap) Flush();
             }
 
             private void Flush()
@@ -812,8 +866,18 @@ namespace ThermoRawFileParser.Writer
                 _time = Leaf(_schema, "point/time");
                 _int = Leaf(_schema, "point/intensity");
                 _lvl = Leaf(_schema, "point/ms_level");
-                _sink = new FileStream(TempPath, FileMode.Create, FileAccess.Write);
-                _handle = MzPeakParquet.OpenAsync(_sink, _schema, null).GetAwaiter().GetResult();
+                try
+                {
+                    _sink = new FileStream(TempPath, FileMode.Create, FileAccess.Write);
+                    _handle = MzPeakParquet.OpenAsync(_sink, _schema, null).GetAwaiter().GetResult();
+                }
+                catch
+                {
+                    _handle?.Dispose();
+                    _sink?.Dispose();
+                    TryDelete(TempPath);
+                    throw;
+                }
             }
 
             public void Append(double time, float intensity, long msLevel)
