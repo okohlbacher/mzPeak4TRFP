@@ -57,7 +57,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   - Dense-ordinal bookkeeping after a mid-run skip: the spectrum index space must stay gap-free across spectra_data, spectra_peaks, and the four metadata tables simultaneously when a scan is dropped after partial state is emitted.
   - Multi-GB validation depends on the large corpus files being available in the run environment; absence would force a smaller proxy and a deferred MEM-02 confirmation.
 
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 01-01-PLAN.md — Streaming row-group/temp-file Parquet for data facets + STORED-zip stream-copy + per-scan all-or-nothing robustness; point layout unchanged
 
 ### Phase 2: Chunked Layout
 
@@ -149,7 +150,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Streaming Writer + Per-Scan Robustness | 0/0 | Not started | - |
+| 1. Streaming Writer + Per-Scan Robustness | 0/1 | Planned | - |
 | 2. Chunked Layout | 0/0 | Not started | - |
 | 3. Numpress-Linear m/z | 0/0 | Not started | - |
 | 4. Profile Compaction + Ion Mobility | 0/0 | Not started | - |
