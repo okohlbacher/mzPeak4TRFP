@@ -76,7 +76,7 @@ namespace ThermoRawFileParser.Writer
             "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":0}," +
             "{\"context\":\"spectrum\",\"path\":\"chunk.intensity\",\"data_type\":\"MS:1000521\",\"array_type\":\"MS:1000515\"," +
             "\"array_name\":\"intensity array\",\"unit\":\"MS:1000131\",\"buffer_format\":\"chunk_secondary\",\"transform\":\"MS:1003902\"," +
-            "\"data_processing_id\":null,\"buffer_priority\":\"primary\"}" +
+            "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":null}" +
             "]}";
 
         private const string ChromatogramArrayIndex =

@@ -36,6 +36,9 @@ namespace ThermoRawFileParserTest
             var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
             Directory.CreateDirectory(dir);
             parseInput.OutputDirectory = dir;
+            // These fixtures assert the v1 point spectra_data layout, which is now the --point opt-in
+            // (chunked is the default); force point so the v1 invariants stay under test.
+            parseInput.MzPeakPointLayout = true;
             RawFileParser.Parse(parseInput);
             Assert.That(parseInput.Errors, Is.EqualTo(0));
             archive = Path.Combine(dir, "small.mzpeak");
@@ -1626,7 +1629,10 @@ namespace ThermoRawFileParserTest
         //   a selected-ion intensity through it. Returns the archive path.
         private static string WriteWithInjection(string dir, int? failScan, int? dropParentBeforeChild)
         {
-            var input = new ParseInput(TestRawFile, null, dir, OutputFormat.MzPeak);
+            var input = new ParseInput(TestRawFile, null, dir, OutputFormat.MzPeak)
+            {
+                MzPeakPointLayout = true
+            };
             var writer = new MzPeakSpectrumWriter(input);
             if (failScan.HasValue)
             {

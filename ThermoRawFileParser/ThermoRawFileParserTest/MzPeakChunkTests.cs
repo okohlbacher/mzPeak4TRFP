@@ -1,7 +1,14 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.IO.Compression;
 using System.Linq;
+using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using Parquet;
+using Parquet.Schema;
+using ThermoRawFileParser;
 using ThermoRawFileParser.Writer;
 
 namespace ThermoRawFileParserTest
@@ -151,6 +158,334 @@ namespace ThermoRawFileParserTest
             Assert.That(present.Length, Is.EqualTo(1), "exactly one reconstructed peak");
             Assert.That(MzBits(present[0]), Is.EqualTo(MzBits(start)),
                 "the single peak sits at mz_chunk_start");
+        }
+
+        // --- Integration locks (small.RAW; pyarrow / validator gated with Assert.Ignore) ---
+
+        private const string ReferenceChunkedArchive =
+            "refs/mzPeak/small.chunked.mzpeak";
+
+        private static string RepoRoot()
+        {
+            var d = new DirectoryInfo(AppDomain.CurrentDomain.BaseDirectory);
+            while (d != null && !File.Exists(Path.Combine(d.FullName, ReferenceChunkedArchive)))
+                d = d.Parent;
+            return d?.FullName;
+        }
+
+        private static string TestRawFile =>
+            Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data", "small.RAW");
+
+        private static string Convert(bool point, out string dir)
+        {
+            dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            Directory.CreateDirectory(dir);
+            var input = new ParseInput(TestRawFile, null, dir, OutputFormat.MzPeak)
+            {
+                MzPeakPointLayout = point
+            };
+            RawFileParser.Parse(input);
+            Assert.That(input.Errors, Is.EqualTo(0));
+            var archive = Path.Combine(dir, "small.mzpeak");
+            Assert.That(File.Exists(archive));
+            return archive;
+        }
+
+        private static byte[] ReadEntry(string archive, string name)
+        {
+            using (var zip = ZipFile.OpenRead(archive))
+            {
+                var entry = zip.GetEntry(name);
+                if (entry == null) return null;
+                using (var s = entry.Open())
+                using (var ms = new MemoryStream())
+                {
+                    s.CopyTo(ms);
+                    return ms.ToArray();
+                }
+            }
+        }
+
+        private static string ResolvePython()
+        {
+            foreach (var cand in new[] { "python3", "python" })
+            {
+                try
+                {
+                    var psi = new ProcessStartInfo(cand, "-c \"import pyarrow\"")
+                    { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                    using (var p = Process.Start(psi)) { p.WaitForExit(); if (p.ExitCode == 0) return cand; }
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        private static string ResolveValidator()
+        {
+            try
+            {
+                var psi = new ProcessStartInfo("mzpeak-validate", "--help")
+                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                using (var p = Process.Start(psi)) { p.WaitForExit(); return "mzpeak-validate"; }
+            }
+            catch { return null; }
+        }
+
+        // Runs a pyarrow snippet against a named parquet entry of an archive ({PARQUET} token) and returns
+        // the printed JSON object. Ignores when python/pyarrow is unavailable.
+        private static JObject PyArrow(string archive, string entry, string snippet)
+        {
+            var python = ResolvePython();
+            if (python == null) Assert.Ignore("python3/pyarrow not available");
+
+            var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".parquet");
+            File.WriteAllBytes(path, ReadEntry(archive, entry));
+            try
+            {
+                var code = snippet.Replace("{PARQUET}", path.Replace("\\", "\\\\"));
+                var psi = new ProcessStartInfo(python, "-c \"" + code.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"")
+                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                using (var proc = Process.Start(psi))
+                {
+                    var stdout = proc.StandardOutput.ReadToEnd();
+                    var stderr = proc.StandardError.ReadToEnd();
+                    proc.WaitForExit();
+                    Assert.That(proc.ExitCode, Is.EqualTo(0), $"pyarrow failed: {stderr}");
+                    return JObject.Parse(stdout.Trim());
+                }
+            }
+            finally { File.Delete(path); }
+        }
+
+        [Test]
+        public void SchemaDiff_vs_Reference()
+        {
+            var root = RepoRoot();
+            if (root == null) Assert.Ignore("reference archive not found");
+            var archive = Convert(false, out var dir);
+            try
+            {
+                var refArchive = Path.Combine(root, ReferenceChunkedArchive);
+                var snippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "f = pq.read_table(r'{PARQUET}').schema.field('chunk').type\n" +
+                    "out = {'names':[f.field(i).name for i in range(f.num_fields)],\n" +
+                    "       'mz_item':str(f.field(3).type.value_field.type),\n" +
+                    "       'int_item':str(f.field(5).type.value_field.type)}\n" +
+                    "print(json.dumps(out))\n";
+                var ours = PyArrow(archive, "spectra_data.parquet", snippet);
+                var refs = PyArrow(refArchive, "spectra_data.parquet", snippet);
+
+                Assert.That(ours["names"].Select(x => (string)x).ToArray(),
+                    Is.EqualTo(refs["names"].Select(x => (string)x).ToArray()),
+                    "chunk field names match the reference");
+                Assert.That((string)ours["mz_item"], Is.EqualTo("double"));
+                Assert.That((string)ours["int_item"], Is.EqualTo("float"));
+                Assert.That((string)refs["mz_item"], Is.EqualTo("double"));
+                Assert.That((string)refs["int_item"], Is.EqualTo("float"));
+
+                var encSnippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "t = pq.read_table(r'{PARQUET}').column('chunk').combine_chunks()\n" +
+                    "print(json.dumps({'enc':sorted(set(t.field('chunk_encoding').to_pylist()))}))\n";
+                var ourEnc = PyArrow(archive, "spectra_data.parquet", encSnippet)["enc"].Select(x => (string)x).ToArray();
+                Assert.That(ourEnc, Is.EqualTo(new[] { "MS:1003089" }), "chunk_encoding is the reference delta CURIE");
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Test]
+        public void Footer_ArrayIndex_Lock()
+        {
+            var root = RepoRoot();
+            if (root == null) Assert.Ignore("reference archive not found");
+            var chunked = Convert(false, out var cdir);
+            var pointed = Convert(true, out var pdir);
+            try
+            {
+                var footerSnippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "m = pq.read_metadata(r'{PARQUET}').metadata\n" +
+                    "print(m[b'spectrum_array_index'].decode())\n";
+
+                var ours = PyArrow(chunked, "spectra_data.parquet", footerSnippet);
+                Assert.That((string)ours["prefix"], Is.EqualTo("chunk"));
+                var entries = (JArray)ours["entries"];
+                Assert.That(entries.Select(e => (string)e["buffer_format"]).ToArray(),
+                    Is.EqualTo(new[] { "chunk_start", "chunk_end", "chunk_values", "chunk_encoding", "chunk_secondary" }));
+
+                var refArchive = Path.Combine(root, ReferenceChunkedArchive);
+                var refFooter = PyArrow(refArchive, "spectra_data.parquet", footerSnippet);
+                var refEntries = (JArray)refFooter["entries"];
+                var refTransforms = refEntries.Select(e => (string)e["transform"]).ToArray();
+                Assert.That(entries.Select(e => (string)e["transform"]).ToArray(), Is.EqualTo(refTransforms),
+                    "transform CURIEs match the reference footer verbatim");
+
+                // m/z entries carry sorting_rank 0; the intensity entry omits it.
+                for (int i = 0; i < 4; i++)
+                    Assert.That((int)entries[i]["sorting_rank"], Is.EqualTo(0), $"m/z entry {i} sorting_rank 0");
+                Assert.That(entries[4]["sorting_rank"].Type, Is.EqualTo(JTokenType.Null),
+                    "intensity entry omits sorting_rank");
+
+                var pointFooter = PyArrow(pointed, "spectra_data.parquet", footerSnippet);
+                Assert.That((string)pointFooter["prefix"], Is.EqualTo("point"),
+                    "--point mode retains the v1 point array_index");
+                Assert.That(((JArray)pointFooter["entries"]).Select(e => (string)e["buffer_format"]).ToArray(),
+                    Is.EqualTo(new[] { "point", "point" }));
+            }
+            finally { Directory.Delete(cdir, true); Directory.Delete(pdir, true); }
+        }
+
+        [Test]
+        public void BitwiseMultiset_Chunked_Equals_Point()
+        {
+            var chunked = Convert(false, out var cdir);
+            var pointed = Convert(true, out var pdir);
+            try
+            {
+                // Decode chunked m/z with the null-aware delta decode, build per-spectrum BITWISE keys
+                // (DoubleToInt64Bits / SingleToInt32Bits), and compare the multisets to the point facet.
+                var decodeSnippet =
+                    "import pyarrow.parquet as pq, json, struct\n" +
+                    "from collections import defaultdict\n" +
+                    "def dd(start, arr):\n" +
+                    "    buf=[]; last=start\n" +
+                    "    if not arr: return [start]\n" +
+                    "    if arr[0] is None:\n" +
+                    "        if len(arr)>1 and arr[1] is None: buf.append(last)\n" +
+                    "        last=None\n" +
+                    "    else: buf.append(start)\n" +
+                    "    for it in arr:\n" +
+                    "        if it is not None:\n" +
+                    "            if last is not None: last=it+last; buf.append(last)\n" +
+                    "            else: buf.append(it); last=it\n" +
+                    "        else: buf.append(None); last=None\n" +
+                    "    return buf\n" +
+                    "t = pq.read_table(r'{PARQUET}').column('chunk').combine_chunks()\n" +
+                    "si=t.field('spectrum_index').to_pylist(); cs=t.field('mz_chunk_start').to_pylist()\n" +
+                    "cv=t.field('mz_chunk_values').to_pylist(); inn=t.field('intensity').to_pylist()\n" +
+                    "d=defaultdict(list)\n" +
+                    "for i in range(len(si)):\n" +
+                    "    dmz=dd(cs[i], cv[i] if cv[i] is not None else [])\n" +
+                    "    for m,it in zip(dmz, inn[i]):\n" +
+                    "        if m is None or it is None: continue\n" +
+                    "        d[si[i]].append([struct.unpack('<q',struct.pack('<d',float(m)))[0], struct.unpack('<i',struct.pack('<f',float(it)))[0]])\n" +
+                    "print(json.dumps({str(k):sorted(v) for k,v in d.items()}))\n";
+                var chunkKeys = PyArrow(chunked, "spectra_data.parquet", decodeSnippet);
+
+                var pointSnippet =
+                    "import pyarrow.parquet as pq, json, struct\n" +
+                    "from collections import defaultdict\n" +
+                    "t = pq.read_table(r'{PARQUET}').column('point').combine_chunks()\n" +
+                    "si=t.field('spectrum_index').to_pylist(); mz=t.field('mz').to_pylist(); inn=t.field('intensity').to_pylist()\n" +
+                    "d=defaultdict(list)\n" +
+                    "for s,m,it in zip(si,mz,inn):\n" +
+                    "    d[s].append([struct.unpack('<q',struct.pack('<d',float(m)))[0], struct.unpack('<i',struct.pack('<f',float(it)))[0]])\n" +
+                    "print(json.dumps({str(k):sorted(v) for k,v in d.items()}))\n";
+                var pointKeys = PyArrow(pointed, "spectra_data.parquet", pointSnippet);
+
+                Assert.That(chunkKeys.Properties().Select(p => p.Name).OrderBy(x => x),
+                    Is.EqualTo(pointKeys.Properties().Select(p => p.Name).OrderBy(x => x)),
+                    "same spectrum_index set");
+
+                int mzMismatch = 0, intMismatch = 0;
+                foreach (var prop in chunkKeys.Properties())
+                {
+                    var c = ((JArray)prop.Value).Select(a => ((long)a[0], (int)a[1])).OrderBy(x => x).ToArray();
+                    var p = ((JArray)pointKeys[prop.Name]).Select(a => ((long)a[0], (int)a[1])).OrderBy(x => x).ToArray();
+                    Assert.That(c.Length, Is.EqualTo(p.Length), $"spectrum {prop.Name} point count");
+                    var cMz = c.Select(x => x.Item1).ToArray(); var pMz = p.Select(x => x.Item1).ToArray();
+                    var cIn = c.Select(x => x.Item2).OrderBy(x => x).ToArray();
+                    var pIn = p.Select(x => x.Item2).OrderBy(x => x).ToArray();
+                    if (!cMz.SequenceEqual(pMz)) mzMismatch++;
+                    if (!cIn.SequenceEqual(pIn)) intMismatch++;
+                }
+                // Intensity is never delta-encoded -> must be bitwise-identical.
+                Assert.That(intMismatch, Is.EqualTo(0), "intensity is bitwise-identical chunked vs point");
+                // Empirical finding (recorded in SUMMARY): f64 delta encode+reconstruct is bit-exact on real
+                // Thermo m/z, so the m/z multiset matches bitwise with zero tolerance (exact / L1).
+                Assert.That(mzMismatch, Is.EqualTo(0),
+                    "m/z is BITWISE-identical chunked vs point (delta round-trip is bit-exact on Thermo m/z)");
+            }
+            finally { Directory.Delete(cdir, true); Directory.Delete(pdir, true); }
+        }
+
+        [Test]
+        public void Validator_Chunked_And_Point_ZeroErrors()
+        {
+            var validator = ResolveValidator();
+            if (validator == null) Assert.Ignore("mzpeak-validate not available");
+
+            foreach (var point in new[] { false, true })
+            {
+                var archive = Convert(point, out var dir);
+                var jsonPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".json");
+                try
+                {
+                    var psi = new ProcessStartInfo(validator, $"\"{archive}\" --json \"{jsonPath}\"")
+                    { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                    using (var p = Process.Start(psi))
+                    { p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd(); p.WaitForExit(); }
+
+                    Assert.That(File.Exists(jsonPath), "validator must emit a JSON report");
+                    var report = JObject.Parse(File.ReadAllText(jsonPath));
+                    var errors = ((JArray)report["findings"])
+                        .Where(f => (string)f["level"] == "error")
+                        .Select(f => (string)f["ruleId"]).ToArray();
+                    Assert.That(errors, Is.Empty,
+                        $"{(point ? "--point" : "chunked")} archive must validate 0 errors: {string.Join(",", errors)}");
+                }
+                finally
+                {
+                    if (File.Exists(jsonPath)) File.Delete(jsonPath);
+                    Directory.Delete(dir, true);
+                }
+            }
+        }
+
+        [Test]
+        public void Size_Chunked_Smaller_Than_Point()
+        {
+            var chunked = Convert(false, out var cdir);
+            var pointed = Convert(true, out var pdir);
+            try
+            {
+                long chunkSize = ReadEntry(chunked, "spectra_data.parquet").Length;
+                long pointSize = ReadEntry(pointed, "spectra_data.parquet").Length;
+                Assert.That(chunkSize, Is.LessThan(pointSize),
+                    $"chunked spectra_data ({chunkSize}) must be smaller than point ({pointSize})");
+            }
+            finally { Directory.Delete(cdir, true); Directory.Delete(pdir, true); }
+        }
+
+        [Test]
+        public void Peaks_And_Chromatograms_Unchanged()
+        {
+            var archive = Convert(false, out var dir);
+            try
+            {
+                using (var ms = new MemoryStream(ReadEntry(archive, "spectra_peaks.parquet")))
+                using (var reader = ParquetReader.CreateAsync(ms).Result)
+                {
+                    var schema = reader.Schema;
+                    Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "point/spectrum_index"),
+                        "spectra_peaks stays the point struct in chunked mode");
+                    Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "point/mz"));
+                    Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "point/intensity"));
+                }
+
+                using (var ms = new MemoryStream(ReadEntry(archive, "chromatograms_data.parquet")))
+                using (var reader = ParquetReader.CreateAsync(ms).Result)
+                {
+                    var schema = reader.Schema;
+                    Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "point/chromatogram_index"),
+                        "chromatograms_data stays the point struct (deliberate Phase-2 deviation)");
+                    Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "point/time"));
+                    Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "point/ms_level"));
+                }
+            }
+            finally { Directory.Delete(dir, true); }
         }
     }
 }

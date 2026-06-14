@@ -180,7 +180,7 @@ namespace ThermoRawFileParserTest
                 Assert.That(s2.code, Is.EqualTo(0), $"mzML->ref mzpeak failed: {s2.stderr}");
                 Assert.That(File.Exists(refMzpeak), "reference mzpeak must exist");
 
-                var s3 = Run("dotnet", $"\"{dll}\" -i \"{TestRawFile}\" -b \"{trfpMzpeak}\" -f 4");
+                var s3 = Run("dotnet", $"\"{dll}\" -i \"{TestRawFile}\" -b \"{trfpMzpeak}\" -f 4 --point");
                 Assert.That(s3.code, Is.EqualTo(0), $"RAW->trfp mzpeak failed: {s3.stderr}");
                 Assert.That(File.Exists(trfpMzpeak), "trfp mzpeak must exist");
 
