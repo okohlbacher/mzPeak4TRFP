@@ -85,7 +85,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 **Requirements**: META-01, META-02, META-03, META-04, META-05, IDX-01, IDX-02, IDX-03, IDX-04
 **Success Criteria** (what must be TRUE):
 
-  1. `spectra_metadata.parquet` contains four parallel top-level struct columns — `spectrum`, `scan`, `precursor`, `selected_ion` — each row populating exactly one, with the others null, and back-references via `source_index`.
+  1. `spectra_metadata.parquet` contains four parallel top-level struct columns — `spectrum`, `scan`, `precursor`, `selected_ion` — as co-resident independent tables (spectrum/scan full-length; precursor/selected_ion null-padded after #MSn), with back-references via `source_index`.
   2. `spectrum` rows carry index/id/ms_level/time/polarity/representation/type/observed-m/z-range/counts/base-peak/TIC; `scan` rows carry scan_start_time (minutes)/filter_string/ion_injection_time/instrument_configuration_ref/scan_windows; `precursor` rows carry isolation window (target/lower/upper) + activation; `selected_ion` rows carry selected-ion m/z/charge/intensity.
   3. All CV terms are encoded as CURIEs and column names embed the accession (e.g. `MS_1000016_scan_start_time_unit_UO_0000031`) per the mzML-CV→mzPeak mapping table.
   4. `mzpeak_index.json` lists every present facet in `files[]` with `entity_type`/`data_kind`.
@@ -95,9 +95,11 @@ Decimal phases appear between their surrounding integers in numeric order.
 
   - Mapping Thermo instrument info to the instrument_configuration component model (ordered ionsource/analyzer/detector with CV params) via `OntologyMapping` may have gaps for some instrument families.
   - cv_list must be a superset of every accession actually referenced, or reference readers cannot resolve CURIEs — easy to drift if columns are added without registering their CVs.
-  - Packed parallel-table null-discipline (exactly one populated struct per row) must hold across all four column families simultaneously in the low-level writer.
+  - Packed parallel-table null-discipline (four independent right-padded tables linked by source_index) must hold across all four column families simultaneously in the low-level writer.
 
-**Plans**: TBD
+**Plans**: 1 plan
+
+  - [ ] 03-01-PLAN.md — list-of-struct (large_list<struct>) Parquet write support + four-table spectra_metadata (rich spectrum, required scan, MSn precursor/selected_ion) + mzpeak_index metadata{}/footer (cv_list, instrument/software/data-processing/file-description) with NUnit locks and the mzpeak-validate gate
 
 ### Phase 4: Chromatograms + Conformance Verification
 
@@ -129,5 +131,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Walking Skeleton — CLI Wiring + Parquet/ZIP Foundation | 1/1 | Complete   | 2026-06-14 |
 | 2. Spectra Signal Data | 0/1 | Not started | - |
-| 3. Spectra Metadata + File-Level Metadata/Index | 0/TBD | Not started | - |
+| 3. Spectra Metadata + File-Level Metadata/Index | 0/1 | Not started | - |
 | 4. Chromatograms + Conformance Verification | 0/TBD | Not started | - |
