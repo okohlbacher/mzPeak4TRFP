@@ -7,7 +7,7 @@ last_updated: "2026-06-14T16:40:00.000Z"
 last_activity: 2026-06-14
 progress:
   total_phases: 5
-  completed_phases: 0
+  completed_phases: 1
   total_plans: 0
   completed_plans: 0
   percent: 0
@@ -20,12 +20,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14)
 
 **Core value:** Smaller, reference-structured mzPeak output (chunked + Numpress) that scales to multi-GB RAW and is robust to imperfect scans — without regressing v1 conformance.
-**Current focus:** v2 milestone — Phase 1 (Streaming Writer + Per-Scan Robustness)
+**Current focus:** v2 milestone — Phase 2 (Chunked Layout)
 
 ## Current Position
 
 Milestone: v2 ("compression, fidelity & scale") — 5 phases, sequential
-Phase: 1 of 5 (Streaming Writer + Per-Scan Robustness)
+Phase: 2 of 5 (Chunked Layout)
 Status: Milestone planned (PROJECT/REQUIREMENTS/ROADMAP); ready to plan Phase 1
 Last activity: 2026-06-14 — v1 archived to `.planning/archive/v1-point-layout/`; v2 milestone defined.
 
