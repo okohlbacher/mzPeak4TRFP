@@ -49,6 +49,11 @@ namespace ThermoRawFileParser.Writer
             var metaId = new List<string>();
             var metaTime = new List<double>();
 
+            var peaksIndex = new List<ulong>();
+            var peaksMz = new List<double>();
+            var peaksIntensity = new List<float>();
+            var peakSpectra = new HashSet<ulong>();
+
             ulong ordinal = 0;
 
             for (var scanNumber = firstScanNumber; scanNumber <= lastScanNumber; scanNumber++)
@@ -70,6 +75,22 @@ namespace ThermoRawFileParser.Writer
                         dataIntensity.Add(inten[i]);
                     }
 
+                    if (scanEvent.ScanData == ScanDataType.Profile && Scan.FromFile(raw, scanNumber).HasCentroidStream)
+                    {
+                        var peakData = ReadMZData(raw, scanEvent, scanNumber, true, false, false);
+                        var (pMz, pInten) = OrderedPairs(peakData.masses, peakData.intensities);
+                        if (pMz.Length > 0)
+                        {
+                            for (int i = 0; i < pMz.Length; i++)
+                            {
+                                peaksIndex.Add(ordinal);
+                                peaksMz.Add(pMz[i]);
+                                peaksIntensity.Add(pInten[i]);
+                            }
+                            peakSpectra.Add(ordinal);
+                        }
+                    }
+
                     metaIndex.Add(ordinal);
                     metaId.Add($"index={ordinal}");
                     metaTime.Add(raw.RetentionTimeFromScanNumber(scanNumber));
@@ -88,9 +109,13 @@ namespace ThermoRawFileParser.Writer
                 throw new RawFileParserException("No in-range spectrum to write");
             }
 
+            var hasPeaks = peaksIndex.Count > 0;
             var dataBytes = BuildPointFacet(dataIndex, dataMz, dataIntensity, (int)ordinal);
             var metaBytes = BuildMetadataFacet(metaIndex, metaId, metaTime);
-            var indexBytes = BuildIndex();
+            var peaksBytes = hasPeaks
+                ? BuildPointFacet(peaksIndex, peaksMz, peaksIntensity, peakSpectra.Count)
+                : null;
+            var indexBytes = BuildIndex(hasPeaks);
 
             ConfigureWriter(".mzpeak");
             try
@@ -100,6 +125,7 @@ namespace ThermoRawFileParser.Writer
                     AddStored(zip, "mzpeak_index.json", indexBytes);
                     AddStored(zip, "spectra_data.parquet", dataBytes);
                     AddStored(zip, "spectra_metadata.parquet", metaBytes);
+                    if (hasPeaks) AddStored(zip, "spectra_peaks.parquet", peaksBytes);
                 }
 
                 Writer.Flush();
@@ -109,7 +135,7 @@ namespace ThermoRawFileParser.Writer
                 Writer.Close();
             }
 
-            Log.Info($"Wrote mzPeak archive with {ordinal} spectra ({dataIndex.Count} data points)");
+            Log.Info($"Wrote mzPeak archive with {ordinal} spectra ({dataIndex.Count} data points, {peaksIndex.Count} peak points)");
         }
 
         // Returns the (mz,intensity) pairs in non-decreasing m/z order with the full multiset
@@ -220,7 +246,7 @@ namespace ThermoRawFileParser.Writer
             }
         }
 
-        private static byte[] BuildIndex()
+        private static byte[] BuildIndex(bool hasPeaks)
         {
             var files = new JArray
             {
@@ -237,6 +263,16 @@ namespace ThermoRawFileParser.Writer
                     ["data_kind"] = "metadata"
                 }
             };
+
+            if (hasPeaks)
+            {
+                files.Add(new JObject
+                {
+                    ["name"] = "spectra_peaks.parquet",
+                    ["entity_type"] = "spectrum",
+                    ["data_kind"] = "peaks"
+                });
+            }
 
             var index = new JObject
             {
