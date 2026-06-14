@@ -1,16 +1,16 @@
 ---
 gsd_state_version: 1.0
 milestone: v2
-milestone_name: compression-fidelity-scale
+milestone_name: milestone
 status: in-progress
-last_updated: "2026-06-14T18:31:44.044Z"
-last_activity: 2026-06-14 — Phase 2 (Chunked Layout) executed: chunked spectra_data is the new default, m/z delta bit-exact, 0 validator errors both modes.
+last_updated: "2026-06-14T21:23:42.853Z"
+last_activity: 2026-06-14 — Phase 3 (Numpress-Linear m/z) executed: numpress is the new default m/z encoding (MS:1002312), validator 0/0 in all three modes, full suite 86/86 green native arm64.
 progress:
   total_phases: 5
-  completed_phases: 2
-  total_plans: 2
-  completed_plans: 2
-  percent: 40
+  completed_phases: 3
+  total_plans: 3
+  completed_plans: 3
+  percent: 60
 ---
 
 # Project State
@@ -20,16 +20,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14)
 
 **Core value:** Smaller, reference-structured mzPeak output (chunked + Numpress) that scales to multi-GB RAW and is robust to imperfect scans — without regressing v1 conformance.
-**Current focus:** v2 milestone — Phase 3 (Numpress-Linear m/z)
+**Current focus:** v2 milestone — Phase 4 (ZRS null-marking)
 
 ## Current Position
 
 Milestone: v2 ("compression, fidelity & scale") — 5 phases, sequential
-Phase: 3 of 5 (Numpress-Linear m/z) — ready to plan
-Status: Phases 1-2 certified; planning Phase 3 (Numpress)
-Last activity: 2026-06-14 — Phase 2 chunked layout shipped; full suite 72/72 green native arm64.
+Phase: 4 of 5 (ZRS null-marking) — ready to plan
+Status: Phases 1-3 shipped; Phase 3 numpress-linear m/z is the new default (validator 0/0 all 3 modes)
+Last activity: 2026-06-14 — Phase 3 numpress shipped; full suite 86/86 green native arm64.
 
-Progress: [████░░░░░░] 40% (v2)
+Progress: [██████░░░░] 60% (v2)
 
 ## Milestone history
 
@@ -46,6 +46,8 @@ Progress: [████░░░░░░] 40% (v2)
 - Phase 2: m/z f64 delta encode+reconstruct is BIT-EXACT on real Thermo m/z (48/48 spectra, 0 mismatches) → losslessness is exact/L1, no tolerance. Intensity bit-exact by construction.
 - Phase 2: `chromatograms_data` stays POINT as a deliberate documented deviation; the reference CHUNKS it → full chromatogram chunking deferred to Phase 5.
 - Phase 3 input: chunk struct stays 6 fields in delta mode; `mz_numpress_linear_bytes` (7th field) is added ONLY for the Numpress encoding, not present-but-empty.
+- Phase 3: numpress-linear m/z (MS:1002312, NOT MS:1003089 which is delta) is the new default; `mz_chunk_values` null, intensity stays lossless f32 (m/z-only numpress; intensity-SLOF deferred to backlog). `--lossless`/`--point` opt-outs; numpress spectra_data ~19% smaller than delta on small.RAW (the ~63% headline needs intensity SLOF).
+- Phase 3: C# MSNumpress port accumulates `ints` in int64 (canonical uses uint32 wraparound) so m/z*fp values > 2^32 decode correctly; on-wire bytes stay byte-identical to pynumpress.
 
 ### Key Artifacts
 

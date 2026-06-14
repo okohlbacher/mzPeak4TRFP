@@ -32,7 +32,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Streaming Writer + Per-Scan Robustness** - Refactor to bounded row-group / streaming Parquet + STORED-zip streaming (constant memory), make per-scan read failures non-fatal; point layout unchanged so it is independently verifiable
 - [x] **Phase 2: Chunked Layout** - Emit `spectra_data`/`spectra_peaks` as the reference chunk struct with fixed m/z-window chunking (lossless delta), make chunked the default, add `--point` opt-out (completed 2026-06-14)
-- [ ] **Phase 3: Numpress-Linear m/z** - C# MSNumpress port encoding m/z into `mz_numpress_linear_bytes` with the MS:1002312 transform recorded (verified dump; ROADMAP sketch's MS:1003089 is the delta CURIE); default ON, `--no-numpress`/`--lossless` opt-out, L2 bound
+- [x] **Phase 3: Numpress-Linear m/z** - C# MSNumpress port encoding m/z into `mz_numpress_linear_bytes` with the MS:1002312 transform recorded (verified dump; ROADMAP sketch's MS:1003089 is the delta CURIE); default ON, `--no-numpress`/`--lossless` opt-out, L2 bound (completed 2026-06-14)
 - [ ] **Phase 4: Profile Compaction + Ion Mobility** - Zero-run stripping + null-marking with the per-spectrum δmz model for profile data; populate ion-mobility values/type from Thermo FAIMS CV
 - [ ] **Phase 5: CLI/Docs + Conformance & Corpus Re-Verification** - Document all flags, harden the comparator for large facets, re-run the 97-pair corpus + multi-GB validation, lock L1/L2 conformance; all modes pass `mzpeak-validate`
 
@@ -106,7 +106,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Plans**: 1 plan
 
-- [ ] 03-01-PLAN.md — Vendored pure-managed C# MSNumpress-linear codec (encode/decode, AnyCPU) + numpress chunk emission (mz_numpress_linear_bytes, chunk_encoding MS:1002312, mz_chunk_values null, plain f32 intensity) + array_index/data_processing/cv_list + CLI default with --no-numpress/--lossless + L2 round-trip and 3-mode validator/size locks
+- [x] 03-01-PLAN.md — Vendored pure-managed C# MSNumpress-linear codec (encode/decode, AnyCPU) + numpress chunk emission (mz_numpress_linear_bytes, chunk_encoding MS:1002312, mz_chunk_values null, plain f32 intensity) + array_index/data_processing/cv_list + CLI default with --no-numpress/--lossless + L2 round-trip and 3-mode validator/size locks (completed 2026-06-14)
 
 ### Phase 4: Profile Compaction + Ion Mobility
 

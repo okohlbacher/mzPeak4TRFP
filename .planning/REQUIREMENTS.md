@@ -38,10 +38,10 @@ RAW files and is robust to imperfect scans — without regressing v1 conformance
 
 ### Numpress-linear m/z
 
-- [ ] **NP-01**: C# Numpress-linear encode (and decode for tests) — vendored/ported MSNumpress, no x64-only deps
-- [ ] **NP-02**: m/z encoded into `mz_numpress_linear_bytes` with `chunk_encoding` set accordingly; transform CURIE **MS:1003089** recorded in `spectrum_array_index` AND a `data_processing` step
-- [ ] **NP-03**: Numpress ON by default; `--no-numpress` / `--lossless` produces delta chunks instead; lossy-m/z noted in `data_processing` + a CLI warning
-- [ ] **NP-04**: L2 conformance — decoded m/z within the Numpress-linear bound vs source; intensity stays lossless f32
+- [x] **NP-01**: C# Numpress-linear encode (and decode for tests) — vendored/ported MSNumpress, no x64-only deps
+- [x] **NP-02**: m/z encoded into `mz_numpress_linear_bytes` with `chunk_encoding` set accordingly; transform CURIE **MS:1003089** recorded in `spectrum_array_index` AND a `data_processing` step
+- [x] **NP-03**: Numpress ON by default; `--no-numpress` / `--lossless` produces delta chunks instead; lossy-m/z noted in `data_processing` + a CLI warning
+- [x] **NP-04**: L2 conformance — decoded m/z within the Numpress-linear bound vs source; intensity stays lossless f32
 
 ### Null-marking / zero-run stripping (profile data)
 
