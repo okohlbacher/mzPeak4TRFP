@@ -1434,6 +1434,154 @@ namespace ThermoRawFileParserTest
         }
 
         [Test]
+        public void DataFacet_MultiRowGroup_Equals_SingleRowGroup()
+        {
+            // Production-cap run: single row group for small.RAW.
+            var baseInput = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var baseDir = Convert(baseInput, out var baseArchive);
+            Facet single;
+            try
+            {
+                single = ReadAllRowGroups(ReadEntry(baseArchive, "spectra_data.parquet"));
+            }
+            finally
+            {
+                Directory.Delete(baseDir, true);
+            }
+
+            // Lowered-cap run through the real flush path: forces >1 row group.
+            try
+            {
+                MzPeakSpectrumWriter.TestRowGroupRowCap = 64;
+                var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+                var dir = Convert(input, out var archive);
+                try
+                {
+                    int rgCount;
+                    using (var ms = new MemoryStream(ReadEntry(archive, "spectra_data.parquet")))
+                    using (var reader = ParquetReader.CreateAsync(ms).Result)
+                        rgCount = reader.RowGroupCount;
+                    Assert.That(rgCount, Is.GreaterThan(1),
+                        "lowered cap must force the real flush path to emit multiple row groups");
+
+                    var multi = ReadAllRowGroups(ReadEntry(archive, "spectra_data.parquet"));
+                    Assert.That(multi.SpectrumCount, Is.EqualTo(single.SpectrumCount));
+                    Assert.That(multi.PointCount, Is.EqualTo(single.PointCount));
+                    AssertSameMultiset(single, multi);
+                }
+                finally
+                {
+                    Directory.Delete(dir, true);
+                }
+            }
+            finally
+            {
+                MzPeakSpectrumWriter.TestRowGroupRowCap = null;
+            }
+        }
+
+        private static void AssertSameMultiset(Facet a, Facet b)
+        {
+            Assert.That(a.Mz.Length, Is.EqualTo(b.Mz.Length));
+            var ta = Enumerable.Range(0, a.Mz.Length)
+                .Select(i => (a.SpectrumIndex[i], a.Mz[i], a.Intensity[i]))
+                .OrderBy(x => x.Item1).ThenBy(x => x.Item2).ThenBy(x => x.Item3).ToArray();
+            var tb = Enumerable.Range(0, b.Mz.Length)
+                .Select(i => (b.SpectrumIndex[i], b.Mz[i], b.Intensity[i]))
+                .OrderBy(x => x.Item1).ThenBy(x => x.Item2).ThenBy(x => x.Item3).ToArray();
+            Assert.That(tb, Is.EqualTo(ta), "(spectrum_index, mz, intensity) multiset identical across caps");
+        }
+
+        private static Facet ReadAllRowGroups(byte[] bytes)
+        {
+            using (var ms = new MemoryStream(bytes))
+            using (var reader = ParquetReader.CreateAsync(ms).Result)
+            {
+                var schema = reader.Schema;
+                var idx = new List<ulong>(); var mz = new List<double>(); var inten = new List<float>();
+                for (int g = 0; g < reader.RowGroupCount; g++)
+                {
+                    var rg = reader.OpenRowGroupReader(g);
+                    idx.AddRange(rg.ReadColumnAsync(Leaf(schema, "point/spectrum_index")).Result.Data.Cast<ulong>());
+                    mz.AddRange(rg.ReadColumnAsync(Leaf(schema, "point/mz")).Result.Data.Cast<double>());
+                    inten.AddRange(rg.ReadColumnAsync(Leaf(schema, "point/intensity")).Result.Data.Cast<float>());
+                }
+                var meta = reader.CustomMetadata;
+                return new Facet
+                {
+                    SpectrumIndex = idx.ToArray(),
+                    Mz = mz.ToArray(),
+                    Intensity = inten.ToArray(),
+                    SpectrumCount = int.Parse(meta["spectrum_count"]),
+                    PointCount = int.Parse(meta["spectrum_data_point_count"])
+                };
+            }
+        }
+
+        [Test]
+        public void SmallRaw_Identical_To_V1_Invariants()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+            try
+            {
+                var data = ReadAllRowGroups(ReadEntry(archive, "spectra_data.parquet"));
+                var metaIdx = ReadMetadataIndices(ReadEntry(archive, "spectra_metadata.parquet"));
+
+                int distinct = data.SpectrumIndex.Distinct().Count();
+                Assert.That(distinct, Is.EqualTo(data.SpectrumCount),
+                    "distinct spectrum_index == spectrum_count");
+                Assert.That(metaIdx.Length, Is.EqualTo(data.SpectrumCount),
+                    "metadata spectrum rows == spectrum_count");
+                Assert.That(metaIdx.OrderBy(x => x).ToArray(),
+                    Is.EqualTo(Enumerable.Range(0, data.SpectrumCount).Select(i => (ulong)i).ToArray()),
+                    "ordinals dense 0..N-1");
+                Assert.That(data.Mz.Length, Is.EqualTo(data.PointCount),
+                    "footer spectrum_data_point_count == point rows");
+
+                // Footer KV present and correct on the streamed data facet.
+                using (var ms = new MemoryStream(ReadEntry(archive, "spectra_data.parquet")))
+                using (var reader = ParquetReader.CreateAsync(ms).Result)
+                {
+                    var kv = reader.CustomMetadata;
+                    Assert.That(kv["spectrum_count"], Is.EqualTo(data.SpectrumCount.ToString()));
+                    Assert.That(kv["spectrum_data_point_count"], Is.EqualTo(data.PointCount.ToString()));
+                    Assert.That(kv.ContainsKey("spectrum_array_index"), Is.True);
+                }
+
+                // cv_list covers the chrom-data prefixes (derived prefixes MS/UO, not whole CURIEs).
+                var index = JObject.Parse(
+                    System.Text.Encoding.UTF8.GetString(ReadEntry(archive, "mzpeak_index.json")));
+                var ids = ((JArray)index["metadata"]["cv_list"]).Select(e => (string)e["id"]).ToHashSet();
+                foreach (var curie in new[]
+                {
+                    "MS:1000523", "MS:1000595", "UO:0000031", "MS:1000521", "MS:1000515",
+                    "MS:1000131", "MS:1000522", "MS:1000786", "UO:0000186"
+                })
+                {
+                    var prefix = curie.Substring(0, curie.IndexOf(':'));
+                    Assert.That(ids, Does.Contain(prefix),
+                        $"cv_list must declare chrom-data prefix {prefix} (from {curie})");
+                }
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
+        public void RegisterChromDataPrefixes_Registers_All_Nine_Accessions()
+        {
+            var prefixes = MzPeakSpectrumWriter.ChromDataAccessions;
+            Assert.That(prefixes, Is.EquivalentTo(new[]
+            {
+                "MS:1000523", "MS:1000595", "UO:0000031", "MS:1000521", "MS:1000515",
+                "MS:1000131", "MS:1000522", "MS:1000786", "UO:0000186"
+            }), "all nine chrom-data accessions are registered before cv_list is finalized");
+        }
+
+        [Test]
         public void OrderedPairs_Preserves_Duplicate_Mz_In_Input_Order()
         {
             var masses = new[] { 100.0, 100.0, 100.0, 200.0 };

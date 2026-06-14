@@ -34,6 +34,10 @@
   </ItemGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="ThermoRawFileParserTest" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="AWSSDK.Core" Version="3.7.400.36" />
     <PackageReference Include="AWSSDK.S3" Version="3.7.405" />
     <PackageReference Include="log4net" Version="3.0.1" />

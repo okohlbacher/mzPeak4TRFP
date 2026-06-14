@@ -27,6 +27,25 @@ namespace ThermoRawFileParser.Writer
         private const string MsCvVersion = "4.1.254";
         private const string UoCvVersion = "2026-01-16";
 
+        // Row-group flush cap for the streamed data facets. Matches ParquetSpectrumWriter.ParquetSliceSize.
+        // Point rows are ~20 bytes, so one row-group buffer per open facet is bounded and predictable.
+        private const int RowGroupRowCap = 1_048_576;
+
+        // Test seam: when set, the streamed flush path uses this cap so a test can force >=2 row groups
+        // through the real writer. Production runs leave it null and use RowGroupRowCap.
+        internal static int? TestRowGroupRowCap;
+
+        private int Cap => TestRowGroupRowCap ?? RowGroupRowCap;
+
+        // The nine chrom-data CURIEs whose prefixes must reach cv_list (finalized inside the metadata
+        // facet). Registered via RegisterChromDataPrefixes before BuildMetadataFacet regardless of
+        // whether chrom-data is streamed or buffered.
+        internal static readonly string[] ChromDataAccessions =
+        {
+            "MS:1000523", "MS:1000595", "UO:0000031", "MS:1000521", "MS:1000515",
+            "MS:1000131", "MS:1000522", "MS:1000786", "UO:0000186"
+        };
+
         private const string SpectrumArrayIndex =
             "{\"prefix\":\"point\",\"entries\":[" +
             "{\"context\":\"spectrum\",\"path\":\"point.mz\",\"data_type\":\"MS:1000523\",\"array_type\":\"MS:1000514\"," +
@@ -123,166 +142,213 @@ namespace ThermoRawFileParser.Writer
             _sourceName = Path.GetFileName(ParseInput.RawFilePath);
             _sourceLocation = "file://" + (Path.GetDirectoryName(Path.GetFullPath(ParseInput.RawFilePath)) ?? "");
 
-            var dataIndex = new List<ulong>();
-            var dataMz = new List<double>();
-            var dataIntensity = new List<float>();
-
-            var peaksIndex = new List<ulong>();
-            var peaksMz = new List<double>();
-            var peaksIntensity = new List<float>();
-            var peakSpectra = new HashSet<ulong>();
-
             var records = new List<Record>();
             var scanNumberToOrdinal = new Dictionary<int, ulong>();
+            var peakSpectra = new HashSet<ulong>();
 
             ulong ordinal = 0;
 
-            for (var scanNumber = firstScanNumber; scanNumber <= lastScanNumber; scanNumber++)
+            var dataFacet = new PointFacetStream(Cap);
+            var peaksFacet = new PointFacetStream(Cap);
+            var chromFacet = new ChromDataFacetStream(Cap);
+
+            try
             {
-                try
+                for (var scanNumber = firstScanNumber; scanNumber <= lastScanNumber; scanNumber++)
                 {
-                    var scanFilter = raw.GetFilterForScanNumber(scanNumber);
-                    int level = (int)scanFilter.MSOrder;
-                    if (level > ParseInput.MaxLevel || !ParseInput.MsLevel.Contains(level)) continue;
+                    // Per-scan all-or-nothing staging: every read/build lands in locals first; nothing
+                    // touches shared/streaming state until the scan fully succeeds. A read/build failure
+                    // logs + NewError + skips, consuming no ordinal, no rows, no precursor-map entry.
+                    double[] stagedMz = null, stagedPeakMz = null;
+                    float[] stagedInten = null, stagedPeakInten = null;
+                    Record rec = null;
+                    string filterKey = null;
+                    bool stage;
 
-                    var scanEvent = raw.GetScanEventForScanNumber(scanNumber);
-                    var mzData = ReadMZData(raw, scanEvent, scanNumber, false, false, false);
-
-                    var (mz, inten) = OrderedPairs(mzData.masses, mzData.intensities);
-                    if (mz.Length == 0) continue;
-
-                    for (int i = 0; i < mz.Length; i++)
+                    try
                     {
-                        dataIndex.Add(ordinal);
-                        dataMz.Add(mz[i]);
-                        dataIntensity.Add(inten[i]);
-                    }
+                        var scanFilter = raw.GetFilterForScanNumber(scanNumber);
+                        int level = (int)scanFilter.MSOrder;
+                        if (level > ParseInput.MaxLevel || !ParseInput.MsLevel.Contains(level)) continue;
 
-                    ulong? peakCount = null;
-                    if (scanEvent.ScanData == ScanDataType.Profile && Scan.FromFile(raw, scanNumber).HasCentroidStream)
-                    {
-                        var peakData = ReadMZData(raw, scanEvent, scanNumber, true, false, false);
-                        var (pMz, pInten) = OrderedPairs(peakData.masses, peakData.intensities);
-                        if (pMz.Length > 0)
+                        var scanEvent = raw.GetScanEventForScanNumber(scanNumber);
+                        var mzData = ReadMZData(raw, scanEvent, scanNumber, false, false, false);
+
+                        var (mz, inten) = OrderedPairs(mzData.masses, mzData.intensities);
+                        if (mz.Length == 0) continue;
+                        stagedMz = mz;
+                        stagedInten = inten;
+
+                        ulong? peakCount = null;
+                        if (scanEvent.ScanData == ScanDataType.Profile && Scan.FromFile(raw, scanNumber).HasCentroidStream)
                         {
-                            for (int i = 0; i < pMz.Length; i++)
+                            var peakData = ReadMZData(raw, scanEvent, scanNumber, true, false, false);
+                            var (pMz, pInten) = OrderedPairs(peakData.masses, peakData.intensities);
+                            if (pMz.Length > 0)
                             {
-                                peaksIndex.Add(ordinal);
-                                peaksMz.Add(pMz[i]);
-                                peaksIntensity.Add(pInten[i]);
+                                stagedPeakMz = pMz;
+                                stagedPeakInten = pInten;
+                                peakCount = (ulong)pMz.Length;
                             }
-                            peakSpectra.Add(ordinal);
-                            peakCount = (ulong)pMz.Length;
                         }
+
+                        var scanStats = raw.GetScanStatsForScanNumber(scanNumber);
+                        var trailer = new ScanTrailer(raw.GetTrailerExtraInformation(scanNumber));
+
+                        // Mirror the mzML parent-derivation bookkeeping: map each scan's filter prefix to
+                        // its scan number so an MSn child can resolve its parent via the scan string.
+                        var filterMatch = level == 1
+                            ? null
+                            : (level == 2
+                                ? _filterStringIsolationMzPattern.Match(scanEvent.ToString())
+                                : _filterStringParentMzPattern.Match(scanEvent.ToString()));
+                        filterKey = level == 1 ? "" : (filterMatch != null && filterMatch.Success ? filterMatch.Groups[1].Value : "");
+                        _precursorScanNumbers[filterKey] = scanNumber;
+
+                        rec = new Record
+                        {
+                            Ordinal = ordinal,
+                            ScanNumber = scanNumber,
+                            MsLevel = level,
+                            Id = ConstructSpectrumTitle((int)Device.MS, 1, scanNumber),
+                            Time = raw.RetentionTimeFromScanNumber(scanNumber),
+                            Polarity = scanFilter.Polarity == PolarityType.Negative ? (sbyte)-1 : (sbyte)1,
+                            Representation = mzData.isCentroided ? "MS:1000127" : "MS:1000128",
+                            SpectrumType = level == 1 ? "MS:1000579" : "MS:1000580",
+                            LowestMz = mz[0],
+                            HighestMz = mz[mz.Length - 1],
+                            BasePeakMz = mzData.basePeakMass ?? 0.0,
+                            BasePeakIntensity = (float)(mzData.basePeakIntensity ?? 0.0),
+                            TotalIonCurrent = (float)scanStats.TIC,
+                            DataPointCount = (ulong)mz.Length,
+                            PeakCount = peakCount,
+                            ScanStartTime = (float)raw.RetentionTimeFromScanNumber(scanNumber),
+                            FilterString = scanEvent.ToString(),
+                            IonInjectionTime = (float)(trailer.AsDouble("Ion Injection Time (ms):") ?? 0.0),
+                            InstrumentConfigRef = AnalyzerIndex(scanFilter.MassAnalyzer, scanFilter.IonizationMode),
+                            WindowLower = (float)scanStats.LowMass,
+                            WindowUpper = (float)scanStats.HighMass
+                        };
+
+                        if (level >= 2)
+                        {
+                            BuildPrecursor(raw, scanNumber, scanEvent, scanFilter, trailer, scanNumberToOrdinal,
+                                filterKey, rec);
+                        }
+
+                        stage = true;
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Error($"Scan #{scanNumber} cannot be processed because of the following exception: {ex.Message}");
+                        Log.Debug($"{ex.StackTrace}\n{ex.InnerException}");
+                        ParseInput.NewError();
+                        continue;
                     }
 
-                    var scanStats = raw.GetScanStatsForScanNumber(scanNumber);
-                    var trailer = new ScanTrailer(raw.GetTrailerExtraInformation(scanNumber));
+                    if (!stage) continue;
 
-                    // Mirror the mzML parent-derivation bookkeeping: map each scan's filter prefix to
-                    // its scan number so an MSn child can resolve its parent via the scan string.
-                    var filterMatch = level == 1
-                        ? null
-                        : (level == 2
-                            ? _filterStringIsolationMzPattern.Match(scanEvent.ToString())
-                            : _filterStringParentMzPattern.Match(scanEvent.ToString()));
-                    var filterKey = level == 1 ? "" : (filterMatch != null && filterMatch.Success ? filterMatch.Groups[1].Value : "");
-                    _precursorScanNumbers[filterKey] = scanNumber;
-
-                    var rec = new Record
+                    // Commit block: scan fully succeeded. A write/flush/IO failure here is FATAL (bytes may
+                    // already be on disk) and must propagate, never be swallowed as a skipped scan.
+                    dataFacet.Append(ordinal, stagedMz, stagedInten);
+                    if (stagedPeakMz != null)
                     {
-                        Ordinal = ordinal,
-                        ScanNumber = scanNumber,
-                        MsLevel = level,
-                        Id = ConstructSpectrumTitle((int)Device.MS, 1, scanNumber),
-                        Time = raw.RetentionTimeFromScanNumber(scanNumber),
-                        Polarity = scanFilter.Polarity == PolarityType.Negative ? (sbyte)-1 : (sbyte)1,
-                        Representation = mzData.isCentroided ? "MS:1000127" : "MS:1000128",
-                        SpectrumType = level == 1 ? "MS:1000579" : "MS:1000580",
-                        LowestMz = mz[0],
-                        HighestMz = mz[mz.Length - 1],
-                        BasePeakMz = mzData.basePeakMass ?? 0.0,
-                        BasePeakIntensity = (float)(mzData.basePeakIntensity ?? 0.0),
-                        TotalIonCurrent = (float)scanStats.TIC,
-                        DataPointCount = (ulong)mz.Length,
-                        PeakCount = peakCount,
-                        ScanStartTime = (float)raw.RetentionTimeFromScanNumber(scanNumber),
-                        FilterString = scanEvent.ToString(),
-                        IonInjectionTime = (float)(trailer.AsDouble("Ion Injection Time (ms):") ?? 0.0),
-                        InstrumentConfigRef = AnalyzerIndex(scanFilter.MassAnalyzer, scanFilter.IonizationMode),
-                        WindowLower = (float)scanStats.LowMass,
-                        WindowUpper = (float)scanStats.HighMass
-                    };
-
-                    if (level >= 2)
-                    {
-                        BuildPrecursor(raw, scanNumber, scanEvent, scanFilter, trailer, scanNumberToOrdinal,
-                            filterKey, rec);
+                        peaksFacet.Append(ordinal, stagedPeakMz, stagedPeakInten);
+                        peakSpectra.Add(ordinal);
                     }
-
                     records.Add(rec);
                     scanNumberToOrdinal[scanNumber] = ordinal;
                     ordinal++;
                 }
-                catch (Exception ex)
+
+                if (ordinal == 0)
                 {
-                    Log.Error($"Scan #{scanNumber} cannot be processed because of the following exception: {ex.Message}");
-                    Log.Debug($"{ex.StackTrace}\n{ex.InnerException}");
-                    ParseInput.NewError();
-                }
-            }
-
-            if (ordinal == 0)
-            {
-                throw new RawFileParserException("No in-range spectrum to write");
-            }
-
-            // Device TIC over the whole run (minutes, one value per scan in scan order), paired with
-            // the per-scan (RT, ms_level) records. The device-trace value is the reference TIC; the
-            // summed ScanStatistics.TIC differs for MS1 and is used only when the trace is unavailable.
-            var chromTime = new List<double>();
-            var chromIntensity = new List<float>();
-            var chromMsLevel = new List<long>();
-            CaptureTic(raw, records, chromTime, chromIntensity, chromMsLevel);
-
-            var hasPeaks = peaksIndex.Count > 0;
-            var dataBytes = BuildPointFacet(dataIndex, dataMz, dataIntensity, (int)ordinal);
-            var peaksBytes = hasPeaks
-                ? BuildPointFacet(peaksIndex, peaksMz, peaksIntensity, peakSpectra.Count)
-                : null;
-
-            // Chromatogram facets contribute their own CURIE prefixes (e.g. the chromatogram type and
-            // array-index terms); build them before the metadata facet so the generated cv_list — which
-            // is finalized inside the metadata facet — covers every prefix the archive actually uses.
-            var chromDataBytes = BuildChromatogramDataFacet(chromTime, chromIntensity, chromMsLevel);
-            var chromMetaBytes = BuildChromatogramMetadataFacet(records.Count);
-
-            var metaBytes = BuildMetadataFacet(records);
-            var indexBytes = BuildIndex(hasPeaks, true);
-
-            ConfigureWriter(".mzpeak");
-            try
-            {
-                using (var zip = new ZipArchive(Writer.BaseStream, ZipArchiveMode.Create, true))
-                {
-                    AddStored(zip, "mzpeak_index.json", indexBytes);
-                    AddStored(zip, "spectra_data.parquet", dataBytes);
-                    AddStored(zip, "spectra_metadata.parquet", metaBytes);
-                    if (hasPeaks) AddStored(zip, "spectra_peaks.parquet", peaksBytes);
-                    AddStored(zip, "chromatograms_metadata.parquet", chromMetaBytes);
-                    AddStored(zip, "chromatograms_data.parquet", chromDataBytes);
+                    throw new RawFileParserException("No in-range spectrum to write");
                 }
 
-                Writer.Flush();
+                // Device TIC over the whole run (minutes, one value per scan in scan order), paired with
+                // the per-scan (RT, ms_level) records. The device-trace value is the reference TIC; the
+                // summed ScanStatistics.TIC differs for MS1 and is used only when the trace is unavailable.
+                var chromTime = new List<double>();
+                var chromIntensity = new List<float>();
+                var chromMsLevel = new List<long>();
+                CaptureTic(raw, records, chromTime, chromIntensity, chromMsLevel);
+                for (int i = 0; i < chromTime.Count; i++)
+                    chromFacet.Append(chromTime[i], chromIntensity[i], chromMsLevel[i]);
+
+                var hasPeaks = peaksFacet.PointCount > 0;
+
+                // Chromatogram facets contribute their own CURIE prefixes; register them before the
+                // metadata facet so the generated cv_list — finalized inside the metadata facet — covers
+                // every prefix the archive uses.
+                RegisterChromDataPrefixes();
+
+                var dataMeta = PointFooter((int)ordinal, dataFacet.PointCount);
+                var peaksMeta = PointFooter(peakSpectra.Count, peaksFacet.PointCount);
+                var chromMeta = new Dictionary<string, string>
+                {
+                    ["chromatogram_data_point_count"] = "0",
+                    ["chromatogram_array_index"] = ChromatogramArrayIndex,
+                    ["chromatogram_tic_source"] = _chromFromDeviceTrace ? "device" : "summed"
+                };
+
+                dataFacet.Close(dataMeta);
+                peaksFacet.Close(peaksMeta);
+                chromFacet.Close(chromMeta);
+
+                var chromMetaBytes = BuildChromatogramMetadataFacet(records.Count);
+                var metaBytes = BuildMetadataFacet(records);
+                var indexBytes = BuildIndex(hasPeaks, true);
+
+                ConfigureWriter(".mzpeak");
+                try
+                {
+                    using (var zip = new ZipArchive(Writer.BaseStream, ZipArchiveMode.Create, true))
+                    {
+                        AddStored(zip, "mzpeak_index.json", indexBytes);
+                        AddStoredFromFile(zip, "spectra_data.parquet", dataFacet.TempPath);
+                        AddStored(zip, "spectra_metadata.parquet", metaBytes);
+                        if (hasPeaks) AddStoredFromFile(zip, "spectra_peaks.parquet", peaksFacet.TempPath);
+                        AddStored(zip, "chromatograms_metadata.parquet", chromMetaBytes);
+                        AddStoredFromFile(zip, "chromatograms_data.parquet", chromFacet.TempPath);
+                    }
+
+                    Writer.Flush();
+                }
+                finally
+                {
+                    Writer.Close();
+                }
+
+                Log.Info($"Wrote mzPeak archive with {ordinal} spectra ({dataFacet.PointCount} data points, " +
+                         $"{peaksFacet.PointCount} peak points, {chromFacet.PointCount} TIC points)");
             }
             finally
             {
-                Writer.Close();
+                dataFacet.Dispose();
+                peaksFacet.Dispose();
+                chromFacet.Dispose();
+                TryDelete(dataFacet.TempPath);
+                TryDelete(peaksFacet.TempPath);
+                TryDelete(chromFacet.TempPath);
             }
-
-            Log.Info($"Wrote mzPeak archive with {ordinal} spectra ({dataIndex.Count} data points, " +
-                     $"{peaksIndex.Count} peak points, {chromTime.Count} TIC points)");
         }
+
+        private static void TryDelete(string path)
+        {
+            try { if (path != null && File.Exists(path)) File.Delete(path); }
+            catch { }
+        }
+
+        // Footer KV for a streamed point facet (spectra_data / spectra_peaks), identical to the v1
+        // single-row-group facet's metadata.
+        private static Dictionary<string, string> PointFooter(int spectrumCount, long pointCount) =>
+            new Dictionary<string, string>
+            {
+                ["spectrum_count"] = spectrumCount.ToString(),
+                ["spectrum_data_point_count"] = pointCount.ToString(),
+                ["spectrum_array_index"] = SpectrumArrayIndex
+            };
 
         // Returns the (mz,intensity) pairs in non-decreasing m/z order with the full multiset
         // preserved. The Thermo SegmentedScan/CentroidStream are already ascending; a paired
@@ -385,44 +451,6 @@ namespace ThermoRawFileParser.Writer
                 msLevel.Add(r.MsLevel);
             }
             _chromFromDeviceTrace = allDevice;
-        }
-
-        private byte[] BuildChromatogramDataFacet(List<double> time, List<float> intensity, List<long> msLevel)
-        {
-            int n = time.Count;
-            var point = new StructField("point",
-                new DataField<ulong>("chromatogram_index"),
-                new DataField<double>("time"),
-                new DataField<float>("intensity"),
-                new DataField<long>("ms_level"));
-            var schema = new ParquetSchema(point);
-
-            var index = new ulong[n];
-            var cols = new Dictionary<DataField, (Array, int[], int[])>
-            {
-                [Leaf(schema, "point/chromatogram_index")] = (index, null, null),
-                [Leaf(schema, "point/time")] = (time.ToArray(), null, null),
-                [Leaf(schema, "point/intensity")] = (intensity.ToArray(), null, null),
-                [Leaf(schema, "point/ms_level")] = (msLevel.ToArray(), null, null)
-            };
-
-            foreach (var curie in new[]
-            {
-                "MS:1000523", "MS:1000595", "UO:0000031", "MS:1000521", "MS:1000515",
-                "MS:1000131", "MS:1000522", "MS:1000786", "UO:0000186"
-            })
-            {
-                CollectPrefix(curie);
-            }
-
-            var meta = new Dictionary<string, string>
-            {
-                ["chromatogram_data_point_count"] = "0",
-                ["chromatogram_array_index"] = ChromatogramArrayIndex,
-                ["chromatogram_tic_source"] = _chromFromDeviceTrace ? "device" : "summed"
-            };
-
-            return WriteFacet(schema, meta, cols);
         }
 
         private byte[] BuildChromatogramMetadataFacet(int n)
@@ -635,29 +663,169 @@ namespace ThermoRawFileParser.Writer
             }
         }
 
-        private static byte[] BuildPointFacet(List<ulong> index, List<double> mz, List<float> intensity, int spectrumCount)
+        // Streams a finished temp-file facet into a STORED zip entry via a 64 KB bounded CopyTo, never
+        // reading the whole facet into a byte[].
+        private static void AddStoredFromFile(ZipArchive zip, string name, string tempPath)
         {
-            var point = new StructField("point",
+            var entry = zip.CreateEntry(name, CompressionLevel.NoCompression);
+            using (var es = entry.Open())
+            using (var src = File.OpenRead(tempPath))
+                src.CopyTo(es, 1 << 16);
+        }
+
+        private static StructField PointStructField() =>
+            new StructField("point",
                 new DataField<ulong>("spectrum_index"),
                 new DataField<double>("mz"),
                 new DataField<float>("intensity"));
-            var schema = new ParquetSchema(point);
 
-            var cols = new Dictionary<DataField, (Array, int[], int[])>
+        private static StructField ChromDataStructField() =>
+            new StructField("point",
+                new DataField<ulong>("chromatogram_index"),
+                new DataField<double>("time"),
+                new DataField<float>("intensity"),
+                new DataField<long>("ms_level"));
+
+        private void RegisterChromDataPrefixes()
+        {
+            foreach (var curie in ChromDataAccessions) CollectPrefix(curie);
+        }
+
+        // A point-facet (spectra_data / spectra_peaks) streamed to a seekable temp file in bounded row
+        // groups. Staging buffers accumulate per scan and flush at the cap; the final residual buffer is
+        // flushed by Close, which also attaches the footer KV before disposing the writer.
+        private sealed class PointFacetStream : IDisposable
+        {
+            public readonly string TempPath;
+            private readonly ParquetSchema _schema;
+            private readonly DataField _idx, _mz, _int;
+            private readonly int _cap;
+            private FileStream _sink;
+            private MzPeakParquet.Handle _handle;
+            private readonly List<ulong> _bIdx = new List<ulong>();
+            private readonly List<double> _bMz = new List<double>();
+            private readonly List<float> _bInt = new List<float>();
+
+            public long PointCount { get; private set; }
+
+            public PointFacetStream(int cap)
             {
-                [Leaf(schema, "point/spectrum_index")] = (index.ToArray(), null, null),
-                [Leaf(schema, "point/mz")] = (mz.ToArray(), null, null),
-                [Leaf(schema, "point/intensity")] = (intensity.ToArray(), null, null)
-            };
+                _cap = cap;
+                TempPath = Path.GetTempFileName();
+                _schema = new ParquetSchema(PointStructField());
+                _idx = Leaf(_schema, "point/spectrum_index");
+                _mz = Leaf(_schema, "point/mz");
+                _int = Leaf(_schema, "point/intensity");
+                _sink = new FileStream(TempPath, FileMode.Create, FileAccess.Write);
+                _handle = MzPeakParquet.OpenAsync(_sink, _schema, null).GetAwaiter().GetResult();
+            }
 
-            var meta = new Dictionary<string, string>
+            public void Append(ulong ordinal, double[] mz, float[] intensity)
             {
-                ["spectrum_count"] = spectrumCount.ToString(),
-                ["spectrum_data_point_count"] = index.Count.ToString(),
-                ["spectrum_array_index"] = SpectrumArrayIndex
-            };
+                for (int i = 0; i < mz.Length; i++)
+                {
+                    _bIdx.Add(ordinal); _bMz.Add(mz[i]); _bInt.Add(intensity[i]);
+                }
+                PointCount += mz.Length;
+                if (_bIdx.Count >= _cap) Flush();
+            }
 
-            return WriteFacet(schema, meta, cols);
+            private void Flush()
+            {
+                if (_bIdx.Count == 0) return;
+                var cols = new Dictionary<DataField, (Array, int[], int[])>
+                {
+                    [_idx] = (_bIdx.ToArray(), null, null),
+                    [_mz] = (_bMz.ToArray(), null, null),
+                    [_int] = (_bInt.ToArray(), null, null)
+                };
+                _handle.WriteRowGroupAsync(_schema, cols).GetAwaiter().GetResult();
+                _bIdx.Clear(); _bMz.Clear(); _bInt.Clear();
+            }
+
+            // Finalize order: flush residual buffer -> CloseAsync(final KV) disposes the writer -> dispose
+            // the temp FileStream. After this returns the temp file is fully on disk.
+            public void Close(IReadOnlyDictionary<string, string> finalMetadata)
+            {
+                Flush();
+                _handle.CloseAsync(finalMetadata).GetAwaiter().GetResult();
+                _handle = null;
+                _sink.Dispose();
+                _sink = null;
+            }
+
+            public void Dispose()
+            {
+                _handle?.Dispose();
+                _sink?.Dispose();
+            }
+        }
+
+        // A chrom-data facet streamed to a seekable temp file. Bounded by scan count anyway; streamed for
+        // uniformity with the point facets.
+        private sealed class ChromDataFacetStream : IDisposable
+        {
+            public readonly string TempPath;
+            private readonly ParquetSchema _schema;
+            private readonly DataField _idx, _time, _int, _lvl;
+            private readonly int _cap;
+            private FileStream _sink;
+            private MzPeakParquet.Handle _handle;
+            private readonly List<ulong> _bIdx = new List<ulong>();
+            private readonly List<double> _bTime = new List<double>();
+            private readonly List<float> _bInt = new List<float>();
+            private readonly List<long> _bLvl = new List<long>();
+
+            public long PointCount { get; private set; }
+
+            public ChromDataFacetStream(int cap)
+            {
+                _cap = cap;
+                TempPath = Path.GetTempFileName();
+                _schema = new ParquetSchema(ChromDataStructField());
+                _idx = Leaf(_schema, "point/chromatogram_index");
+                _time = Leaf(_schema, "point/time");
+                _int = Leaf(_schema, "point/intensity");
+                _lvl = Leaf(_schema, "point/ms_level");
+                _sink = new FileStream(TempPath, FileMode.Create, FileAccess.Write);
+                _handle = MzPeakParquet.OpenAsync(_sink, _schema, null).GetAwaiter().GetResult();
+            }
+
+            public void Append(double time, float intensity, long msLevel)
+            {
+                _bIdx.Add(0UL); _bTime.Add(time); _bInt.Add(intensity); _bLvl.Add(msLevel);
+                PointCount++;
+                if (_bIdx.Count >= _cap) Flush();
+            }
+
+            private void Flush()
+            {
+                if (_bIdx.Count == 0) return;
+                var cols = new Dictionary<DataField, (Array, int[], int[])>
+                {
+                    [_idx] = (_bIdx.ToArray(), null, null),
+                    [_time] = (_bTime.ToArray(), null, null),
+                    [_int] = (_bInt.ToArray(), null, null),
+                    [_lvl] = (_bLvl.ToArray(), null, null)
+                };
+                _handle.WriteRowGroupAsync(_schema, cols).GetAwaiter().GetResult();
+                _bIdx.Clear(); _bTime.Clear(); _bInt.Clear(); _bLvl.Clear();
+            }
+
+            public void Close(IReadOnlyDictionary<string, string> finalMetadata)
+            {
+                Flush();
+                _handle.CloseAsync(finalMetadata).GetAwaiter().GetResult();
+                _handle = null;
+                _sink.Dispose();
+                _sink = null;
+            }
+
+            public void Dispose()
+            {
+                _handle?.Dispose();
+                _sink?.Dispose();
+            }
         }
 
         private byte[] BuildMetadataFacet(List<Record> records)
