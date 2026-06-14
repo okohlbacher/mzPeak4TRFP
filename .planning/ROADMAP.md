@@ -30,7 +30,7 @@ never appear in the produced code or output schema.
 
 Decimal phases appear between their surrounding integers in numeric order.
 
-- [ ] **Phase 1: Streaming Writer + Per-Scan Robustness** - Refactor to bounded row-group / streaming Parquet + STORED-zip streaming (constant memory), make per-scan read failures non-fatal; point layout unchanged so it is independently verifiable
+- [x] **Phase 1: Streaming Writer + Per-Scan Robustness** - Refactor to bounded row-group / streaming Parquet + STORED-zip streaming (constant memory), make per-scan read failures non-fatal; point layout unchanged so it is independently verifiable
 - [ ] **Phase 2: Chunked Layout** - Emit `spectra_data`/`spectra_peaks` as the reference chunk struct with fixed m/z-window chunking (lossless delta), make chunked the default, add `--point` opt-out
 - [ ] **Phase 3: Numpress-Linear m/z** - C# MSNumpress port encoding m/z into `mz_numpress_linear_bytes` with the MS:1003089 transform recorded; default ON, `--no-numpress`/`--lossless` opt-out, L2 bound
 - [ ] **Phase 4: Profile Compaction + Ion Mobility** - Zero-run stripping + null-marking with the per-spectrum δmz model for profile data; populate ion-mobility values/type from Thermo FAIMS CV
@@ -150,7 +150,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Streaming Writer + Per-Scan Robustness | 0/1 | Planned | - |
+| 1. Streaming Writer + Per-Scan Robustness | 1/1 | Certified | - |
 | 2. Chunked Layout | 0/0 | Not started | - |
 | 3. Numpress-Linear m/z | 0/0 | Not started | - |
 | 4. Profile Compaction + Ion Mobility | 0/0 | Not started | - |

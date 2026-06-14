@@ -1,0 +1,13 @@
+HIGH, ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:674, `BuildPrecursor` still calculates selected-ion intensity from `parentScan` even when that parent was not committed (`scanNumberToOrdinal` miss at 633). A skipped/bad parent can still force a later otherwise-readable child to read the bad parent via `CalculatePrecursorPeakIntensity`, causing another skip and violating skipped-scan isolation. Fix: only calculate precursor intensity when the parent was emitted, e.g. `rec.PrecursorIndex.HasValue`, or catch parent-intensity failures and leave `SelectedIonIntensity` null.
+
+MEDIUM, ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:748, `PointFacetStream.Append` appends an entire scan before checking `_cap`, so row groups can exceed `RowGroupRowCap` by an arbitrary scan size and the test cap does not actually bound row-group buffers. Fix: chunk inside `Append`, filling remaining capacity, flushing, then continuing with the same ordinal so one scan may span row groups.
+
+MEDIUM, ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:174, temp facet streams are constructed before the `try/finally`; if `peaksFacet` or `chromFacet` construction/open fails, already-created temp files and handles are not cleaned up. Fix: initialize facets to null and construct them inside the protected `try`, or make construction exception-safe and delete each temp in its own catch/finally.
+
+MEDIUM, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs:1585, the skipped-scan precursor isolation test is a production-adjacent seam test, not a real writer failure path: it never drives `Write`, never throws after filter-key derivation, and would not catch regressions in the actual scan loop or `BuildPrecursor` behavior. Fix: add a deterministic writer/raw seam or extracted scan-processing helper that exercises read/build failure after filter-key staging and then verifies rows, ordinals, maps, and child precursor metadata.
+
+LOW, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs:1522, `SmallRaw_Identical_To_V1_Invariants` asserts internal self-consistency but not the stated v1 baseline counts for data/peaks/chrom footer KV; it would miss clean-file semantic drift that remains self-consistent. Fix: assert the known small.RAW v1 totals and footer keys for all streamed facets, including `spectra_peaks` and `chromatograms_data`.
+
+NIT, ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:274, production comments still reference plan shorthand (`S2`); tests also reference `ROB-01/ROB-02` at MzPeakWriterTests.cs:1627 and 1640. Fix: remove phase/requirement IDs from code comments and state the behavior directly.
+
+VERDICT: CERTIFY-WITH-FIXES
