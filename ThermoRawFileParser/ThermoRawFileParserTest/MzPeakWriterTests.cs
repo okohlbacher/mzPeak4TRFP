@@ -680,6 +680,13 @@ namespace ThermoRawFileParserTest
                     Assert.That(paths, Does.Contain(
                         "precursor/isolation_window/MS_1000827_isolation_window_target_mz"),
                         "isolation_window_target_mz carries no unit suffix");
+
+                    // Ground-truth selected_ion carries ion-mobility columns and a parameters list even
+                    // when the source has no mobility values; the struct shape must match exactly.
+                    Assert.That(paths, Does.Contain("selected_ion/ion_mobility_value"));
+                    Assert.That(paths, Does.Contain("selected_ion/ion_mobility_type"));
+                    Assert.That(paths.Any(p => p.StartsWith("selected_ion/parameters/list/item/")), Is.True,
+                        "selected_ion.parameters leaves sit under .../list/item/");
                 }
 
                 // CV values: selected_ion_mz finite/positive on MSn rows; charge_state null on small.RAW.
@@ -693,11 +700,17 @@ namespace ThermoRawFileParserTest
                     "out['sel_mz_pos'] = all(d[i]['selected_ion']['MS_1000744_selected_ion_mz_unit_MS_1000040'] > 0 for i in range(M))\n" +
                     "out['charge_all_null'] = all(d[i]['selected_ion']['MS_1000041_charge_state'] is None for i in range(M))\n" +
                     "out['iso_target_pos'] = all(d[i]['precursor']['isolation_window']['MS_1000827_isolation_window_target_mz'] > 0 for i in range(M))\n" +
+                    "out['im_value_null'] = all(d[i]['selected_ion']['ion_mobility_value'] is None for i in range(M))\n" +
+                    "out['im_type_null'] = all(d[i]['selected_ion']['ion_mobility_type'] is None for i in range(M))\n" +
+                    "out['sel_params_empty'] = all(d[i]['selected_ion']['parameters'] == [] for i in range(M))\n" +
                     "print(json.dumps(out))\n";
                 var o = PyArrowMetadata(archive, snippet);
                 Assert.That((bool)o["sel_mz_pos"], Is.True, "selected_ion_mz positive on every MSn row");
                 Assert.That((bool)o["charge_all_null"], Is.True, "small.RAW has no Charge State trailer");
                 Assert.That((bool)o["iso_target_pos"], Is.True, "isolation target positive on every MSn row");
+                Assert.That((bool)o["im_value_null"], Is.True, "ion_mobility_value null on every MSn row");
+                Assert.That((bool)o["im_type_null"], Is.True, "ion_mobility_type null on every MSn row");
+                Assert.That((bool)o["sel_params_empty"], Is.True, "selected_ion.parameters empty on every MSn row");
             }
             finally
             {
@@ -1019,6 +1032,8 @@ namespace ThermoRawFileParserTest
                     "out['seli_in_schema'] = 'selected_ion' in [f.name for f in t.schema]\n" +
                     "out['prec_null'] = d[0]['precursor'] is None or d[0]['precursor']['source_index'] is None\n" +
                     "out['seli_null'] = d[0]['selected_ion'] is None or d[0]['selected_ion']['source_index'] is None\n" +
+                    "selt = t.schema.field('selected_ion').type\n" +
+                    "out['seli_fields'] = [f.name for f in selt]\n" +
                     "print(json.dumps(out))\n";
                 var o = PyArrowEntry(archive, "chromatograms_metadata.parquet", snippet);
 
@@ -1041,6 +1056,17 @@ namespace ThermoRawFileParserTest
                 Assert.That((bool)o["seli_in_schema"], Is.True);
                 Assert.That((bool)o["prec_null"], Is.True, "precursor present-but-null on the row");
                 Assert.That((bool)o["seli_null"], Is.True, "selected_ion present-but-null on the row");
+
+                // The chromatogram selected_ion struct must carry the same ground-truth columns as the
+                // spectra selected_ion, including the ion-mobility columns and the parameters list.
+                var seliFields = o["seli_fields"].Select(x => (string)x).ToArray();
+                foreach (var f in new[]
+                {
+                    "source_index", "precursor_index", "MS_1000744_selected_ion_mz_unit_MS_1000040",
+                    "MS_1000041_charge_state", "MS_1000042_intensity_unit_MS_1000131",
+                    "ion_mobility_value", "ion_mobility_type", "parameters"
+                })
+                    Assert.That(seliFields, Does.Contain(f), $"chromatogram selected_ion exposes {f}");
             }
             finally
             {
@@ -1094,15 +1120,52 @@ namespace ThermoRawFileParserTest
             }
         }
 
+        // The generated cv_list must be genuinely exhaustive: it is finalized only after the chromatogram
+        // facets have contributed their CURIEs, so every prefix that any chromatogram column or term uses
+        // (chromatogram type, time/intensity/ms-level array terms and their units) appears in cv_list.
+        [Test]
+        public void CvList_Covers_Chromatogram_Introduced_Prefixes()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+            try
+            {
+                var index = JObject.Parse(
+                    System.Text.Encoding.UTF8.GetString(ReadEntry(archive, "mzpeak_index.json")));
+                var ids = ((JArray)index["metadata"]["cv_list"]).Select(e => (string)e["id"]).ToHashSet();
+
+                // Prefixes the chromatogram facets introduce via their CV-named columns and array terms.
+                var chromCuries = new[]
+                {
+                    "MS:1000235", "MS:1000626", "MS:1000595", "MS:1000786",
+                    "UO:0000031", "UO:0000186"
+                };
+                foreach (var curie in chromCuries)
+                {
+                    var prefix = curie.Substring(0, curie.IndexOf(':'));
+                    Assert.That(ids, Does.Contain(prefix),
+                        $"cv_list must declare the chromatogram-introduced prefix {prefix} (from {curie})");
+                }
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
         // L1 is an independent value check: our spectra_data m/z (f64) is compared bit-exact, per
         // spectrum, against the m/z array re-read directly from small.RAW (Scan.FromFile().SegmentedScan
         // .Positions) -- the source is NOT derived from our archive. The Thermo SegmentedScan returns
         // Positions sorted but Intensities in acquisition order (the two arrays are not index-paired and
         // their nonzero counts differ from the writer's realigned output), so re-deriving the exact
-        // per-point intensity pairing here would require re-implementing the reader's internal
-        // realignment. L2 value-equality is therefore certified by VER-02 against the independent mzdata
-        // reference (MzPeakDifferentialTests); here L2 is the honest structural invariant: intensity is
-        // f32, finite, and the per-spectrum point count equals number_of_data_points.
+        // per-point intensity pairing from the SegmentedScan alone would require re-implementing the
+        // reader's internal realignment. The differential suite (MzPeakDifferentialTests) compares
+        // intensities value-for-value only over the reference-profile spectra. To avoid overclaiming
+        // beyond that scope, this test asserts L2 here as a structural invariant for every emitted
+        // spectrum (intensity is f32, finite, and the per-spectrum point count equals
+        // number_of_data_points) and additionally runs an independent intensity check against an mzML
+        // re-export of the same RAW for every spectrum that has a clean point-for-point correspondence,
+        // so the value-equality claim rests on a source not derived from our archive.
         [Test]
         public void RoundTrip_L1_Mz_BitExact_Vs_IndependentRawRead_L2_Intensity_F32_Structural()
         {
@@ -1180,11 +1243,18 @@ namespace ThermoRawFileParserTest
                             if (k > 0)
                                 Assert.That(aMz[k], Is.GreaterThanOrEqualTo(aMz[k - 1]),
                                     $"ordinal {ord} m/z non-decreasing at {k}");
-                            // L2 structural: intensity is finite f32 (value-equality via VER-02).
+                            // L2 structural invariant: intensity is finite f32 for every emitted point.
                             Assert.That(float.IsFinite(aInt[k]), Is.True, $"ordinal {ord} intensity[{k}] finite");
                         }
                     }
                 }
+
+                // Independent intensity check for the spectra the differential suite does NOT cover by
+                // value: re-export the same RAW to a profile mzML (a source not derived from our archive)
+                // and compare its decoded intensity arrays, narrowed to f32, against our spectra_data for
+                // every spectrum whose m/z arrays correspond point-for-point. Spectra without a clean
+                // correspondence are reported as structural-only and are not claimed value-equal.
+                AssertIntensityMatchesIndependentMzml(dir, archive, ourMz, ourInt);
             }
             finally
             {
@@ -1192,13 +1262,127 @@ namespace ThermoRawFileParserTest
             }
         }
 
+        // Re-exports the test RAW to a profile mzML in-process, decodes its binaryDataArrays in Python
+        // (honoring each array's own 32/64-bit + zlib CV flags), and asserts that, for every emitted
+        // spectrum with a bit-exact m/z correspondence, our f32-narrowed spectra_data intensities equal
+        // the mzML intensities narrowed to f32. The mzML is an independent re-derivation of the RAW, so
+        // matching intensities certify L2 value-equality beyond the differential suite's profile subset.
+        private static void AssertIntensityMatchesIndependentMzml(string dir, string archive,
+            Dictionary<ulong, List<double>> ourMz, Dictionary<ulong, List<float>> ourInt)
+        {
+            var python = ResolvePython();
+            if (python == null) Assert.Ignore("python3 not available");
+
+            var mzml = Path.Combine(dir, "small.indep.profile.mzML");
+            var mzmlInput = new ParseInput(TestRawFile, null, dir, OutputFormat.MzML)
+            {
+                NoPeakPicking = ParseInput.AllLevels
+            };
+            RawFileParser.Parse(mzmlInput);
+            // TRFP names the mzML output after the RAW stem; relocate it to the deterministic path.
+            var produced = Path.Combine(dir, "small.mzML");
+            if (File.Exists(produced) && !File.Exists(mzml)) File.Move(produced, mzml);
+            Assert.That(File.Exists(mzml), "independent profile mzML must exist");
+
+            // Decode the mzML into ordered per-spectrum (mz, intensity) f64 arrays. Index order in the
+            // mzML matches our ordinal order (same scan-range filter, same source), so we compare by
+            // position and only where the m/z arrays correspond exactly.
+            var script = Path.Combine(dir, "decode_mzml.py");
+            File.WriteAllText(script, DecodeMzmlScript);
+            var psi = new ProcessStartInfo(python, $"\"{script}\" \"{mzml}\"")
+            {
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false
+            };
+            string stdout, stderr;
+            using (var proc = Process.Start(psi))
+            {
+                stdout = proc.StandardOutput.ReadToEnd();
+                stderr = proc.StandardError.ReadToEnd();
+                proc.WaitForExit();
+                Assert.That(proc.ExitCode, Is.EqualTo(0), $"mzML decode failed: {stderr}");
+            }
+
+            var spectra = (JArray)JObject.Parse(stdout.Trim())["spectra"];
+            int compared = 0, structuralOnly = 0;
+            for (int i = 0; i < spectra.Count; i++)
+            {
+                var ord = (ulong)i;
+                if (!ourMz.ContainsKey(ord)) { structuralOnly++; continue; }
+                var refMz = ((JArray)spectra[i]["mz"]).Select(x => (double)x).ToArray();
+                var refInt = ((JArray)spectra[i]["intensity"]).Select(x => (double)x).ToArray();
+                var aMz = ourMz[ord];
+                var aInt = ourInt[ord];
+
+                // Only claim value-equality where the two m/z arrays correspond point-for-point.
+                bool corresponds = refMz.Length == aMz.Count;
+                for (int k = 0; corresponds && k < refMz.Length; k++)
+                    if (refMz[k] != aMz[k]) corresponds = false;
+
+                if (!corresponds) { structuralOnly++; continue; }
+
+                compared++;
+                for (int k = 0; k < refInt.Length; k++)
+                {
+                    // Both sides narrowed to f32: our archive stores f32, the mzML carries f64 that the
+                    // writer would have narrowed identically.
+                    Assert.That(aInt[k], Is.EqualTo((float)refInt[k]),
+                        $"ordinal {ord} intensity[{k}] must equal the independent mzML intensity (f32)");
+                }
+            }
+
+            Assert.That(compared, Is.GreaterThan(0),
+                "at least one emitted spectrum must have a bit-exact m/z correspondence to compare by value");
+            TestContext.Out.WriteLine(
+                $"independent intensity check: {compared} spectra value-equal, {structuralOnly} structural-only");
+        }
+
+        // Standard-library mzML decoder: yields per-spectrum (mz, intensity) f64 arrays, decoding each
+        // binaryDataArray per its own precision (32/64-bit float) and compression (zlib/none) CV flags.
+        private const string DecodeMzmlScript =
+            "import sys, json, base64, zlib, struct\n" +
+            "import xml.etree.ElementTree as ET\n" +
+            "path = sys.argv[1]\n" +
+            "ns = {'m': 'http://psi.hupo.org/ms/mzml'}\n" +
+            "tree = ET.parse(path); root = tree.getroot()\n" +
+            "def localname(t):\n" +
+            "    return t.rsplit('}', 1)[-1]\n" +
+            "def decode_array(bda):\n" +
+            "    accs = set()\n" +
+            "    for cv in bda:\n" +
+            "        if localname(cv.tag) == 'cvParam': accs.add(cv.get('accession'))\n" +
+            "    bits = 64 if 'MS:1000523' in accs else (32 if 'MS:1000521' in accs else 64)\n" +
+            "    zipped = 'MS:1000574' in accs\n" +
+            "    is_mz = 'MS:1000514' in accs\n" +
+            "    is_int = 'MS:1000515' in accs\n" +
+            "    b64 = None\n" +
+            "    for c in bda:\n" +
+            "        if localname(c.tag) == 'binary': b64 = c.text or ''\n" +
+            "    raw = base64.b64decode(b64) if b64 else b''\n" +
+            "    if zipped and raw: raw = zlib.decompress(raw)\n" +
+            "    fmt = ('<%dd' % (len(raw)//8)) if bits == 64 else ('<%df' % (len(raw)//4))\n" +
+            "    vals = list(struct.unpack(fmt, raw)) if raw else []\n" +
+            "    return is_mz, is_int, vals\n" +
+            "spectra = []\n" +
+            "for sp in root.iter():\n" +
+            "    if localname(sp.tag) != 'spectrum': continue\n" +
+            "    mz, inten = [], []\n" +
+            "    for bda in sp.iter():\n" +
+            "        if localname(bda.tag) != 'binaryDataArray': continue\n" +
+            "        is_mz, is_int, vals = decode_array(bda)\n" +
+            "        if is_mz: mz = vals\n" +
+            "        elif is_int: inten = vals\n" +
+            "    spectra.append({'mz': mz, 'intensity': inten})\n" +
+            "print(json.dumps({'spectra': spectra}))\n";
+
         [Test]
         public void Validator_Gate_Stays_Zero_Errors_With_Chromatograms()
         {
             var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
             var dir = Convert(input, out var archive);
 
-            // Structural assertions run even when the validator is absent (VER-03).
+            // Structural assertions run even when the validator binary is unavailable on the host.
             Assert.That(ReadEntry(archive, "chromatograms_data.parquet"), Is.Not.Null);
             Assert.That(ReadEntry(archive, "chromatograms_metadata.parquet"), Is.Not.Null);
 

@@ -247,12 +247,17 @@ namespace ThermoRawFileParser.Writer
 
             var hasPeaks = peaksIndex.Count > 0;
             var dataBytes = BuildPointFacet(dataIndex, dataMz, dataIntensity, (int)ordinal);
-            var metaBytes = BuildMetadataFacet(records);
             var peaksBytes = hasPeaks
                 ? BuildPointFacet(peaksIndex, peaksMz, peaksIntensity, peakSpectra.Count)
                 : null;
+
+            // Chromatogram facets contribute their own CURIE prefixes (e.g. the chromatogram type and
+            // array-index terms); build them before the metadata facet so the generated cv_list — which
+            // is finalized inside the metadata facet — covers every prefix the archive actually uses.
             var chromDataBytes = BuildChromatogramDataFacet(chromTime, chromIntensity, chromMsLevel);
             var chromMetaBytes = BuildChromatogramMetadataFacet(records.Count);
+
+            var metaBytes = BuildMetadataFacet(records);
             var indexBytes = BuildIndex(hasPeaks, true);
 
             ConfigureWriter(".mzpeak");
@@ -744,6 +749,12 @@ namespace ThermoRawFileParser.Writer
             AddMsnNullableFloat(cols, schema, "selected_ion/" + Cv("MS:1000042", "intensity", "MS:1000131"),
                 n, msnRecords.Select(r => r.SelectedIonIntensity).ToArray());
 
+            // Ion-mobility columns exist to match the ground-truth struct shape; the Thermo RAW path
+            // carries no per-selected-ion mobility value, so they stay leaf-null on every MSn row.
+            AddMsnNullableDouble(cols, schema, "selected_ion/ion_mobility_value", n, msnRecords.Select(_ => (double?)null).ToArray());
+            AddMsnString(cols, schema, "selected_ion/ion_mobility_type", n, msnRecords.Select(_ => (string)null).ToArray());
+            AddMsnParamList(cols, schema, "selected_ion/parameters", n, msnRecords.Select(_ => new List<Param>()).ToList());
+
             var custom = new Dictionary<string, string>
             {
                 ["spectrum_count"] = n.ToString(),
@@ -814,7 +825,10 @@ namespace ThermoRawFileParser.Writer
                 new DataField<ulong>("precursor_index", true),
                 new DataField<double>(Cv("MS:1000744", "selected_ion_mz", "MS:1000040"), true),
                 new DataField<int>(Cv("MS:1000041", "charge_state"), true),
-                new DataField<float>(Cv("MS:1000042", "intensity", "MS:1000131"), true));
+                new DataField<float>(Cv("MS:1000042", "intensity", "MS:1000131"), true),
+                new DataField<double>("ion_mobility_value", true),
+                new DataField<string>("ion_mobility_type", true),
+                new ListField("parameters", MzPeakParquet.BuildParamField("item")));
         }
 
         private string Cv(string accession, string label, string unit = null)
@@ -895,6 +909,23 @@ namespace ThermoRawFileParser.Writer
             int m = values.Length;
             var rows = new List<MzPeakParquet.LeafRow>();
             var present = new List<float>();
+            for (int i = 0; i < n; i++)
+            {
+                if (i >= m) rows.Add(MzPeakParquet.Absent());
+                else if (values[i].HasValue) { rows.Add(MzPeakParquet.Present(leaf)); present.Add(values[i].Value); }
+                else rows.Add(MzPeakParquet.AtLevel(leaf.MaxDefinitionLevel - 1, false));
+            }
+            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
+            cols[leaf] = (present.ToArray(), def, null);
+        }
+
+        private static void AddMsnNullableDouble(IDictionary<DataField, (Array, int[], int[])> cols,
+            ParquetSchema schema, string path, int n, double?[] values)
+        {
+            var leaf = Leaf(schema, path);
+            int m = values.Length;
+            var rows = new List<MzPeakParquet.LeafRow>();
+            var present = new List<double>();
             for (int i = 0; i < n; i++)
             {
                 if (i >= m) rows.Add(MzPeakParquet.Absent());
