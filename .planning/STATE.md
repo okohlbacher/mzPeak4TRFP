@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v5.0.1
 milestone_name: milestone
-status: verifying
-last_updated: "2026-06-14T10:18:53.519Z"
+status: complete
+last_updated: "2026-06-14T15:10:00.000Z"
 last_activity: 2026-06-14
 progress:
   total_phases: 4
-  completed_phases: 2
+  completed_phases: 4
   total_plans: 4
-  completed_plans: 3
-  percent: 50
+  completed_plans: 4
+  percent: 100
 ---
 
 # Project State
@@ -24,12 +24,12 @@ See: .planning/PROJECT.md (updated 2026-06-14)
 
 ## Current Position
 
-Phase: 1 of 4 (Walking Skeleton: CLI Wiring + Parquet/ZIP Foundation)
-Plan: 0 of 0 in current phase
-Status: Phase complete — ready for verification
+Phase: 4 of 4 (Chromatograms + Conformance Verification)
+Plan: 1 of 1 in current phase — complete
+Status: v1 complete — all phases delivered, mzpeak-validate PASS 0/0 with chromatograms
 Last activity: 2026-06-14
 
-Progress: [░░░░░░░░░░] 0%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
