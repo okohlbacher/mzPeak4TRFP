@@ -73,13 +73,16 @@ Decimal phases appear between their surrounding integers in numeric order.
   4. `spectrum_array_index` describes the chunk buffer formats (chunk_start/end/values/encoding) with `sorting_rank:0`, and the `cv_list` stays exhaustive over every referenced accession (CHUNK-04).
   5. Chunked is the new default output and the `--point` flag restores the v1 point layout (CHUNK-05); chunked output passes `mzpeak-validate` and round-trips the (m/z, intensity) multiset exactly in lossless mode (CHUNK-06).
 
+**Note (RESEARCH supersedes the sketch above):** the verified reference dump shows only `spectra_data` is chunked (`spectra_peaks` stays point), the chunk struct has exactly **6 fields** (NO `mz_numpress_linear_bytes` in delta mode — that column arrives in Phase 3), and `chunk_encoding` is the CURIE `MS:1003089` (not the literal `"delta"`). The plan tracks the RESEARCH-verified shape.
+
 **Key risks**:
 
   - Chunk-boundary correctness under empty windows and per-spectrum window counts: an off-by-one or dropped boundary point would silently lose data or break the validator's chunk-format checks.
   - Round-trip multiset preservation through window splitting + delta encoding must be exact in lossless mode — delta accumulation must not introduce f64 drift across long runs.
   - `spectrum_array_index` and `cv_list` must be updated in lockstep with the new chunk columns; a stale array-index description or missing CURIE would fail readers/validate even with correct bytes.
 
-**Plans**: TBD
+**Plans**: 1 plan
+- [ ] 02-01-PLAN.md — Chunk codec (null-aware delta encode/decode + fixed m/z-window chunker, no nulling) + ChunkFacetStream emitting spectra_data chunk rows via the streaming Handle + chunk array_index footer + `--point`/`--chunk-size` flags; peaks/chromatograms unchanged; verification locks (schema diff, validator 0/0 both modes, multiset equality, size shrink)
 
 ### Phase 3: Numpress-Linear m/z
 
@@ -151,7 +154,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Streaming Writer + Per-Scan Robustness | 1/1 | Certified | - |
-| 2. Chunked Layout | 0/0 | Not started | - |
+| 2. Chunked Layout | 0/1 | Planned | - |
 | 3. Numpress-Linear m/z | 0/0 | Not started | - |
 | 4. Profile Compaction + Ion Mobility | 0/0 | Not started | - |
 | 5. CLI/Docs + Conformance & Corpus Re-Verification | 0/0 | Not started | - |
