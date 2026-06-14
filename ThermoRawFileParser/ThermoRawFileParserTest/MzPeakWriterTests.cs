@@ -537,6 +537,101 @@ namespace ThermoRawFileParserTest
         }
 
         [Test]
+        public void Metadata_ListLeaf_Paths_Are_Canonical_Item_And_CvValues()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+            try
+            {
+                var metaBytes = ReadEntry(archive, "spectra_metadata.parquet");
+                using (var ms = new MemoryStream(metaBytes))
+                using (var reader = ParquetReader.CreateAsync(ms).Result)
+                {
+                    var paths = reader.Schema.GetDataFields().Select(d => d.Path.ToString()).ToHashSet();
+
+                    // Canonical list-element leaf path is ".../list/item/...", not a flat column.
+                    Assert.That(paths.Any(p => p.StartsWith("spectrum/parameters/list/item/")), Is.True,
+                        "spectrum.parameters leaves sit under .../list/item/");
+                    Assert.That(paths, Does.Contain(
+                        "scan/scan_windows/list/item/MS_1000501_scan_window_lower_limit_unit_MS_1000040"));
+                    Assert.That(paths, Does.Contain(
+                        "scan/scan_windows/list/item/MS_1000500_scan_window_upper_limit_unit_MS_1000040"));
+                    Assert.That(paths.Any(p => p.StartsWith("precursor/activation/parameters/list/item/")), Is.True);
+                    Assert.That(paths, Does.Contain(
+                        "selected_ion/MS_1000744_selected_ion_mz_unit_MS_1000040"));
+                    Assert.That(paths, Does.Contain("selected_ion/MS_1000041_charge_state"));
+                    Assert.That(paths, Does.Contain(
+                        "precursor/isolation_window/MS_1000827_isolation_window_target_mz"),
+                        "isolation_window_target_mz carries no unit suffix");
+                }
+
+                // CV values: selected_ion_mz finite/positive on MSn rows; charge_state null on small.RAW.
+                var snippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "t = pq.read_table(r'{PARQUET}')\n" +
+                    "d = t.to_pylist()\n" +
+                    "N = len(d)\n" +
+                    "M = sum(1 for i in range(N) if d[i]['selected_ion'] is not None and d[i]['selected_ion']['source_index'] is not None)\n" +
+                    "out = {}\n" +
+                    "out['sel_mz_pos'] = all(d[i]['selected_ion']['MS_1000744_selected_ion_mz_unit_MS_1000040'] > 0 for i in range(M))\n" +
+                    "out['charge_all_null'] = all(d[i]['selected_ion']['MS_1000041_charge_state'] is None for i in range(M))\n" +
+                    "out['iso_target_pos'] = all(d[i]['precursor']['isolation_window']['MS_1000827_isolation_window_target_mz'] > 0 for i in range(M))\n" +
+                    "print(json.dumps(out))\n";
+                var o = PyArrowMetadata(archive, snippet);
+                Assert.That((bool)o["sel_mz_pos"], Is.True, "selected_ion_mz positive on every MSn row");
+                Assert.That((bool)o["charge_all_null"], Is.True, "small.RAW has no Charge State trailer");
+                Assert.That((bool)o["iso_target_pos"], Is.True, "isolation target positive on every MSn row");
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
+        public void Metadata_NumberOfPeaks_Matches_PerOrdinal_Peaks_Facet()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+            try
+            {
+                var peaks = ReadPointFacet(ReadEntry(archive, "spectra_peaks.parquet"));
+                var perOrdinal = peaks.SpectrumIndex
+                    .GroupBy(x => x)
+                    .ToDictionary(g => g.Key, g => (long)g.Count());
+
+                var snippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "t = pq.read_table(r'{PARQUET}')\n" +
+                    "d = t.to_pylist()\n" +
+                    "N = len(d)\n" +
+                    "out = {'npk': {str(i): d[i]['spectrum']['MS_1003059_number_of_peaks'] for i in range(N)}}\n" +
+                    "print(json.dumps(out))\n";
+                var o = PyArrowMetadata(archive, snippet);
+                var npk = (JObject)o["npk"];
+
+                foreach (var kv in npk)
+                {
+                    ulong ord = ulong.Parse(kv.Key);
+                    if (kv.Value.Type == JTokenType.Null)
+                    {
+                        Assert.That(perOrdinal.ContainsKey(ord), Is.False,
+                            $"ordinal {ord} has null number_of_peaks but peaks were written");
+                    }
+                    else
+                    {
+                        Assert.That(perOrdinal.TryGetValue(ord, out var cnt) && cnt == (long)kv.Value, Is.True,
+                            $"ordinal {ord} number_of_peaks must equal its spectra_peaks point count");
+                    }
+                }
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
         public void Metadata_CvList_Covers_Collected_Set_In_Index_And_Footer()
         {
             var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
