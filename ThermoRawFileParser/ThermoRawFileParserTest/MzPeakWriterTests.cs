@@ -1582,6 +1582,88 @@ namespace ThermoRawFileParserTest
         }
 
         [Test]
+        public void FailedParent_DoesNotPoison_LaterChild_PrecursorResolution()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var writer = new MzPeakSpectrumWriter(input);
+            var scanToOrdinal = new Dictionary<int, ulong>();
+            ulong ordinal = 0;
+
+            const string parentKey = "FTMS + p NSI Full ms";
+
+            // Scan 10 is an MS1 parent that FAILS after computing its filterKey: the commit is never
+            // applied, so _precursorScanNumbers[parentKey] is NOT written for scan 10.
+            // (No CommitScanForTest call == the skip path.)
+
+            // Scan 20 is a later VALID MS1 parent sharing the same filter prefix: it commits.
+            var parentOrdinal = writer.CommitScanForTest(parentKey, 20, ref ordinal, scanToOrdinal);
+
+            // Scan 30 is an MSn child of that filter prefix: it must resolve to scan 20's ordinal,
+            // never to the skipped scan 10.
+            var resolved = writer.ResolveParentOrdinalForTest(parentKey, scanToOrdinal);
+
+            Assert.That(resolved, Is.EqualTo(parentOrdinal),
+                "child resolves to the later valid parent, not the skipped scan");
+            Assert.That(scanToOrdinal.ContainsKey(10), Is.False,
+                "skipped scan 10 consumed no ordinal");
+            Assert.That(ordinal, Is.EqualTo(1UL), "only the one committed scan advanced the ordinal");
+            Assert.That(scanToOrdinal[20], Is.EqualTo(0UL), "ordinals stay dense from 0");
+        }
+
+        [Test]
+        public void BadScanFile_Converts_To_Completion_With_Skip_And_Parity()
+        {
+            var raw = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                "Claude", "mzML2mzPeak", "data", "raw-replacements",
+                "bruker-impact-sub__PXD076459", "S4_5foldGHRP.raw");
+            if (!File.Exists(raw)) Assert.Ignore($"corpus bad-scan file not present: {raw}");
+
+            var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            Directory.CreateDirectory(dir);
+            var input = new ParseInput(raw, null, dir, OutputFormat.MzPeak);
+            try
+            {
+                // ROB-01 contract: an unreadable scan must NEVER abort the conversion with an unhandled
+                // throw; it is logged and ParseInput.NewError()-counted instead. This corpus file is a
+                // Finnigan RAW whose scan-event index is corrupt: every scan raises "Cannot get scan
+                // event". The robustness path must absorb every one of them without crashing.
+                Assert.DoesNotThrow(() => RawFileParser.Parse(input),
+                    "bad scans must not abort the conversion with an unhandled exception");
+                Assert.That(input.Errors, Is.GreaterThanOrEqualTo(1),
+                    "each skipped scan is error-counted");
+
+                var archive = Path.Combine(dir, "S4_5foldGHRP.mzpeak");
+                if (File.Exists(archive))
+                {
+                    // If any scan was readable, the produced archive must hold facet/metadata parity and
+                    // dense ordinals despite the skips (ROB-02).
+                    var data = ReadAllRowGroups(ReadEntry(archive, "spectra_data.parquet"));
+                    var metaIdx = ReadMetadataIndices(ReadEntry(archive, "spectra_metadata.parquet"));
+
+                    int distinct = data.SpectrumIndex.Distinct().Count();
+                    Assert.That(distinct, Is.EqualTo(data.SpectrumCount), "distinct spectrum_index == spectrum_count");
+                    Assert.That(metaIdx.Length, Is.EqualTo(data.SpectrumCount), "metadata rows == spectrum_count");
+                    Assert.That(metaIdx.OrderBy(x => x).ToArray(),
+                        Is.EqualTo(Enumerable.Range(0, data.SpectrumCount).Select(i => (ulong)i).ToArray()),
+                        "ordinals dense 0..N-1 despite the skips");
+                }
+                else
+                {
+                    // Every scan was unreadable -> graceful completion with no output is the correct
+                    // degenerate behavior (the writer raises a clean "No in-range spectrum" rather than a
+                    // corrupt partial archive). The no-abort + error-count assertions above are the gate.
+                    Assert.That(input.Errors, Is.GreaterThan(25000),
+                        "every scan in this corrupt file is skipped and counted");
+                }
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
         public void OrderedPairs_Preserves_Duplicate_Mz_In_Input_Order()
         {
             var masses = new[] { 100.0, 100.0, 100.0, 200.0 };

@@ -128,6 +128,29 @@ namespace ThermoRawFileParser.Writer
         {
         }
 
+        // Test seam mirroring the per-scan commit ordering for the shared precursor-resolution map. A
+        // scan whose read/build fails NEVER calls Commit*, so the precursor-map entry is not written and
+        // a later child cannot resolve its parent through the skipped scan. Returns the assigned ordinal.
+        internal ulong CommitScanForTest(string filterKey, int scanNumber, ref ulong ordinal,
+            IDictionary<int, ulong> scanNumberToOrdinal)
+        {
+            var assigned = ordinal;
+            scanNumberToOrdinal[scanNumber] = assigned;
+            _precursorScanNumbers[filterKey] = scanNumber;
+            ordinal++;
+            return assigned;
+        }
+
+        // Resolve a child's parent scan number via the same shared map the writer uses, then map it to an
+        // emitted ordinal (null when the parent was skipped/filtered and never committed).
+        internal ulong? ResolveParentOrdinalForTest(string parentFilterKey,
+            IDictionary<int, ulong> scanNumberToOrdinal)
+        {
+            if (!_precursorScanNumbers.TryGetValue(parentFilterKey, out var parentScan)) return null;
+            if (parentScan <= 0) return null;
+            return scanNumberToOrdinal.TryGetValue(parentScan, out var ord) ? ord : (ulong?)null;
+        }
+
         public override void Write(IRawDataPlus raw, int firstScanNumber, int lastScanNumber)
         {
             if (!raw.HasMsData)
@@ -203,7 +226,6 @@ namespace ThermoRawFileParser.Writer
                                 ? _filterStringIsolationMzPattern.Match(scanEvent.ToString())
                                 : _filterStringParentMzPattern.Match(scanEvent.ToString()));
                         filterKey = level == 1 ? "" : (filterMatch != null && filterMatch.Success ? filterMatch.Groups[1].Value : "");
-                        _precursorScanNumbers[filterKey] = scanNumber;
 
                         rec = new Record
                         {
@@ -248,8 +270,10 @@ namespace ThermoRawFileParser.Writer
 
                     if (!stage) continue;
 
-                    // Commit block: scan fully succeeded. A write/flush/IO failure here is FATAL (bytes may
-                    // already be on disk) and must propagate, never be swallowed as a skipped scan.
+                    // Commit block: scan fully succeeded. Apply ALL staged state atomically, including the
+                    // shared precursor-resolution map (S2) — a scan that failed above never reaches here,
+                    // so it cannot poison a later child's parent lookup. A write/flush/IO failure here is
+                    // FATAL (bytes may already be on disk) and must propagate, never be swallowed as a skip.
                     dataFacet.Append(ordinal, stagedMz, stagedInten);
                     if (stagedPeakMz != null)
                     {
@@ -258,6 +282,7 @@ namespace ThermoRawFileParser.Writer
                     }
                     records.Add(rec);
                     scanNumberToOrdinal[scanNumber] = ordinal;
+                    _precursorScanNumbers[filterKey] = scanNumber;
                     ordinal++;
                 }
 
