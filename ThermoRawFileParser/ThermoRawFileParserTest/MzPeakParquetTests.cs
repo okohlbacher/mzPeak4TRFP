@@ -258,13 +258,14 @@ namespace ThermoRawFileParserTest
         }
 
         [Test]
-        public void NestedLevels_RoundTrips_ActualPhase3Shapes_ViaPyArrow()
+        public void NestedLevels_RoundTrips_SpectraMetadataFacetShapes_ViaPyArrow()
         {
             var python = ResolvePython();
             if (python == null) Assert.Ignore("python3/pyarrow not available");
 
             // precursor top-level struct: isolation_window (nested struct) + activation.parameters (PARAM list).
-            // scan top-level struct: scan_windows (list-of-struct). Mirrors the real Phase-3 facet shapes.
+            // scan top-level struct: scan_windows (list-of-struct). Mirrors the real mzPeak
+            // spectra-metadata facet shapes.
             var isoWindow = new StructField("isolation_window",
                 new DataField<float>("target"), new DataField<float>("lower_offset"));
             var activation = new StructField("activation",
@@ -281,10 +282,12 @@ namespace ThermoRawFileParserTest
             var schema = new ParquetSchema(precursor, scan);
 
             // 4 rows. precursor present on rows 0,1,2 and NULL on row 3 (padded tail).
-            //   row0: iso present; activation.parameters = 2 items (CID accession, CE float)
-            //   row1: iso present; activation.parameters = EMPTY list
-            //   row2: iso present; activation.parameters = NULL list
-            //   row3: precursor struct NULL
+            //   row0: iso present; activation present; activation.parameters = 2 items (CID accession, CE float)
+            //   row1: iso present; activation present; activation.parameters = EMPTY list
+            //   row2: iso present; activation PRESENT; activation.parameters = NULL list (struct-present, list-null)
+            //   row3: precursor struct NULL (root absent for this facet)
+            // rows 2 and 3 are the level-aware discriminator: activation!=null && parameters==null must
+            // encode a DIFFERENT definition level than activation==null / precursor==null.
             var srcIdx = Leaf(schema, "precursor/source_index");
             var isoTarget = Leaf(schema, "precursor/isolation_window/target");
             var actAcc = Leaf(schema, "precursor/activation/parameters/list/item/accession");
@@ -306,12 +309,12 @@ namespace ThermoRawFileParserTest
                 MzPeakParquet.Present(isoTarget), MzPeakParquet.Present(isoTarget),
                 MzPeakParquet.Present(isoTarget), MzPeakParquet.Absent()
             });
-            // accession: row0 both elements present; row1 empty; row2 null; row3 precursor null
+            // accession: row0 both elements present; row1 empty; row2 struct-present-list-null; row3 precursor null
             var (accDef, accRep) = MzPeakParquet.NestedLevels(actAcc, new[]
             {
                 MzPeakParquet.ListOf(new[] { actAcc.MaxDefinitionLevel, actAcc.MaxDefinitionLevel }, new[] { true, true }),
                 MzPeakParquet.EmptyList(actList),
-                MzPeakParquet.NullList(),
+                MzPeakParquet.NullList(actList),
                 MzPeakParquet.NullList()
             });
             // value/float: row0 elem0 null (CID has no float), elem1 present (CE)
@@ -319,7 +322,7 @@ namespace ThermoRawFileParserTest
             {
                 MzPeakParquet.ListOf(new[] { actFloat.MaxDefinitionLevel - 1, actFloat.MaxDefinitionLevel }, new[] { false, true }),
                 MzPeakParquet.EmptyList(actList),
-                MzPeakParquet.NullList(),
+                MzPeakParquet.NullList(actList),
                 MzPeakParquet.NullList()
             });
             // scan present on all 4 rows; one window each
@@ -371,6 +374,8 @@ d = t.to_pylist()
 out = {{}}
 out['rows'] = len(d)
 out['precursor_present'] = [r['precursor'] is not None and r['precursor']['source_index'] is not None for r in d]
+out['activation_present'] = [ (r['precursor'] is not None and r['precursor']['activation'] is not None) for r in d ]
+out['params_null'] = [ (r['precursor'] is None or r['precursor']['activation'] is None or r['precursor']['activation']['parameters'] is None) for r in d ]
 out['activation_lens'] = [ (None if (r['precursor'] is None or r['precursor']['activation'] is None or r['precursor']['activation']['parameters'] is None) else len(r['precursor']['activation']['parameters'])) for r in d ]
 out['scan_window_lens'] = [ (None if (r['scan'] is None or r['scan']['scan_windows'] is None) else len(r['scan']['scan_windows'])) for r in d ]
 p0 = d[0]['precursor']['activation']['parameters']
@@ -397,9 +402,24 @@ print(json.dumps(out))
                     Assert.That((int)o["rows"], Is.EqualTo(4));
                     Assert.That(o["precursor_present"].Select(x => (bool)x).ToArray(),
                         Is.EqualTo(new[] { true, true, true, false }));
-                    // null list and empty list distinguished: row1 empty (0), row2 null (None)
+                    // null list and empty list distinguished: row1 empty (0), rows 2&3 null (None)
                     var actLens = o["activation_lens"].Select(x => x.Type == Newtonsoft.Json.Linq.JTokenType.Null ? (int?)null : (int)x).ToArray();
                     Assert.That(actLens, Is.EqualTo(new int?[] { 2, 0, null, null }));
+
+                    // LEVEL-AWARE null list (H1): row2 has activation PRESENT with a null parameters list,
+                    // row3 has the whole precursor (hence activation) absent. These two must be encoded at
+                    // DIFFERENT definition levels so a reader can tell present-struct-null-list from
+                    // absent-struct -- not collapsed to a flat def=0.
+                    var actPresent = o["activation_present"].Select(x => (bool)x).ToArray();
+                    var paramsNull = o["params_null"].Select(x => (bool)x).ToArray();
+                    Assert.That(actPresent, Is.EqualTo(new[] { true, true, true, false }),
+                        "row2 activation present with null params; row3 activation absent (precursor null)");
+                    Assert.That(paramsNull, Is.EqualTo(new[] { false, false, true, true }),
+                        "parameters list null on rows 2 (struct-present) and 3 (struct-absent)");
+                    Assert.That(actPresent[2] && paramsNull[2], Is.True,
+                        "activation != null && parameters == null is distinguishable from activation == null");
+                    Assert.That(actPresent[3], Is.False,
+                        "activation == null on row3 must NOT read back as a present struct");
                     var winLens = o["scan_window_lens"].Select(x => (int)x).ToArray();
                     Assert.That(winLens, Is.EqualTo(new[] { 1, 1, 1, 1 }));
                     Assert.That(o["row0_accessions"].Select(x => (string)x).ToArray(),

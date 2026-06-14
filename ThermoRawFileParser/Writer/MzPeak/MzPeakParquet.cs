@@ -135,8 +135,23 @@ namespace ThermoRawFileParser.Writer
         public static LeafRow EmptyList(ListField list) =>
             new LeafRow(true, new[] { list.MaxDefinitionLevel - 1 }, new[] { false });
 
-        // A null list (the owning list field is null). Def-level 0.
-        public static LeafRow NullList() => new LeafRow(true, System.Array.Empty<int>(), System.Array.Empty<bool>());
+        // A null list whose entire ancestor chain is absent at the root — genuine top-level absence,
+        // def-level 0. Reserve this ONLY for a list whose outermost owning struct is itself null.
+        public static LeafRow NullList() => new LeafRow(true, new[] { 0 }, new[] { false });
+
+        // A null list whose parent struct(s) ARE present but the list field itself is null. The
+        // definition level is the "parent present, list null" level read from the list's own ancestor
+        // chain: list.MaxDefinitionLevel counts list-defined(+1) and element-present(+1) above the
+        // parent-present level, so the parent-present-list-null level is MaxDefinitionLevel - 2. This
+        // is distinct from EmptyList (list defined, no elements = MaxDefinitionLevel - 1) and from
+        // NullList() (root absent = 0); it lets a reader tell "activation present, parameters null"
+        // apart from "activation absent".
+        public static LeafRow NullList(ListField list) =>
+            new LeafRow(true, new[] { list.MaxDefinitionLevel - 2 }, new[] { false });
+
+        // A null list at an explicit definition level, for cases where an ancestor above the list's
+        // immediate parent is the one that is null (e.g. grandparent present, parent null).
+        public static LeafRow NullListAt(int level) => new LeafRow(true, new[] { level }, new[] { false });
 
         public static async Task WriteAsync(Stream output, ParquetSchema schema,
             IReadOnlyDictionary<string, string> customMetadata,

@@ -403,7 +403,6 @@ namespace ThermoRawFileParser.Writer
         private byte[] BuildMetadataFacet(List<Record> records)
         {
             int n = records.Count;
-            int m = records.Count(r => r.IsMsn);
 
             var spectrum = BuildSpectrumField();
             var scan = BuildScanField();
@@ -415,28 +414,27 @@ namespace ThermoRawFileParser.Writer
             var presentAll = records.Select(_ => true).ToArray();
 
             // precursor / selected_ion are independent tables: the k-th MSn (ascending ordinal) sits
-            // at row k, null-padded on rows M..N-1. msnAtRow[row] is true exactly on rows 0..M-1.
+            // at row k, null-padded on rows M..N-1.
             var msnRecords = records.Where(r => r.IsMsn).OrderBy(r => r.Ordinal).ToList();
-            var msnAtRow = Enumerable.Range(0, n).Select(i => i < m).ToArray();
 
             // spectrum facet (present on all N rows)
-            AddScalar(cols, schema, "spectrum/index", records.Select(r => r.Ordinal).ToArray(), presentAll, null);
-            AddScalar(cols, schema, "spectrum/id", records.Select(r => r.Id).ToArray(), presentAll, null);
+            AddScalar(cols, schema, "spectrum/index", records.Select(r => r.Ordinal).ToArray(), presentAll);
+            AddScalar(cols, schema, "spectrum/id", records.Select(r => r.Id).ToArray(), presentAll);
             AddScalar(cols, schema, "spectrum/" + Cv("MS:1000511", "ms_level"),
-                records.Select(r => (byte)r.MsLevel).ToArray(), presentAll, null);
-            AddScalar(cols, schema, "spectrum/time", records.Select(r => r.Time).ToArray(), presentAll, null);
+                records.Select(r => (byte)r.MsLevel).ToArray(), presentAll);
+            AddScalar(cols, schema, "spectrum/time", records.Select(r => r.Time).ToArray(), presentAll);
             AddScalar(cols, schema, "spectrum/" + Cv("MS:1000465", "scan_polarity"),
-                records.Select(r => r.Polarity).ToArray(), presentAll, null);
+                records.Select(r => r.Polarity).ToArray(), presentAll);
             AddScalar(cols, schema, "spectrum/" + Cv("MS:1000525", "spectrum_representation"),
-                records.Select(r => r.Representation).ToArray(), presentAll, null);
+                records.Select(r => r.Representation).ToArray(), presentAll);
             AddScalar(cols, schema, "spectrum/" + Cv("MS:1000559", "spectrum_type"),
-                records.Select(r => r.SpectrumType).ToArray(), presentAll, null);
+                records.Select(r => r.SpectrumType).ToArray(), presentAll);
             AddScalar(cols, schema, "spectrum/" + Cv("MS:1000528", "lowest_observed_mz", "MS:1000040"),
-                records.Select(r => r.LowestMz).ToArray(), presentAll, null);
+                records.Select(r => r.LowestMz).ToArray(), presentAll);
             AddScalar(cols, schema, "spectrum/" + Cv("MS:1000527", "highest_observed_mz", "MS:1000040"),
-                records.Select(r => r.HighestMz).ToArray(), presentAll, null);
+                records.Select(r => r.HighestMz).ToArray(), presentAll);
             AddScalar(cols, schema, "spectrum/" + Cv("MS:1003060", "number_of_data_points"),
-                records.Select(r => r.DataPointCount).ToArray(), presentAll, null);
+                records.Select(r => r.DataPointCount).ToArray(), presentAll);
 
             // number_of_peaks: present only where peaks were written (leaf-null otherwise).
             var npkLeaf = Leaf(schema, "spectrum/" + Cv("MS:1003059", "number_of_peaks"));
@@ -447,26 +445,26 @@ namespace ThermoRawFileParser.Writer
             cols[npkLeaf] = (records.Where(r => r.PeakCount.HasValue).Select(r => r.PeakCount.Value).ToArray(), npkDef, null);
 
             AddScalar(cols, schema, "spectrum/" + Cv("MS:1000504", "base_peak_mz", "MS:1000040"),
-                records.Select(r => r.BasePeakMz).ToArray(), presentAll, null);
+                records.Select(r => r.BasePeakMz).ToArray(), presentAll);
             AddScalar(cols, schema, "spectrum/" + Cv("MS:1000505", "base_peak_intensity", "MS:1000131"),
-                records.Select(r => r.BasePeakIntensity).ToArray(), presentAll, null);
+                records.Select(r => r.BasePeakIntensity).ToArray(), presentAll);
             AddScalar(cols, schema, "spectrum/" + Cv("MS:1000285", "total_ion_current", "MS:1000131"),
-                records.Select(r => r.TotalIonCurrent).ToArray(), presentAll, null);
+                records.Select(r => r.TotalIonCurrent).ToArray(), presentAll);
 
             AddParamList(cols, schema, "spectrum/parameters", records.Select(r => r.SpectrumParams).ToList(), presentAll);
 
             // scan facet (present on all N rows)
-            AddScalar(cols, schema, "scan/source_index", records.Select(r => r.Ordinal).ToArray(), presentAll, null);
-            AddScalar(cols, schema, "scan/scan_index", records.Select(r => r.Ordinal).ToArray(), presentAll, null);
+            AddScalar(cols, schema, "scan/source_index", records.Select(r => r.Ordinal).ToArray(), presentAll);
+            AddScalar(cols, schema, "scan/scan_index", records.Select(r => r.Ordinal).ToArray(), presentAll);
             AddScalar(cols, schema, "scan/" + Cv("MS:1000016", "scan_start_time", "UO:0000031"),
-                records.Select(r => r.ScanStartTime).ToArray(), presentAll, null);
+                records.Select(r => r.ScanStartTime).ToArray(), presentAll);
             AddScalar(cols, schema, "scan/" + Cv("MS:1000512", "filter_string"),
-                records.Select(r => r.FilterString).ToArray(), presentAll, null);
+                records.Select(r => r.FilterString).ToArray(), presentAll);
             AddScalar(cols, schema, "scan/" + Cv("MS:1000927", "ion_injection_time", "UO:0000028"),
-                records.Select(r => r.IonInjectionTime).ToArray(), presentAll, null);
+                records.Select(r => r.IonInjectionTime).ToArray(), presentAll);
             AddScalar(cols, schema, "scan/instrument_configuration_ref",
-                records.Select(r => r.InstrumentConfigRef).ToArray(), presentAll, null);
-            AddScanWindows(cols, schema, records, presentAll);
+                records.Select(r => r.InstrumentConfigRef).ToArray(), presentAll);
+            AddScanWindows(cols, schema, records);
 
             // precursor facet (present on rows 0..M-1, null on M..N-1)
             AddMsnScalar(cols, schema, "precursor/source_index", n, msnRecords.Select(r => r.Ordinal).ToArray());
@@ -579,7 +577,7 @@ namespace ThermoRawFileParser.Writer
         }
 
         private static void AddScalar(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
-            string path, Array values, bool[] present, int[] _)
+            string path, Array values, bool[] present)
         {
             var leaf = Leaf(schema, path);
             var rows = present.Select(p => p ? MzPeakParquet.Present(leaf) : MzPeakParquet.Absent()).ToArray();
@@ -784,7 +782,7 @@ namespace ThermoRawFileParser.Writer
         }
 
         private void AddScanWindows(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
-            List<Record> records, bool[] present)
+            List<Record> records)
         {
             var lowerLeaf = Leaf(schema, "scan/scan_windows/list/item/" + Cv("MS:1000501", "scan_window_lower_limit", "MS:1000040"));
             var upperLeaf = Leaf(schema, "scan/scan_windows/list/item/" + Cv("MS:1000500", "scan_window_upper_limit", "MS:1000040"));
@@ -857,7 +855,6 @@ namespace ThermoRawFileParser.Writer
                 ["scan_settings_list"] = new JArray()
             };
 
-            var enc = new UTF8Encoding(false);
             custom["cv_list"] = Compact(cvList);
             custom["file_description"] = Compact(fileDescription);
             custom["instrument_configuration_list"] = Compact(instruments);

@@ -428,12 +428,14 @@ namespace ThermoRawFileParserTest
                     "M = sum(pp)\n" +
                     "out = {}\n" +
                     "out['N'] = N\nout['M'] = M\n" +
+                    "out['msn_ordinals'] = sorted(int(d[i]['spectrum']['index']) for i in range(N) if d[i]['spectrum']['MS_1000511_ms_level'] >= 2)\n" +
                     "out['msn_count'] = sum(1 for i in range(N) if d[i]['spectrum']['MS_1000511_ms_level'] >= 2)\n" +
                     "out['prec_pattern'] = ''.join('1' if x else '0' for x in pp)\n" +
                     "out['srcs'] = [d[i]['precursor']['source_index'] for i in range(M)]\n" +
                     "out['pidx'] = [d[i]['precursor']['precursor_index'] for i in range(M)]\n" +
                     "out['no_swap'] = all(d[i]['precursor']['source_index']!=d[i]['precursor']['precursor_index'] for i in range(M) if d[i]['precursor']['precursor_index'] is not None)\n" +
-                    "out['sel_mirror'] = all(d[i]['selected_ion']['source_index']==d[i]['precursor']['source_index'] for i in range(M))\n" +
+                    "out['sel_src_mirror'] = all(d[i]['selected_ion']['source_index']==d[i]['precursor']['source_index'] for i in range(M))\n" +
+                    "out['sel_pidx_mirror'] = all((d[i]['selected_ion']['precursor_index'] is None) == (d[i]['precursor']['precursor_index'] is None) and (d[i]['precursor']['precursor_index'] is None or d[i]['selected_ion']['precursor_index']==d[i]['precursor']['precursor_index']) for i in range(M))\n" +
                     "out['sel_null_tail'] = all(d[i]['selected_ion'] is None or d[i]['selected_ion']['source_index'] is None for i in range(M, N))\n" +
                     "out['prec_null_tail'] = all(d[i]['precursor'] is None or d[i]['precursor']['source_index'] is None for i in range(M, N))\n" +
                     "ap = d[0]['precursor']['activation']['parameters']\n" +
@@ -452,8 +454,18 @@ namespace ThermoRawFileParserTest
 
                 var srcs = o["srcs"].Select(x => (ulong)x).ToArray();
                 Assert.That(srcs, Is.EqualTo(srcs.OrderBy(x => x).ToArray()), "MSn ordinals ascending");
+
+                // EXACT set equality: the precursor source_index set IS the MSn-ordinal set derived from
+                // spectrum.ms_level >= 2 -- no extra precursor rows, none missing.
+                var msnOrdinals = o["msn_ordinals"].Select(x => (ulong)x).ToHashSet();
+                Assert.That(srcs.ToHashSet(), Is.EquivalentTo(msnOrdinals),
+                    "precursor.source_index set must equal the ms_level>=2 ordinal set exactly");
+
                 Assert.That((bool)o["no_swap"], Is.True, "precursor_index != source_index");
-                Assert.That((bool)o["sel_mirror"], Is.True, "selected_ion.source_index == precursor.source_index");
+                Assert.That((bool)o["sel_src_mirror"], Is.True,
+                    "selected_ion.source_index == precursor.source_index per row");
+                Assert.That((bool)o["sel_pidx_mirror"], Is.True,
+                    "selected_ion.precursor_index mirrors precursor.precursor_index per row (null-for-null)");
 
                 var ms1 = o["ms1_ordinals"].Select(x => (ulong)x).ToHashSet();
                 foreach (var pi in o["pidx"])
@@ -524,6 +536,40 @@ namespace ThermoRawFileParserTest
                     }
                 }
             }
+            return codes;
+        }
+
+        // Recursively walk an arbitrary JSON tree and collect the ontology prefix of every CURIE that
+        // appears as a value of an "accession" or "unit" key (e.g. "MS:1000133" -> "MS"). This reaches
+        // every PARAM list element, component, file_description, run, and nested block alike.
+        private static void CollectCuriePrefixes(JToken node, HashSet<string> into)
+        {
+            if (node is JObject obj)
+            {
+                foreach (var prop in obj.Properties())
+                {
+                    if ((prop.Name == "accession" || prop.Name == "unit") &&
+                        prop.Value.Type == JTokenType.String)
+                    {
+                        var mch = System.Text.RegularExpressions.Regex.Match(
+                            (string)prop.Value, @"^(MS|UO|IMS):\d+$");
+                        if (mch.Success) into.Add(mch.Groups[1].Value);
+                    }
+                    CollectCuriePrefixes(prop.Value, into);
+                }
+            }
+            else if (node is JArray arr)
+            {
+                foreach (var item in arr) CollectCuriePrefixes(item, into);
+            }
+        }
+
+        // The authoritative collected set: every CURIE prefix used in any metadata block, gathered from
+        // BOTH the schema column names AND recursively from every accession/unit in the JSON metadata.
+        private static HashSet<string> CollectAllCvPrefixes(byte[] metaBytes, JObject metadataBlocks)
+        {
+            var codes = CollectedCvCodes(metaBytes);
+            CollectCuriePrefixes(metadataBlocks, codes);
             return codes;
         }
 
@@ -639,17 +685,35 @@ namespace ThermoRawFileParserTest
             try
             {
                 var metaBytes = ReadEntry(archive, "spectra_metadata.parquet");
-                var collected = CollectedCvCodes(metaBytes);
-                Assert.That(collected, Is.Not.Empty, "metadata must use CV-named columns");
 
                 var index = JObject.Parse(
                     System.Text.Encoding.UTF8.GetString(ReadEntry(archive, "mzpeak_index.json")));
-                var idxCv = (JArray)index["metadata"]["cv_list"];
+                var metadata = (JObject)index["metadata"];
+                var idxCv = (JArray)metadata["cv_list"];
                 Assert.That(idxCv, Is.Not.Null.And.Not.Empty);
 
+                var footer = FooterKv(metaBytes);
+                Assert.That(footer.ContainsKey("cv_list"), "footer carries cv_list");
+
+                // Authoritative set: schema column CURIEs PLUS every accession/unit recursively gathered
+                // from the index metadata blocks AND the footer JSON blocks (PARAM lists, components, ...).
+                var collected = CollectAllCvPrefixes(metaBytes, metadata);
+                var footerBlocks = new JObject();
+                foreach (var key in new[]
+                    {
+                        "file_description", "instrument_configuration_list", "software_list",
+                        "data_processing_method_list", "run"
+                    })
+                {
+                    if (footer.TryGetValue(key, out var raw)) footerBlocks[key] = JToken.Parse(raw);
+                }
+                CollectCuriePrefixes(footerBlocks, collected);
+                Assert.That(collected, Is.Not.Empty, "metadata must use CV-named columns and params");
+
                 var idxIds = idxCv.Select(e => (string)e["id"]).ToHashSet();
-                Assert.That(idxIds.IsSupersetOf(collected), Is.True,
-                    $"index cv_list {string.Join(",", idxIds)} must cover collected {string.Join(",", collected)}");
+                Assert.That(idxIds, Is.EquivalentTo(collected),
+                    $"index cv_list {string.Join(",", idxIds.OrderBy(x => x))} must EQUAL collected " +
+                    $"{string.Join(",", collected.OrderBy(x => x))} -- no hard-coded extras, nothing missing");
                 foreach (var e in idxCv)
                 {
                     Assert.That((string)e["id"], Is.Not.Null.And.Not.Empty);
@@ -657,12 +721,10 @@ namespace ThermoRawFileParserTest
                     Assert.That((string)e["uri"], Is.Not.Null.And.Not.Empty);
                 }
 
-                var footer = FooterKv(metaBytes);
-                Assert.That(footer.ContainsKey("cv_list"), "footer carries cv_list");
                 var footCv = JArray.Parse(footer["cv_list"]);
                 var footIds = footCv.Select(e => (string)e["id"]).ToHashSet();
-                Assert.That(footIds.IsSupersetOf(collected), Is.True,
-                    "footer cv_list must cover the collected CV-prefix set");
+                Assert.That(footIds, Is.EquivalentTo(collected),
+                    "footer cv_list must EQUAL the collected CV-prefix set exactly");
                 Assert.That(footIds, Is.EquivalentTo(idxIds), "index and footer cv_list agree");
             }
             finally
