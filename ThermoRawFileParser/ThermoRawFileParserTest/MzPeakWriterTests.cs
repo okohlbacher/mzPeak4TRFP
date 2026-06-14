@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
 using System.Linq;
@@ -262,6 +263,148 @@ namespace ThermoRawFileParserTest
                 Assert.That(peakSpectra.Count, Is.LessThanOrEqualTo(qualifying),
                     "no scan outside the profile+centroid-stream set may appear in spectra_peaks");
                 Assert.That(qualifying, Is.GreaterThan(0));
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        private static string ResolvePython()
+        {
+            foreach (var cand in new[] { "python3", "python" })
+            {
+                try
+                {
+                    var psi = new ProcessStartInfo(cand, "-c \"import pyarrow\"")
+                    {
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false
+                    };
+                    using (var p = Process.Start(psi))
+                    {
+                        p.WaitForExit();
+                        if (p.ExitCode == 0) return cand;
+                    }
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        // Writes the metadata parquet to a temp file and runs a python pyarrow snippet that prints
+        // a single JSON object to stdout. The snippet sees the file path via the {PARQUET} token.
+        private static JObject PyArrowMetadata(string archive, string snippet)
+        {
+            var python = ResolvePython();
+            if (python == null) Assert.Ignore("python3/pyarrow not available");
+
+            var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".parquet");
+            File.WriteAllBytes(path, ReadEntry(archive, "spectra_metadata.parquet"));
+            try
+            {
+                var code = snippet.Replace("{PARQUET}", path.Replace("\\", "\\\\"));
+                var psi = new ProcessStartInfo(python, "-c \"" + code.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false
+                };
+                using (var proc = Process.Start(psi))
+                {
+                    var stdout = proc.StandardOutput.ReadToEnd();
+                    var stderr = proc.StandardError.ReadToEnd();
+                    proc.WaitForExit();
+                    Assert.That(proc.ExitCode, Is.EqualTo(0), $"pyarrow failed: {stderr}");
+                    return JObject.Parse(stdout.Trim());
+                }
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void Metadata_Scan_And_Spectrum_Facets_Shape_And_Values()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+            try
+            {
+                var snippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "t = pq.read_table(r'{PARQUET}')\n" +
+                    "d = t.to_pylist()\n" +
+                    "N = len(d)\n" +
+                    "sp = [f.name for f in t.schema.field('spectrum').type]\n" +
+                    "sc = [f.name for f in t.schema.field('scan').type]\n" +
+                    "out = {}\n" +
+                    "out['rows'] = N\n" +
+                    "out['spectrum_fields'] = sp\n" +
+                    "out['scan_fields'] = sc\n" +
+                    "out['scan_link_ok'] = all(d[i]['scan']['source_index']==i and d[i]['scan']['scan_index']==i for i in range(N))\n" +
+                    "out['polarities'] = sorted(set(int(d[i]['spectrum']['MS_1000465_scan_polarity']) for i in range(N)))\n" +
+                    "out['reprs'] = sorted(set(d[i]['spectrum']['MS_1000525_spectrum_representation'] for i in range(N)))\n" +
+                    "out['types'] = sorted(set(d[i]['spectrum']['MS_1000559_spectrum_type'] for i in range(N)))\n" +
+                    "out['ndp_all_present'] = all(d[i]['spectrum']['MS_1003060_number_of_data_points'] is not None for i in range(N))\n" +
+                    "out['npk_present'] = sum(1 for i in range(N) if d[i]['spectrum']['MS_1003059_number_of_peaks'] is not None)\n" +
+                    "out['npk_null'] = sum(1 for i in range(N) if d[i]['spectrum']['MS_1003059_number_of_peaks'] is None)\n" +
+                    "out['npk_zero'] = any(d[i]['spectrum']['MS_1003059_number_of_peaks']==0 for i in range(N) if d[i]['spectrum']['MS_1003059_number_of_peaks'] is not None)\n" +
+                    "out['sw_path'] = str(t.schema.field('scan').type.field('scan_windows').type)\n" +
+                    "out['param_path'] = str(t.schema.field('spectrum').type.field('parameters').type)\n" +
+                    "out['polarity_type'] = str(t.schema.field('spectrum').type.field('MS_1000465_scan_polarity').type)\n" +
+                    "out['scan_start_type'] = str(t.schema.field('scan').type.field('MS_1000016_scan_start_time_unit_UO_0000031').type)\n" +
+                    "out['cfg_refs'] = sorted(set(int(d[i]['scan']['instrument_configuration_ref']) for i in range(N)))\n" +
+                    "print(json.dumps(out))\n";
+                var o = PyArrowMetadata(archive, snippet);
+
+                Assert.That((int)o["rows"], Is.EqualTo(48));
+                Assert.That((bool)o["scan_link_ok"], Is.True);
+
+                var spectrumFields = o["spectrum_fields"].Select(x => (string)x).ToArray();
+                Assert.That(spectrumFields, Does.Contain("MS_1000511_ms_level"));
+                Assert.That(spectrumFields, Does.Contain("MS_1000465_scan_polarity"));
+                Assert.That(spectrumFields, Does.Contain("MS_1000525_spectrum_representation"));
+                Assert.That(spectrumFields, Does.Contain("MS_1000559_spectrum_type"));
+                Assert.That(spectrumFields, Does.Contain("MS_1000528_lowest_observed_mz_unit_MS_1000040"));
+                Assert.That(spectrumFields, Does.Contain("MS_1000527_highest_observed_mz_unit_MS_1000040"));
+                Assert.That(spectrumFields, Does.Contain("MS_1003060_number_of_data_points"));
+                Assert.That(spectrumFields, Does.Contain("MS_1003059_number_of_peaks"));
+                Assert.That(spectrumFields, Does.Contain("MS_1000504_base_peak_mz_unit_MS_1000040"));
+                Assert.That(spectrumFields, Does.Contain("MS_1000505_base_peak_intensity_unit_MS_1000131"));
+                Assert.That(spectrumFields, Does.Contain("MS_1000285_total_ion_current_unit_MS_1000131"));
+
+                var scanFields = o["scan_fields"].Select(x => (string)x).ToArray();
+                Assert.That(scanFields, Does.Contain("source_index"));
+                Assert.That(scanFields, Does.Contain("scan_index"));
+                Assert.That(scanFields, Does.Contain("MS_1000016_scan_start_time_unit_UO_0000031"));
+                Assert.That(scanFields, Does.Contain("MS_1000512_filter_string"));
+                Assert.That(scanFields, Does.Contain("MS_1000927_ion_injection_time_unit_UO_0000028"));
+                Assert.That(scanFields, Does.Contain("instrument_configuration_ref"));
+
+                // polarity int8 sign in {-1,1}; representation/type CURIE strings.
+                Assert.That(o["polarity_type"].ToString(), Is.EqualTo("int8"));
+                foreach (var p in o["polarities"]) Assert.That(Math.Abs((int)p), Is.EqualTo(1));
+                foreach (var r in o["reprs"]) Assert.That((string)r, Does.Match(@"^MS:\d+$"));
+                foreach (var ty in o["types"]) Assert.That((string)ty, Does.Match(@"^MS:\d+$"));
+
+                // scan_start_time raw float32 minutes.
+                Assert.That(o["scan_start_type"].ToString(), Is.EqualTo("float"));
+
+                // count discipline: data_points always present; peaks NULL where unwritten, never 0.
+                Assert.That((bool)o["ndp_all_present"], Is.True);
+                Assert.That((int)o["npk_present"], Is.GreaterThan(0));
+                Assert.That((int)o["npk_null"], Is.GreaterThan(0));
+                Assert.That((bool)o["npk_zero"], Is.False, "number_of_peaks must be NULL, never 0, when no peaks written");
+
+                // list element named item: paths contain "item:".
+                Assert.That(o["sw_path"].ToString(), Does.Contain("item:"));
+                Assert.That(o["param_path"].ToString(), Does.Contain("item:"));
+
+                // two distinct analyzers -> config refs {0,1}.
+                Assert.That(o["cfg_refs"].Select(x => (int)x).ToArray(), Is.EqualTo(new[] { 0, 1 }));
             }
             finally
             {
