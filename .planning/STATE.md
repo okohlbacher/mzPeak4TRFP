@@ -25,8 +25,8 @@ See: .planning/PROJECT.md (updated 2026-06-14)
 ## Current Position
 
 Milestone: v2 ("compression, fidelity & scale") — 5 phases, sequential
-Phase: 3 of 5 (Numpress-Linear m/z) — COMPLETE; ready to plan Phase 3 (Numpress-Linear m/z)
-Status: Phase 2 executed (02-01-PLAN.md → 02-01-SUMMARY.md); chunked default, CHUNK-01..06 done
+Phase: 3 of 5 (Numpress-Linear m/z) — ready to plan
+Status: Phases 1-2 certified; planning Phase 3 (Numpress)
 Last activity: 2026-06-14 — Phase 2 chunked layout shipped; full suite 72/72 green native arm64.
 
 Progress: [████░░░░░░] 40% (v2)

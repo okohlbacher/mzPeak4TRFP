@@ -1,0 +1,14 @@
+Reading additional input from stdin...
+OpenAI Codex v0.137.0
+--------
+workdir: /Users/kohlbach/Claude/mzPeak4TRFR
+model: gpt-5.5
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: xhigh
+reasoning summaries: none
+session id: 019ec7dd-bb5f-75b1-88d2-ddca35052a64
+--------
+user
+Read .planning/phases/03-numpress-linear-mz/REVIEW-BRIEF.md and carry out exactly that review, reading every referenced file (pyarrow-dump refs/mzPeak/small.numpress.mzpeak with python3.11 to verify the m/z transform CURIE + schema). Output only the prioritized findings and the final VERDICT line.
