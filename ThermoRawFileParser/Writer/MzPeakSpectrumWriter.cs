@@ -68,6 +68,8 @@ namespace ThermoRawFileParser.Writer
                     var mzData = ReadMZData(raw, scanEvent, scanNumber, false, false, false);
 
                     var (mz, inten) = OrderedPairs(mzData.masses, mzData.intensities);
+                    if (mz.Length == 0) continue;
+
                     for (int i = 0; i < mz.Length; i++)
                     {
                         dataIndex.Add(ordinal);

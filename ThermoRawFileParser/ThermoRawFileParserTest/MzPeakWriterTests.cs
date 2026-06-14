@@ -7,6 +7,9 @@ using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using Parquet;
 using Parquet.Schema;
+using ThermoFisher.CommonCore.Data.Business;
+using ThermoFisher.CommonCore.Data.FilterEnums;
+using ThermoFisher.CommonCore.RawFileReader;
 using ThermoRawFileParser;
 using ThermoRawFileParser.Writer;
 
@@ -207,29 +210,58 @@ namespace ThermoRawFileParserTest
             }
         }
 
+        private static int CountProfileWithCentroidStreamScans()
+        {
+            using (var raw = RawFileReaderFactory.ReadFile(TestRawFile))
+            {
+                raw.SelectInstrument(Device.MS, 1);
+                int first = raw.RunHeaderEx.FirstSpectrum;
+                int last = raw.RunHeaderEx.LastSpectrum;
+                int qualifying = 0;
+                for (int scan = first; scan <= last; scan++)
+                {
+                    var scanEvent = raw.GetScanEventForScanNumber(scan);
+                    if (scanEvent.ScanData == ScanDataType.Profile && Scan.FromFile(raw, scan).HasCentroidStream)
+                        qualifying++;
+                }
+                return qualifying;
+            }
+        }
+
         [Test]
-        public void Peaks_When_Present_Are_Listed_With_DataKind_Peaks()
+        public void Peaks_Routes_Only_Profile_Scans_With_CentroidStream_NoDuplication()
         {
             var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
             var dir = Convert(input, out var archive);
             try
             {
+                var peaksBytes = ReadEntry(archive, "spectra_peaks.parquet");
+                Assert.That(peaksBytes, Is.Not.Null, "small.RAW must produce spectra_peaks.parquet");
+
                 var indexJson = JObject.Parse(
                     System.Text.Encoding.UTF8.GetString(ReadEntry(archive, "mzpeak_index.json")));
-                var files = (JArray)indexJson["files"];
-                var peaksEntry = files.FirstOrDefault(f => (string)f["name"] == "spectra_peaks.parquet");
-                bool hasPeaks = ReadEntry(archive, "spectra_peaks.parquet") != null;
+                var peaksEntry = ((JArray)indexJson["files"])
+                    .FirstOrDefault(f => (string)f["name"] == "spectra_peaks.parquet");
+                Assert.That(peaksEntry, Is.Not.Null, "index must list spectra_peaks when the facet is written");
+                Assert.That((string)peaksEntry["data_kind"], Is.EqualTo("peaks"));
 
-                Assert.That(peaksEntry != null, Is.EqualTo(hasPeaks),
-                    "index must list spectra_peaks iff the facet is written");
+                var data = ReadPointFacet(ReadEntry(archive, "spectra_data.parquet"));
+                var peaks = ReadPointFacet(peaksBytes);
 
-                if (hasPeaks)
-                {
-                    Assert.That((string)peaksEntry["data_kind"], Is.EqualTo("peaks"));
-                    var f = ReadPointFacet(ReadEntry(archive, "spectra_peaks.parquet"));
-                    Assert.That(f.Mz.Length, Is.EqualTo(f.PointCount));
-                    Assert.That(f.SpectrumIndex.Distinct().Count(), Is.EqualTo(f.SpectrumCount));
-                }
+                Assert.That(peaks.Mz.Length, Is.EqualTo(peaks.PointCount));
+                var peakSpectra = peaks.SpectrumIndex.Distinct().ToHashSet();
+                Assert.That(peakSpectra.Count, Is.EqualTo(peaks.SpectrumCount),
+                    "spectra_peaks must carry one ordinal per qualifying scan, no duplication");
+                Assert.That(peakSpectra.Count, Is.GreaterThan(0), "small.RAW has profile scans with a centroid stream");
+
+                var dataSpectra = data.SpectrumIndex.Distinct().ToHashSet();
+                Assert.That(peakSpectra.IsSubsetOf(dataSpectra) && !peakSpectra.SetEquals(dataSpectra), Is.True,
+                    "peaks ordinals must be a strict subset of spectra_data ordinals (centroid-only scans absent)");
+
+                int qualifying = CountProfileWithCentroidStreamScans();
+                Assert.That(peakSpectra.Count, Is.LessThanOrEqualTo(qualifying),
+                    "no scan outside the profile+centroid-stream set may appear in spectra_peaks");
+                Assert.That(qualifying, Is.GreaterThan(0));
             }
             finally
             {
