@@ -31,7 +31,7 @@ never appear in the produced code or output schema.
 Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Streaming Writer + Per-Scan Robustness** - Refactor to bounded row-group / streaming Parquet + STORED-zip streaming (constant memory), make per-scan read failures non-fatal; point layout unchanged so it is independently verifiable
-- [ ] **Phase 2: Chunked Layout** - Emit `spectra_data`/`spectra_peaks` as the reference chunk struct with fixed m/z-window chunking (lossless delta), make chunked the default, add `--point` opt-out
+- [x] **Phase 2: Chunked Layout** - Emit `spectra_data`/`spectra_peaks` as the reference chunk struct with fixed m/z-window chunking (lossless delta), make chunked the default, add `--point` opt-out (completed 2026-06-14)
 - [ ] **Phase 3: Numpress-Linear m/z** - C# MSNumpress port encoding m/z into `mz_numpress_linear_bytes` with the MS:1003089 transform recorded; default ON, `--no-numpress`/`--lossless` opt-out, L2 bound
 - [ ] **Phase 4: Profile Compaction + Ion Mobility** - Zero-run stripping + null-marking with the per-spectrum δmz model for profile data; populate ion-mobility values/type from Thermo FAIMS CV
 - [ ] **Phase 5: CLI/Docs + Conformance & Corpus Re-Verification** - Document all flags, harden the comparator for large facets, re-run the 97-pair corpus + multi-GB validation, lock L1/L2 conformance; all modes pass `mzpeak-validate`
@@ -58,6 +58,7 @@ Decimal phases appear between their surrounding integers in numeric order.
   - Multi-GB validation depends on the large corpus files being available in the run environment; absence would force a smaller proxy and a deferred MEM-02 confirmation.
 
 **Plans**: 1 plan
+
 - [ ] 01-01-PLAN.md — Streaming row-group/temp-file Parquet for data facets + STORED-zip stream-copy + per-scan all-or-nothing robustness; point layout unchanged
 
 ### Phase 2: Chunked Layout
@@ -82,7 +83,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   - `spectrum_array_index` and `cv_list` must be updated in lockstep with the new chunk columns; a stale array-index description or missing CURIE would fail readers/validate even with correct bytes.
 
 **Plans**: 1 plan
-- [ ] 02-01-PLAN.md — Chunk codec (null-aware delta encode/decode + fixed m/z-window chunker, no nulling) + ChunkFacetStream emitting spectra_data chunk rows via the streaming Handle + chunk array_index footer + `--point`/`--chunk-size` flags; peaks/chromatograms unchanged; verification locks (schema diff, validator 0/0 both modes, multiset equality, size shrink)
+
+- [x] 02-01-PLAN.md — Chunk codec (null-aware delta encode/decode + fixed m/z-window chunker, no nulling) + ChunkFacetStream emitting spectra_data chunk rows via the streaming Handle + chunk array_index footer + `--point`/`--chunk-size` flags; peaks/chromatograms unchanged; verification locks (schema diff, validator 0/0 both modes, multiset equality, size shrink)
 
 ### Phase 3: Numpress-Linear m/z
 
@@ -154,7 +156,7 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Streaming Writer + Per-Scan Robustness | 1/1 | Certified | - |
-| 2. Chunked Layout | 0/1 | Planned | - |
+| 2. Chunked Layout | 1/1 | Complete   | 2026-06-14 |
 | 3. Numpress-Linear m/z | 0/0 | Not started | - |
 | 4. Profile Compaction + Ion Mobility | 0/0 | Not started | - |
 | 5. CLI/Docs + Conformance & Corpus Re-Verification | 0/0 | Not started | - |

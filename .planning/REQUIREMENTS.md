@@ -9,6 +9,7 @@ RAW files and is robust to imperfect scans — without regressing v1 conformance
 
 - **New defaults:** output is **chunked layout + Numpress-linear m/z** (lossy m/z, transform recorded).
   `--point` restores v1 point layout; `--lossless` / `--no-numpress` keeps chunked but lossless (delta).
+
 - **Scope:** format features **and** operational hardening (streaming + per-scan robustness).
 - **Non-negotiable:** every mode still passes `mzpeak-validate`; lossless modes preserve the v1
   (m/z, intensity) multiset exactly; lossy (Numpress) modes are bounded under the recorded transform (L2).
@@ -28,12 +29,12 @@ RAW files and is robust to imperfect scans — without regressing v1 conformance
 
 ### Chunked layout
 
-- [ ] **CHUNK-01**: `spectra_data` (and `spectra_peaks`) emitted as the chunk struct matching the reference: `chunk<spectrum_index:u64, mz_chunk_start:f64, mz_chunk_end:f64, mz_chunk_values:list<f64>, chunk_encoding:string, intensity:list<f32>, mz_numpress_linear_bytes:list<u8>>`
-- [ ] **CHUNK-02**: Chunking = fixed m/z window over the sorted m/z axis (default 50 m/z, configurable); one chunk row per non-empty window per spectrum; `mz_chunk_start`/`end` bound the window
-- [ ] **CHUNK-03**: `mz_chunk_values` delta-encoded with `chunk_encoding="delta"` (lossless) when Numpress is off
-- [ ] **CHUNK-04**: `spectrum_array_index` describes chunk buffer formats (chunk_start/end/values/encoding) + `sorting_rank:0`; cv_list stays exhaustive
-- [ ] **CHUNK-05**: `--point` flag restores the v1 point layout; chunked is the new default
-- [ ] **CHUNK-06**: Chunked output passes `mzpeak-validate` and round-trips the (m/z, intensity) multiset exactly in lossless mode
+- [x] **CHUNK-01**: `spectra_data` (and `spectra_peaks`) emitted as the chunk struct matching the reference: `chunk<spectrum_index:u64, mz_chunk_start:f64, mz_chunk_end:f64, mz_chunk_values:list<f64>, chunk_encoding:string, intensity:list<f32>, mz_numpress_linear_bytes:list<u8>>`
+- [x] **CHUNK-02**: Chunking = fixed m/z window over the sorted m/z axis (default 50 m/z, configurable); one chunk row per non-empty window per spectrum; `mz_chunk_start`/`end` bound the window
+- [x] **CHUNK-03**: `mz_chunk_values` delta-encoded with `chunk_encoding="delta"` (lossless) when Numpress is off
+- [x] **CHUNK-04**: `spectrum_array_index` describes chunk buffer formats (chunk_start/end/values/encoding) + `sorting_rank:0`; cv_list stays exhaustive
+- [x] **CHUNK-05**: `--point` flag restores the v1 point layout; chunked is the new default
+- [x] **CHUNK-06**: Chunked output passes `mzpeak-validate` and round-trips the (m/z, intensity) multiset exactly in lossless mode
 
 ### Numpress-linear m/z
 

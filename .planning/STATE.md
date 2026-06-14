@@ -2,15 +2,15 @@
 gsd_state_version: 1.0
 milestone: v2
 milestone_name: compression-fidelity-scale
-status: planned
-last_updated: "2026-06-14T16:40:00.000Z"
-last_activity: 2026-06-14
+status: in-progress
+last_updated: "2026-06-14T18:31:44.044Z"
+last_activity: 2026-06-14 — Phase 2 (Chunked Layout) executed: chunked spectra_data is the new default, m/z delta bit-exact, 0 validator errors both modes.
 progress:
   total_phases: 5
-  completed_phases: 1
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  completed_phases: 2
+  total_plans: 2
+  completed_plans: 2
+  percent: 40
 ---
 
 # Project State
@@ -25,11 +25,11 @@ See: .planning/PROJECT.md (updated 2026-06-14)
 ## Current Position
 
 Milestone: v2 ("compression, fidelity & scale") — 5 phases, sequential
-Phase: 2 of 5 (Chunked Layout)
-Status: Milestone planned (PROJECT/REQUIREMENTS/ROADMAP); ready to plan Phase 1
-Last activity: 2026-06-14 — v1 archived to `.planning/archive/v1-point-layout/`; v2 milestone defined.
+Phase: 2 of 5 (Chunked Layout) — COMPLETE; ready to plan Phase 3 (Numpress-Linear m/z)
+Status: Phase 2 executed (02-01-PLAN.md → 02-01-SUMMARY.md); chunked default, CHUNK-01..06 done
+Last activity: 2026-06-14 — Phase 2 chunked layout shipped; full suite 72/72 green native arm64.
 
-Progress: [░░░░░░░░░░] 0% (v2)
+Progress: [████░░░░░░] 40% (v2)
 
 ## Milestone history
 
@@ -42,6 +42,10 @@ Progress: [░░░░░░░░░░] 0% (v2)
 - v2 default = chunked layout + Numpress-linear m/z (lossy m/z, recorded); `--lossless`/`--point` opt-outs.
 - v2 = format features + operational (streaming for multi-GB, per-scan robustness).
 - Build/runtime: AnyCPU, native arm64 via RawFileReader 8.0.37; `DOTNET_ROLL_FORWARD` for net8→net9/10; no Rosetta/mzLib.
+- Phase 2: chunked spectra_data (6-field reference struct, chunk_encoding=MS:1003089) is the new default; `--point` restores v1; `--chunk-size` configures the window (default 50.0).
+- Phase 2: m/z f64 delta encode+reconstruct is BIT-EXACT on real Thermo m/z (48/48 spectra, 0 mismatches) → losslessness is exact/L1, no tolerance. Intensity bit-exact by construction.
+- Phase 2: `chromatograms_data` stays POINT as a deliberate documented deviation; the reference CHUNKS it → full chromatogram chunking deferred to Phase 5.
+- Phase 3 input: chunk struct stays 6 fields in delta mode; `mz_numpress_linear_bytes` (7th field) is added ONLY for the Numpress encoding, not present-but-empty.
 
 ### Key Artifacts
 
