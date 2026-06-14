@@ -58,7 +58,7 @@ ThermoRawFileParser -d=/home/user/data_input/
 
 When running framework-based version use `dotnet ThermoRawFileParser.dll` instead.
 
- The optional parameters only work in the -option=value format. The tool can output some RAW file metadata `-m=0|1` (0 for JSON, 1 for TXT) and the spectra file `-f=0|1|2|3|4` (0 for MGF, 1 for mzML, 2 for indexed mzML, 3 for Parquet, 4 for no output) or both. Use the `-p` flag to disable the thermo native peak picking. 
+ The optional parameters only work in the -option=value format. The tool can output some RAW file metadata `-m=0|1` (0 for JSON, 1 for TXT) and the spectra file `-f=0|1|2|3|4|5` (0 for MGF, 1 for mzML, 2 for indexed mzML, 3 for Parquet, 4 for mzPeak, 5 for no output) or both. Use the `-p` flag to disable the thermo native peak picking. 
 
 ```
 Usage is ThermoRawFileParser.exe [subcommand] [options]
@@ -81,9 +81,9 @@ optional subcommands are xic|query (use [subcommand] -h for more info]):
                                file or directory output. Implies silent logging,
                                 i.e. logging level 0
   -f, --format=VALUE         The spectra output format: 0 for MGF, 1 for mzML,
-                               2 for indexed mzML, 3 for Parquet, 4 for None (
-                               no output); both numeric and text (case
-                               insensitive) value recognized. Defaults to
+                               2 for indexed mzML, 3 for Parquet, 4 for mzPeak,
+                               5 for None (no output); both numeric and text
+                               (case insensitive) value recognized. Defaults to
                                indexed mzML if no format is specified.
   -m, --metadata=VALUE       The metadata output format: 0 for JSON, 1 for TXT,
                                2 for None (no output); both numeric and text (

@@ -528,7 +528,7 @@ namespace ThermoRawFileParser
                 },
                 {
                     "f=|format=",
-                    "The spectra output format: 0 for MGF, 1 for mzML, 2 for indexed mzML, 3 for Parquet, 4 for None (no output); both numeric and text (case insensitive) value recognized. Defaults to indexed mzML if no format is specified.",
+                    "The spectra output format: 0 for MGF, 1 for mzML, 2 for indexed mzML, 3 for Parquet, 4 for mzPeak, 5 for None (no output); both numeric and text (case insensitive) value recognized. Defaults to indexed mzML if no format is specified.",
                     v => outputFormatString = v
                 },
                 {
@@ -773,7 +773,8 @@ namespace ThermoRawFileParser
                 }
 
                 // Switch off gzip compression for Parquet
-                if (parseInput.OutputFormat == OutputFormat.Parquet) parseInput.Gzip = false;
+                if (parseInput.OutputFormat == OutputFormat.Parquet ||
+                    parseInput.OutputFormat == OutputFormat.MzPeak) parseInput.Gzip = false;
 
                 parseInput.MaxLevel = parseInput.MsLevel.Max();
 

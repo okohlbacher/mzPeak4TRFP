@@ -181,6 +181,10 @@ namespace ThermoRawFileParser
                             spectrumWriter = new ParquetSpectrumWriter(parseInput);
                             spectrumWriter.Write(rawFile, firstScanNumber, lastScanNumber);
                             break;
+                        case OutputFormat.MzPeak:
+                            spectrumWriter = new MzPeakSpectrumWriter(parseInput);
+                            spectrumWriter.Write(rawFile, firstScanNumber, lastScanNumber);
+                            break;
                     }
                 }
 

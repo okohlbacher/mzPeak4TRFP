@@ -6,6 +6,7 @@
         MzML,
         IndexMzML,
         Parquet,
+        MzPeak,
         None
     }
 

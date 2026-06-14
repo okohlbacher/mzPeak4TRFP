@@ -85,7 +85,8 @@ namespace ThermoRawFileParser.Writer
             }
 
             var fileName = NormalizeFileName(ParseInput.OutputFile, extension, ParseInput.Gzip);
-            if (ParseInput.OutputFormat == OutputFormat.Parquet)
+            if (ParseInput.OutputFormat == OutputFormat.Parquet ||
+                ParseInput.OutputFormat == OutputFormat.MzPeak)
             {
                 Writer = new StreamWriter(File.Create(fileName));
             }
