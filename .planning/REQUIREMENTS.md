@@ -46,9 +46,10 @@
 
 ### Conformance & Verification
 
-- [ ] **VER-01**: Output archive opens in the reference Python mzPeak reader without error
-- [ ] **VER-02**: Spectrum count, per-spectrum peak counts, and (m/z,intensity) multiset round-trip vs. the source (within f32 intensity tolerance)
-- [ ] **VER-03**: NUnit test converts `ThermoRawFileParserTest/Data/small.RAW` to mzPeak and asserts archive structure + readability
+- [ ] **VER-01**: `mzpeak-validate <out>.mzpeak` exits 0 (no error-level findings) against profile mzpeak-0.9 — the authoritative conformance gate
+- [ ] **VER-02**: Differential equivalence vs `mzML2mzPeak`: same RAW via `RAW→(TRFP mzML)→(mzML2mzPeak)→mzpeak` matches our direct `RAW→mzpeak` on spectrum count, per-spectrum peak counts, (m/z,intensity) multiset (f32 tol), ms_level, polarity, RT, precursor m/z/charge, TIC
+- [ ] **VER-03**: NUnit test converts `ThermoRawFileParserTest/Data/small.RAW` to mzPeak and asserts archive structure + invokes `mzpeak-validate` (skip-with-warning if absent)
+- [ ] **VER-04**: L1/L2 round-trip — read our `.mzpeak` back and confirm m/z value-equal (L1) and intensity bounded-equal under the recorded f32-narrowing transform (L2), mirroring mzML2mzPeak's conformance framing
 
 ## v2 Requirements
 
@@ -79,12 +80,17 @@
 | META-01..05 | Phase 3 | Pending |
 | IDX-01..04 | Phase 3 | Pending |
 | CHROM-01..02 | Phase 4 | Pending |
-| VER-01..03 | Phase 4 | Pending |
+| VER-01..04 | Phase 4 | Pending |
 
 **Coverage:**
-- v1 requirements: 24 total
-- Mapped to phases: 24
+- v1 requirements: 25 total
+- Mapped to phases: 25
 - Unmapped: 0
+
+## Testing tools (alignment)
+
+- **`~/Claude/mzPeakValidator`** — `mzpeak-validate <archive>` conformance oracle (profile mzpeak-0.9, exit 0/1/2, `--json`). The per-phase certification gate and VER-01.
+- **`~/Claude/mzML2mzPeak`** — reference converter + 523-file `.mzpeak` corpus + L1/L2 conformance tests. Source of the differential equivalence baseline (VER-02) and the corpus sweep model (`validate_everything.py`).
 
 ---
 *Requirements defined: 2026-06-14*

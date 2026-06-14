@@ -46,7 +46,8 @@ Decimal phases appear between their surrounding integers in numeric order.
   - **Primary make-or-break unknown:** Parquet.Net's low-level API may not cleanly express `large_list`/`large_string` (Arrow 64-bit-offset) variants or deeply nested list-of-struct columns. If the spike fails, the whole approach (and possibly the v1 layout) must be reconsidered — this is why it is front-loaded.
   - Reference reader may reject plain `string`/`list` where ground truth uses `large_string`/`large_list`; needs a round-trip read to confirm acceptance.
   - ZIP must be STORED at the archive level (no deflate); an accidental deflate would break reader compatibility.
-**Plans**: TBD
+**Plans**: 1 plan
+  - [ ] 01-01-PLAN.md — Wire `-f mzpeak` end-to-end (enum/help/dispatch/stream), shared Parquet/CV helper with low-level round-trip proof, and minimal STORED-ZIP archive that passes the reference reader OPEN gate
 
 ### Phase 2: Spectra Signal Data
 **Goal**: Emit lossless point-layout spectral signal — `spectra_data.parquet` (and `spectra_peaks.parquet` for centroids) — with canonical widths and ascending m/z, respecting the existing input filters.
@@ -82,13 +83,13 @@ Decimal phases appear between their surrounding integers in numeric order.
 ### Phase 4: Chromatograms + Conformance Verification
 **Goal**: Add the TIC chromatogram facets and prove the whole archive round-trips losslessly against the reference reader, locked in by an automated NUnit test on `small.RAW`.
 **Depends on**: Phase 3
-**Requirements**: CHROM-01, CHROM-02, VER-01, VER-02, VER-03
+**Requirements**: CHROM-01, CHROM-02, VER-01, VER-02, VER-03, VER-04
 **Success Criteria** (what must be TRUE):
   1. `chromatograms_data.parquet` is written in point layout `struct<chromatogram_index:u64, time:f64, intensity:f32, ms_level:i64>` carrying the TIC.
   2. `chromatograms_metadata.parquet` contains the chromatogram struct (type=TIC CURIE, polarity, point count), and the chromatogram facets are listed in `mzpeak_index.json`.
-  3. The output archive opens in the reference Python mzPeak reader without error.
-  4. Spectrum count, per-spectrum peak counts, and the (m/z, intensity) multiset round-trip versus the source within f32 intensity tolerance.
-  5. An NUnit test converts `ThermoRawFileParserTest/Data/small.RAW` to mzPeak and asserts archive structure plus readability.
+  3. `mzpeak-validate <out>.mzpeak` exits 0 (no error-level findings) against profile mzpeak-0.9.
+  4. Differential equivalence vs `mzML2mzPeak` for the same RAW (spectrum/peak counts, (m/z,intensity) multiset within f32 tol, ms_level, polarity, RT, precursor m/z/charge, TIC) and L1/L2 round-trip (m/z value-equal; intensity bounded-equal under the recorded f32 narrowing transform).
+  5. An NUnit test converts `ThermoRawFileParserTest/Data/small.RAW` to mzPeak, asserts archive structure, and invokes `mzpeak-validate` (skip-with-warning if absent).
 **Key risks**:
   - Reference reader may require a chromatogram metadata facet to exist at open time even when empty; the writer must register at least the TIC so readers do not error on a missing facet.
   - Round-trip tolerance for intensity must be defined to accommodate the lossy f64→f32 narrowing without masking real data loss.

@@ -55,8 +55,12 @@ from Thermo RAW.
   mapping bible at `./refs/_findings/mzpeak_mapping_report.md`.
 - **Primary technical risk**: Parquet.Net's high-level POCO serializer (used by the existing
   Parquet writer) likely cannot express nested structs + lists-of-structs + parallel nullable
-  top-level columns. The low-level `ParquetSchema`/`DataColumn` API is probably required. This
-  is validated by an early spike before committing to the metadata writer.
+  top-level columns. The low-level `ParquetSchema`/`DataColumn` API is probably required.
+  RETIRED by the Phase 1 spike — the low-level API round-trips all required shapes.
+- **Validation tooling**: `~/Claude/mzPeakValidator` (`mzpeak-validate`, profile-driven, exit 0/1/2)
+  is the authoritative conformance oracle. `~/Claude/mzML2mzPeak` (Rust reference converter, large
+  corpus, L1/L2 conformance tests) is the differential reference: the same RAW converted via
+  `RAW→(TRFP mzML)→mzML→(mzML2mzPeak)→mzpeak` must match our direct `RAW→mzpeak`.
 
 ## Constraints
 
@@ -75,6 +79,9 @@ from Thermo RAW.
 | Validate Parquet.Net nested-schema capability via spike before metadata writer | De-risks the single largest unknown | — Pending |
 | Reuse existing `SpectrumWriter` data extraction + `OntologyMapping` CV dicts | Avoid re-implementing Thermo decoding and CV lookup | — Pending |
 | External codex+vibe review at each phase boundary | User-mandated quality gate | — Pending |
+| `mzpeak-validate` is the conformance gate (replaces ad-hoc reader OPEN) | Profile-driven, language-independent oracle; stronger than "a reader opens it" | — Pending |
+| Differential equivalence vs mzML2mzPeak for the same input | Pins our mapping to the established reference converter's semantics | — Pending |
+| Private derivative repo okohlbacher/mzPeak4TRFP, TRFP vendored | GitHub can't make a private fork of a public repo; vendoring keeps planning paths + provenance | — Pending |
 
 ---
 *Last updated: 2026-06-14 after initialization*

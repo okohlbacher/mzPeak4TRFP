@@ -1,0 +1,1174 @@
+Reading additional input from stdin...
+OpenAI Codex v0.137.0
+--------
+workdir: /Users/kohlbach/Claude/mzPeak4TRFR
+model: gpt-5.5
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: xhigh
+reasoning summaries: none
+session id: 019ec4a9-4826-79c1-9628-65aae3a2e867
+--------
+user
+Re-review (confirmation pass). You previously reviewed this plan and returned VERDICT: REWORK. The plan has been revised to address your findings. Read .planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/REVIEW-SYNTHESIS.md (the 15 findings F1-F15 and their intended resolutions) and the REVISED .planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/01-01-PLAN.md. For each of F1-F15, state RESOLVED or NOT-RESOLVED with a one-line reason (cite the plan location). Then list any NEW issues the revision introduced. End with a one-line VERDICT: SHIP / SHIP-WITH-FIXES / REWORK. Be terse.
+codex
+I’ll read the synthesis and revised plan, then map each finding directly to the revised plan locations before giving a verdict.
+exec
+/bin/zsh -lc 'nl -ba .planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/REVIEW-SYNTHESIS.md' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+     1	# Phase 1 plan — adversarial review synthesis (plan gate)
+     2	
+     3	Three independent reviews of `01-01-PLAN.md`:
+     4	- **codex** (`codex exec`, read-only): VERDICT **REWORK** — 2 BLOCKER, 4 HIGH, 4 MEDIUM, 2 LOW.
+     5	- **vibe** (`vibe -p --agent plan`): VERDICT **SHIP-WITH-FIXES** — 2 HIGH, 1 MEDIUM.
+     6	- **GSD plan-checker**: **PASS with warnings** — 3 mechanical (W1–W3).
+     7	
+     8	Raw outputs: `REVIEW-codex.md`, `REVIEW-vibe.md`, `PLAN-CHECK.md`.
+     9	
+    10	## Consolidated findings → resolutions (deduped, prioritized)
+    11	
+    12	| # | Sev | Finding (source) | Resolution to bake into plan |
+    13	|---|-----|------------------|------------------------------|
+    14	| F1 | BLOCKER | `MzPeakParquet`/`MzPeakParam` default to `internal`; test assembly can't compile against them (codex 1) | Declare `public static class MzPeakParquet` + `public struct MzPeakParam` |
+    15	| F2 | BLOCKER | Column lookup by `/`-separated `Path.ToString()` is wrong; Parquet.Net paths are dot-separated (codex 2) | Don't string-split paths. Iterate `schema.GetDataFields()` and supply each `DataField`'s matching array directly; key the write helper on the `DataField` objects themselves |
+    16	| F3 | HIGH | net8 build: `DOTNET_ROLL_FORWARD` does not supply the missing net8 **ref/targeting pack** (codex 3, plan-checker W3) | Build relies on NuGet auto-restore of `Microsoft.NETCore.App.Ref` 8.x; if that fails, install the .NET 8 SDK. Roll-forward is for **run/test** only. Put the env exports IN the verify commands |
+    17	| F4 | HIGH | `ZipArchive` disposal closes the base stream; `ZipFile.Open` needs a private path (codex 4) | Use `new ZipArchive(Writer.BaseStream, ZipArchiveMode.Create, leaveOpen: true)`; dispose archive, THEN `Writer.Flush()/Close()` |
+    18	| F5 | HIGH | "Write one base-peak point" when zero array points = fabrication; base-peak fields may be null (codex 5, vibe HIGH-1) | Select the first in-range spectrum **that has ≥1 real point**; never synthesize. Remove the base-peak fallback |
+    19	| F6 | HIGH | No defined behavior when filters exclude every scan; OPEN needs `spectrum_metadata` len ≥ 1 (codex 6, vibe HIGH-2) | If no in-range spectrum with points exists, throw a clear `RawFileParserException` — emit no broken archive. Add this branch explicitly |
+    20	| F7 | MED | metadata facet `spectrum_data_point_count` should be `0` (ground truth); real count lives on the data facet (codex 7) | Set metadata-facet count KV to `0`; real point count on data facet. Confirm via OPEN gate |
+    21	| F8 | MED | PQ-03 gate never asserts internal codec; Parquet.Net default is Snappy → could OPEN while violating PQ-03 (codex 8) | Add a gate step: read both parquet entries' metadata and assert column-chunk compression == ZSTD |
+    22	| F9 | MED | `MzPeakParam` string/accession/unit must be nullable per PARAM schema (codex 9) | Keep them nullable reference fields; add a round-trip test with null accession/unit/string |
+    23	| F10 | MED | `DataColumn` def/rep-level arg order is ambiguous in docs (codex 10) | Hide behind a named helper `Column(field, defined, defLevels, repLevels)`; lock semantics with the round-trip test |
+    24	| F11 | LOW | `CvColumn` label normalization undefined (codex 11) | Contract: callers pass pre-normalized snake_case labels; document on the helper. No normalization logic |
+    25	| F12 | LOW | `ThermoRawFileParser/README.md` help text left stale at "4 for None" (codex 12) | Update the README `--format` help line in Task 1 |
+    26	| F13 | WARN | Task 1 verify doesn't assert help text contains mzPeak (plan-checker W1, CLI-02) | Add `grep -q "4 for mzPeak" MainClass.cs` to Task 1 verify |
+    27	| F14 | WARN | Clean-run `Errors==0/Warnings==0` only in prose (plan-checker W2) | Task 3 verify asserts the run exits 0 and emits no ERROR line |
+    28	| F15 | MED | `spectrum_array_index` JSON not inlined → transcription risk (vibe MED) | Inline the exact `spectrum_array_index` JSON value in the plan from RESEARCH so the executor copies, not retypes |
+    29	
+    30	All 15 fed back to the planner for a revised `01-01-PLAN.md`. Re-review after revision before execution.
+
+exec
+/bin/zsh -lc 'nl -ba .planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/01-01-PLAN.md' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+     1	---
+     2	phase: 01-walking-skeleton-cli-wiring-parquet-zip-foundation
+     3	plan: 01
+     4	type: execute
+     5	wave: 1
+     6	depends_on: []
+     7	files_modified:
+     8	  - ThermoRawFileParser/OutputFormat.cs
+     9	  - ThermoRawFileParser/MainClass.cs
+    10	  - ThermoRawFileParser/README.md
+    11	  - ThermoRawFileParser/RawFileParser.cs
+    12	  - ThermoRawFileParser/Writer/SpectrumWriter.cs
+    13	  - ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs
+    14	  - ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs
+    15	autonomous: true
+    16	requirements: [CLI-01, CLI-02, CLI-03, PQ-01, PQ-02, PQ-03]
+    17	user_setup:
+    18	  - service: python-open-gate
+    19	    why: "Reference Python reader is the PQ-03 OPEN acceptance gate"
+    20	    env_vars: []
+    21	    dashboard_config:
+    22	      - task: "Ensure python3.11 with pyarrow, pandas, numpy, pynumpress, psims is available (pip install pynumpress psims if missing)"
+    23	        location: "local shell"
+    24	
+    25	must_haves:
+    26	  truths:
+    27	    - "`-f mzpeak` (and `-f 4`) is accepted, listed in --format help, and runs to completion"
+    28	    - "Dispatch instantiates MzPeakSpectrumWriter and conversion completes with zero errors/warnings on small.RAW"
+    29	    - "Parquet.Net low-level API writes a nested struct + list-of-struct + parallel nullable top-level structs that round-trip read back with correct values"
+    30	    - "Reusable PARAM value-struct builder and CV-accession column-name helper exist in a shared support file"
+    31	    - "Output is a STORED ZIP named <raw>.mzpeak whose internal Parquet is ZSTD-compressed, and the reference Python reader OPENs it (exit 0)"
+    32	  artifacts:
+    33	    - path: "ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs"
+    34	      provides: "mzPeak writer: read first in-range scan with points, build facets, pack STORED zip"
+    35	      contains: "class MzPeakSpectrumWriter"
+    36	    - path: "ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs"
+    37	      provides: "PARAM field builder, CV-column-name helper, low-level Parquet write helper"
+    38	      contains: "BuildParamField"
+    39	    - path: "ThermoRawFileParser/OutputFormat.cs"
+    40	      provides: "MzPeak enum member"
+    41	      contains: "MzPeak"
+    42	  key_links:
+    43	    - from: "ThermoRawFileParser/RawFileParser.cs"
+    44	      to: "MzPeakSpectrumWriter"
+    45	      via: "dispatch switch case OutputFormat.MzPeak"
+    46	      pattern: "new MzPeakSpectrumWriter"
+    47	    - from: "ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs"
+    48	      to: "spectra_data.parquet + spectra_metadata.parquet + mzpeak_index.json"
+    49	      via: "ZipArchive STORED entries"
+    50	      pattern: "CompressionLevel.NoCompression"
+    51	    - from: "ThermoRawFileParser/Writer/SpectrumWriter.cs"
+    52	      to: "binary File.Create stream for .mzpeak"
+    53	      via: "ConfigureWriter Parquet/MzPeak branch"
+    54	      pattern: "OutputFormat.MzPeak"
+    55	---
+    56	
+    57	<objective>
+    58	Wire a new `mzpeak` output format end-to-end through the TRFP CLI and emit the thinnest honest
+    59	archive that the reference Python reader can OPEN: a STORED ZIP containing a ZSTD-internal Parquet
+    60	facet pair (`spectra_data.parquet` + `spectra_metadata.parquet`) plus `mzpeak_index.json`, built
+    61	from one real spectrum's points using the inherited `SpectrumWriter` data access. This retires the
+    62	single biggest project unknown — that Parquet.Net 5.0.1's low-level API expresses mzPeak's nested
+    63	column shapes — and lays the reusable PARAM/CV helpers Phase 3 depends on.
+    64	
+    65	Purpose: Prove the full pipeline before any fidelity is added; unblock Phases 2-4.
+    66	Output: `OutputFormat.MzPeak`, help/dispatch/gzip/stream wiring, `MzPeakSpectrumWriter`, shared
+    67	`MzPeakParquet` helper, and a reader-openable `<raw>.mzpeak`.
+    68	</objective>
+    69	
+    70	<execution_context>
+    71	@$HOME/.claude/get-shit-done/workflows/execute-plan.md
+    72	@$HOME/.claude/get-shit-done/templates/summary.md
+    73	</execution_context>
+    74	
+    75	<context>
+    76	@.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md
+    77	@.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/PATTERNS.md
+    78	@.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/CONTEXT.md
+    79	@refs/_findings/mzpeak_groundtruth_schema.md
+    80	@ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs
+    81	@ThermoRawFileParser/Writer/SpectrumWriter.cs
+    82	
+    83	<interfaces>
+    84	<!-- Contracts the executor uses directly. No further codebase exploration needed for these. -->
+    85	
+    86	Writer base (ThermoRawFileParser/Writer/SpectrumWriter.cs):
+    87	- protected SpectrumWriter(ParseInput parseInput)                       // base ctor, line 63
+    88	- public abstract void Write(IRawDataPlus rawFile, int firstScanNumber, int lastScanNumber)  // line 72
+    89	- protected void ConfigureWriter(string extension)                      // line 78; Parquet branch line 88
+    90	- protected StreamWriter Writer;                                        // write binary via Writer.BaseStream
+    91	- protected readonly ParseInput ParseInput;
+    92	- ReadMZData(raw, scanEvent, scanNumber, centroid, charge, noise) -> MZData   // inherited data access
+    93	- MZData (Util/GeneralHelpers.cs): public double[] masses; public double[] intensities;
+    94	
+    95	Parquet.Net 5.0.1 low-level surface (verified by spike, RESEARCH "verified API surface"):
+    96	- new ParquetSchema(params Field[]);  schema.GetDataFields() -> DataField[] in leaf order
+    97	- new StructField(string name, params Field[] elements)
+    98	- new ListField(string name, Field item)
+    99	- new DataField<T>(string name, bool? nullable = null)
+   100	- new DataColumn(DataField field, Array data)
+   101	- new DataColumn(DataField field, Array definedData, int[] definitionLevels, int[] repetitionLevels)
+   102	- await ParquetWriter.CreateAsync(schema, stream)  -> ParquetWriter
+   103	    .CompressionMethod = CompressionMethod.Zstd;  .CustomMetadata = IReadOnlyDictionary<string,string>;
+   104	    .CreateRowGroup() -> ParquetRowGroupWriter;   rg.WriteColumnAsync(DataColumn)
+   105	
+   106	Parquet.Net path semantics (DO NOT string-split with '/'):
+   107	- A DataField's identity is the leaf object returned by schema.GetDataFields(). Pair each returned
+   108	  DataField with the caller-supplied array directly; never parse Path.ToString() with '/'.
+   109	- DataField.Path is a FieldPath whose ToString() is DOT-separated (e.g. "spectrum.mz_range.lo"),
+   110	  NOT '/'-separated. If a string key is ever needed, use the dot-separated FieldPath, but the write
+   111	  helper keys on the DataField objects themselves.
+   112	- DataColumn default codec is Snappy; ZSTD MUST be set explicitly on the writer and proven on read.
+   113	
+   114	Existing ctor analogs (all delegate to base, one arg):
+   115	- ParquetSpectrumWriter(ParseInput) : base(parseInput)  // Writer/ParquetSpectrumWriter.cs:43
+   116	</interfaces>
+   117	</context>
+   118	
+   119	<constraints>
+   120	- Parquet.Net LOW-LEVEL API only (ParquetSchema/DataColumn/ParquetWriter). NEVER ParquetSerializer.
+   121	- m/z = float64, intensity = float32 (canonical widths).
+   122	- ZIP = STORED (CompressionLevel.NoCompression). Parquet-internal codec = ZSTD (must be set; Parquet.Net
+   123	  default is Snappy).
+   124	- Plain string / list (32-bit offset) are accepted by the reader; do NOT chase large_string/large_list.
+   125	- Build each Parquet facet fully in a MemoryStream (Parquet.Net needs a seekable stream + footer on dispose),
+   126	  then write finished bytes into the STORED zip entry. Never hand Parquet.Net a non-seekable zip-entry stream.
+   127	- Reuse inherited SpectrumWriter data access (ReadMZData, RetentionTimeFromScanNumber, MSOrder).
+   128	  Do NOT re-decode Thermo data.
+   129	- Code must be compact. ImplicitUsings is disabled — every `using` must be explicit. Keep files BOM-free.
+   130	- NO comments referencing the harness, GSD, process, phases, or spikes anywhere in code.
+   131	</constraints>
+   132	
+   133	<tasks>
+   134	
+   135	<task type="auto">
+   136	  <name>Task 1: Wire the mzpeak format end-to-end (enum, help, gzip, stream, dispatch, writer stub)</name>
+   137	  <files>
+   138	    ThermoRawFileParser/OutputFormat.cs,
+   139	    ThermoRawFileParser/MainClass.cs,
+   140	    ThermoRawFileParser/README.md,
+   141	    ThermoRawFileParser/RawFileParser.cs,
+   142	    ThermoRawFileParser/Writer/SpectrumWriter.cs,
+   143	    ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs
+   144	  </files>
+   145	  <action>
+   146	    Add `MzPeak` to the OutputFormat enum BEFORE `None` (OutputFormat.cs) so it becomes ordinal 4 and
+   147	    `None` becomes 5 (CLI-01).
+   148	    Update the `f=|format=` help description (MainClass.cs:530-531) to read "...3 for Parquet, 4 for
+   149	    mzPeak, 5 for None..." (CLI-02). No change to ParseToEnum — it resolves both name and int.
+   150	    Update the stale `--format` help line in `ThermoRawFileParser/README.md` to match (insert "4 for
+   151	    mzPeak" and renumber "None" to 5) so the docs are not left at the old numbering (CLI-02).
+   152	    Extend the gzip-suppression guard (MainClass.cs:776) so MzPeak also forces `parseInput.Gzip = false`
+   153	    (a STORED zip must never be gzip-wrapped); fold into the existing `== OutputFormat.Parquet` condition
+   154	    with `|| ... == OutputFormat.MzPeak`.
+   155	    Extend the binary-stream branch in SpectrumWriter.ConfigureWriter (line 88) to match
+   156	    `OutputFormat.Parquet || OutputFormat.MzPeak`, so `.mzpeak` gets a raw `File.Create` stream (no text,
+   157	    no gzip) reached via `Writer.BaseStream`.
+   158	    Add a dispatch case in RawFileParser.cs (mirror the Parquet case at 180-183): `case OutputFormat.MzPeak:
+   159	    spectrumWriter = new MzPeakSpectrumWriter(parseInput); spectrumWriter.Write(rawFile, firstScanNumber,
+   160	    lastScanNumber); break;` (CLI-03). The `using ThermoRawFileParser.Writer;` is already present.
+   161	    Create `Writer/MzPeakSpectrumWriter.cs` as a compiling STUB extending SpectrumWriter: static ILog Log
+   162	    field, `public MzPeakSpectrumWriter(ParseInput parseInput) : base(parseInput) { }`, and a
+   163	    `public override void Write(IRawDataPlus raw, int firstScanNumber, int lastScanNumber)` that guards
+   164	    `if (!raw.HasMsData) throw new RawFileParserException(...)`, calls `ConfigureWriter(".mzpeak")`, writes a
+   165	    placeholder zero-byte (or empty) payload to `Writer.BaseStream`, then `Writer.Flush(); Writer.Close();`.
+   166	    The real facet/zip emission lands in Task 3. Namespace `ThermoRawFileParser.Writer`.
+   167	  </action>
+   168	  <verify>
+   169	    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 dotnet build -c Release ThermoRawFileParser/ThermoRawFileParser.csproj 2>&1 | tail -5 | grep -qi "Build succeeded" && grep -q "MzPeak" ThermoRawFileParser/OutputFormat.cs && grep -q "4 for mzPeak" ThermoRawFileParser/MainClass.cs && grep -q "4 for mzPeak" ThermoRawFileParser/README.md && grep -q "new MzPeakSpectrumWriter" ThermoRawFileParser/RawFileParser.cs && echo WIRED</automated>
+   170	  </verify>
+   171	  <done>Solution builds in Release; `MzPeak` is in the enum, MainClass help text, README help line, gzip guard, ConfigureWriter branch, and dispatch; `-f mzpeak` reaches the new writer and emits a `.mzpeak` file.</done>
+   172	</task>
+   173	
+   174	<task type="auto" tdd="true">
+   175	  <name>Task 2: Shared Parquet/CV helper with low-level round-trip proof (PQ-01, PQ-02)</name>
+   176	  <files>
+   177	    ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs,
+   178	    ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs
+   179	  </files>
+   180	  <behavior>
+   181	    - Round-trip test: build a schema with a nested struct (mz_range{lo,hi}), a list-of-struct
+   182	      (parameters[{name,val?}] with an empty list row and an inner-null val), and two PARALLEL nullable
+   183	      top-level structs (spectrum, scan) where each of 3 rows populates exactly one. Write to a MemoryStream
+   184	      via the helper, then read back with ParquetReader and assert: spectrum present on rows 0/2 and null on
+   185	      row 1; scan present only on row 1; parameters[0] has 2 items with second val null; row 2 list empty.
+   186	    - Def/rep-level lock: assert the exact definition/repetition level arrays produced by the `Column`
+   187	      helper for the list-of-struct leaf and a parallel-null leaf match the RESEARCH cheat sheet
+   188	      (e.g. parameters/item/name -> def {5,5,0,2}, rep {0,1,0,0}; spectrum/index -> def {1,0,1}, rep null).
+   189	    - CV-column-name helper: `MS_1000511_ms_level` from (acc "MS:1000511", label "ms_level");
+   190	      `MS_1000016_scan_start_time_unit_UO_0000031` when a unit accession is supplied.
+   191	    - PARAM field builder returns a StructField with leaf order exactly
+   192	      value/integer, value/float, value/string, value/boolean, accession, name, unit.
+   193	    - PARAM round-trip with nullables: a row whose Accession, Unit, and String are all null reads back
+   194	      as null on those three leaves while the populated row reads back its values.
+   195	    - Written file reports ZSTD compression on read-back (PQ-02 internal-codec assertion).
+   196	  </behavior>
+   197	  <action>
+   198	    Create `Writer/MzPeak/MzPeakParquet.cs` (namespace `ThermoRawFileParser.Writer`, BOM-free, explicit
+   199	    usings) as a `public static class MzPeakParquet` plus a `public struct MzPeakParam` (public fields:
+   200	    long? Integer, double? Float, string String, bool? Boolean, string Accession, string Name, string Unit).
+   201	    Accession, Unit, and String are NULLABLE reference fields per the PARAM schema; the value-struct
+   202	    column-writer must emit null for them via definition levels when absent.
+   203	    Implement, mirroring the verified pattern in RESEARCH:
+   204	    - `public static StructField BuildParamField(string name)` -> the PARAM struct in the documented leaf
+   205	      order (value/integer, value/float, value/string, value/boolean, accession, name, unit).
+   206	    - `public static string CvColumn(string accession, string label, string unitAccession = null)` ->
+   207	      convention `MS_<acc>_<label>[_unit_<NS>_<acc>]` with the `:` in CURIEs replaced by `_`
+   208	      (e.g. MS:1000511 -> MS_1000511). CONTRACT: callers pass `label` already normalized to snake_case;
+   209	      `CvColumn` performs NO normalization of the label (document this on the method). It only rewrites
+   210	      the `:` in accessions.
+   211	    - `public static DataColumn Column(DataField field, Array defined, int[] defLevels, int[] repLevels)`
+   212	      -> the single named constructor for every column the writer emits. This hides the
+   213	      DataColumn(field, definedData, definitionLevels, repetitionLevels) arg order behind one helper so
+   214	      def/rep semantics are defined in exactly one place; the round-trip test locks its behavior.
+   215	    - A write helper that, given a ParquetSchema, a CustomMetadata dictionary, and an ordered set of
+   216	      `(DataField, Array, int[] defLevels, int[] repLevels)` column triples, creates a ParquetWriter on a
+   217	      provided Stream with `CompressionMethod = CompressionMethod.Zstd`, sets CustomMetadata, opens one
+   218	      row group, and writes columns IN `schema.GetDataFields()` ORDER. Iterate `schema.GetDataFields()`
+   219	      and pair each returned DataField with its matching caller-supplied array by DataField identity
+   220	      (the helper keys on the DataField objects, NOT on parsing Path.ToString()). For each leaf, build
+   221	      the column via `Column(...)`. Pass only DEFINED (non-null) values typed as the non-nullable element
+   222	      type; nulls travel via definition levels only. For non-repeated leaves pass repLevels = null.
+   223	    Write NUnit tests in `MzPeakParquetTests.cs` (NUnit, `Assert.That` style; mirror WriterTests
+   224	    conventions) implementing the behavior above, including the def/rep-level lock and the nullable PARAM
+   225	    round-trip. This is the formalization of PQ-01 as a test.
+   226	    Keep the helper compact; it is consumed heavily by Phase 3, so keep the PARAM/CV/Column APIs clean.
+   227	  </action>
+   228	  <verify>
+   229	    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 dotnet test ThermoRawFileParser/ThermoRawFileParserTest/ThermoRawFileParserTest.csproj --filter "FullyQualifiedName~MzPeakParquet" 2>&1 | tail -8 | grep -qiE "Passed!|Passed:" && echo ROUNDTRIP_OK</automated>
+   230	  </verify>
+   231	  <done>MzPeakParquet helper compiles (public class + public MzPeakParam); round-trip test confirms nested struct + list-of-struct (empty list + inner null) + parallel nullable top-level structs read back with exact values; def/rep-level arrays locked; nullable PARAM accession/unit/string round-trips as null; CV-column-name and PARAM-field leaf order asserted; read-back reports ZSTD.</done>
+   232	</task>
+   233	
+   234	<task type="auto">
+   235	  <name>Task 3: Emit the minimal real archive and pass the reference reader OPEN gate (PQ-03)</name>
+   236	  <files>
+   237	    ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs,
+   238	    ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs
+   239	  </files>
+   240	  <action>
+   241	    Replace the Task 1 stub Write body with real emission, reusing inherited data access. In the
+   242	    firstScanNumber..lastScanNumber loop find the FIRST in-range scan that has at least ONE real point
+   243	    (respect MaxLevel and `ParseInput.MsLevel.Contains(level)` as the analog does): read each candidate's
+   244	    points via the inherited `ReadMZData(...)` (centroid flag derived as
+   245	    `!ParseInput.NoPeakPicking.Contains((int)scanFilter.MSOrder)`) and SELECT the first whose masses
+   246	    length >= 1. Capture its retention time via `RetentionTimeFromScanNumber`. Keep per-scan try/catch
+   247	    that logs and calls `ParseInput.NewError()`; on the clean small.RAW errors/warnings must stay 0.
+   248	
+   249	    If NO in-range scan with >= 1 point exists, throw a clear `RawFileParserException` (e.g. "no in-range
+   250	    spectrum with data points to write") and emit NO archive. Never synthesize or fabricate a point
+   251	    (no base-peak fallback) — the data facet must carry only real measured points.
+   252	
+   253	    Build TWO Parquet facets, each into its own MemoryStream via the Task 2 write helper, ZSTD-internal:
+   254	    1. `spectra_data.parquet` — schema `point: struct<spectrum_index:ulong, mz:double, intensity:float>`.
+   255	       Rows = the selected spectrum's points (spectrum_index = 0, mz = masses cast f64, intensity = f32).
+   256	       CustomMetadata: `spectrum_count` = "1", `spectrum_data_point_count` = the real point count,
+   257	       and `spectrum_array_index` = the EXACT JSON value below (copy verbatim; do not retype):
+   258	         {"prefix":"point","entries":[
+   259	           {"context":"spectrum","path":"point.mz","data_type":"MS:1000523","array_type":"MS:1000514",
+   260	            "array_name":"m/z array","unit":"MS:1000040","buffer_format":"point","buffer_priority":"primary"},
+   261	           {"context":"spectrum","path":"point.intensity","data_type":"MS:1000521","array_type":"MS:1000515",
+   262	            "array_name":"intensity array","unit":"MS:1000131","buffer_format":"point","buffer_priority":"primary"}
+   263	         ]}
+   264	    2. `spectra_metadata.parquet` — schema with a top-level `spectrum` struct carrying at least an
+   265	       `index:ulong` leaf (reader requires `spectrum.index`); include `id:string` and `time:double` for
+   266	       honesty. One row, index 0. CustomMetadata: `spectrum_count` = "1", and the metadata-facet
+   267	       `spectrum_data_point_count` = "0" (ground-truth convention — the real point count lives ONLY on
+   268	       the data facet above; the OPEN gate confirms this is accepted).
+   269	       (Both facets are REQUIRED for the reader OPEN — RESEARCH Unknown 4.)
+   270	
+   271	    Hand-build `mzpeak_index.json` with Newtonsoft.Json listing EXACTLY the two facets written:
+   272	    `{"files":[{"name":"spectra_data.parquet","entity_type":"spectrum","data_kind":"data arrays"},
+   273	    {"name":"spectra_metadata.parquet","entity_type":"spectrum","data_kind":"metadata"}],"metadata":{}}`.
+   274	    Never list a facet you did not write.
+   275	
+   276	    Pack into a STORED zip layered on the configured output stream:
+   277	    `using (var zip = new ZipArchive(Writer.BaseStream, ZipArchiveMode.Create, leaveOpen: true)) { ... }`,
+   278	    creating each entry `zip.CreateEntry(name, CompressionLevel.NoCompression)` (STORED) and writing the
+   279	    bytes: `mzpeak_index.json`, `spectra_data.parquet`, `spectra_metadata.parquet`. DISPOSE the
+   280	    ZipArchive (exit the `using`) BEFORE `Writer.Flush(); Writer.Close();` so the zip central directory is
+   281	    finalized while the base stream stays open (leaveOpen: true) for the writer to flush/close. Output
+   282	    name is `<raw>.mzpeak` via ConfigureWriter. Add any low-level column-emit convenience to MzPeakParquet
+   283	    if it keeps the writer compact.
+   284	  </action>
+   285	  <verify>
+   286	    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 dotnet build -c Release ThermoRawFileParser/ThermoRawFileParser.csproj 2>&1 | tail -3 | grep -qi "Build succeeded" && OUT=$(mktemp -d) && DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 dotnet run -c Release --project ThermoRawFileParser/ThermoRawFileParser.csproj -- -i ThermoRawFileParser/ThermoRawFileParserTest/Data/small.RAW -b "$OUT" -f mzpeak 2>"$OUT/run.log"; RC=$?; test $RC -eq 0 && ! grep -qi "ERROR" "$OUT/run.log" && MZP=$(ls "$OUT"/*.mzpeak 2>/dev/null | head -1) && python3 -c "import zipfile,json; z=zipfile.ZipFile('$MZP'); assert all(i.compress_type==0 for i in z.infolist()); json.load(z.open('mzpeak_index.json')); print('STORED+INDEX OK')" && python3 -c "import pyarrow.parquet as pq, zipfile, io; z=zipfile.ZipFile('$MZP'); [exec('md=pq.read_metadata(io.BytesIO(z.read(n))); assert all(md.row_group(0).column(c).compression==\"ZSTD\" for c in range(md.row_group(0).num_columns)), n') for n in ('spectra_data.parquet','spectra_metadata.parquet')]; print('ZSTD OK')" && PYTHONPATH=refs/mzPeak/python python3.11 -c "import numpy, numpy.typing; from mzpeak import MzPeakFile; f=MzPeakFile('$MZP'); assert f.spectrum_metadata is not None and len(f.spectrum_metadata)>=1; print('OPEN OK', len(f.spectrum_metadata))"</automated>
+   287	  </verify>
+   288	  <done>Running TRFP with `-f mzpeak` on small.RAW exits 0 with no ERROR line and produces `<raw>.mzpeak`; the zip is STORED (compress_type==0) with both parquet facets + `mzpeak_index.json`; both parquet column chunks report ZSTD compression; the reference Python reader OPENs it (exit 0, spectrum_metadata length >= 1); errors/warnings remain 0.</done>
+   289	</task>
+   290	
+   291	</tasks>
+   292	
+   293	<build_runtime_setup>
+   294	The csproj targets `net8.0`; this machine has the .NET 10 SDK (10.0.301) and the 9.0/10.0 runtimes but
+   295	NOT the .NET 8 runtime. Resolve as follows:
+   296	
+   297	1. BUILD relies on NuGet auto-restore of the net8 reference/targeting pack
+   298	   (`Microsoft.NETCore.App.Ref` 8.x), which the .NET 10 SDK pulls from NuGet automatically. Run a plain
+   299	   `dotnet build -c Release ThermoRawFileParser/ThermoRawFileParser.csproj` first.
+   300	2. ONLY IF that restore/build fails with a missing net8 ref pack, install the .NET 8 SDK (which carries
+   301	   the ref pack), then rebuild. Do not edit the csproj target framework.
+   302	3. RUN/TEST (not build) is where roll-forward applies: the produced net8 assembly executes on the net9/10
+   303	   runtime via `DOTNET_ROLL_FORWARD=LatestMajor` + `DOTNET_ROLL_FORWARD_TO_PRERELEASE=1`. These env exports
+   304	   are placed directly inside each verify command that runs `dotnet build`/`run`/`test` above; keep them
+   305	   there. Parquet.Net 5.0.1's net8.0 lib loads cleanly under net9/10. Document the chosen approach in the
+   306	   SUMMARY.
+   307	4. Reference Python OPEN gate needs `python3.11` with `pyarrow`, `pandas`, `numpy`, `pynumpress`, `psims`.
+   308	   Install the latter two if absent: `python3.11 -m pip install pynumpress psims`. Force `import numpy.typing`
+   309	   before `from mzpeak import MzPeakFile` (older numpy build does not auto-load the typing submodule).
+   310	</build_runtime_setup>
+   311	
+   312	<threat_model>
+   313	## Trust Boundaries
+   314	
+   315	| Boundary | Description |
+   316	|----------|-------------|
+   317	| RAW file -> writer | Thermo RAW is parsed by trusted, already-shipping TRFP reader code (reused, not new) |
+   318	| writer -> .mzpeak archive | New code constructs Parquet + zip bytes consumed by external readers |
+   319	| .mzpeak -> reference reader | OPEN gate runs an external Python process over the produced file |
+   320	
+   321	## STRIDE Threat Register
+   322	
+   323	| Threat ID | Category | Component | Disposition | Mitigation Plan |
+   324	|-----------|----------|-----------|-------------|-----------------|
+   325	| T-01-01 | Tampering | mzpeak_index.json lists a facet not actually written | mitigate | Emit JSON listing EXACTLY the two facets written; reader fails OPEN otherwise |
+   326	| T-01-02 | Denial of Service | Zero-point spectrum -> empty/invalid facet | mitigate | Select the first in-range spectrum with >= 1 real point; if none, throw RawFileParserException and emit no archive (never fabricate a point) |
+   327	| T-01-03 | Information Disclosure | Accidental deflate (CompressionLevel default) breaks STORED contract | mitigate | Force `CompressionLevel.NoCompression`; verify `compress_type==0` in the gate |
+   328	| T-01-04 | Tampering | Parquet codec silently left at Snappy default, violating PQ-03 | mitigate | Set `CompressionMethod.Zstd`; gate reads both parquet entries' column-chunk metadata and asserts ZSTD |
+   329	| T-01-SC | Tampering | npm/pip/cargo installs | accept | No new C# NuGet packages (Parquet.Net/Newtonsoft already deps). Only pip installs are `pynumpress`/`psims` into the local test env, verified on pypi.org during research; not shipped in output |
+   330	</threat_model>
+   331	
+   332	<verification>
+   333	- `dotnet build -c Release` succeeds via NuGet net8 ref-pack auto-restore (see build_runtime_setup).
+   334	- `dotnet test --filter MzPeakParquet` green (PQ-01, PQ-02 round-trip + def/rep lock + nullable PARAM).
+   335	- End-to-end run on `small.RAW` exits 0 with no ERROR line and produces `<raw>.mzpeak`; structural gate
+   336	  (STORED + index) passes; both parquet facets assert ZSTD column-chunk compression; reference Python
+   337	  OPEN gate exits 0 (PQ-03).
+   338	- `parseInput.Errors == 0 && parseInput.Warnings == 0` on the clean small.RAW.
+   339	</verification>
+   340	
+   341	<success_criteria>
+   342	1. `-f mzpeak` / `-f 4` accepted, listed in MainClass and README --format help, output has `.mzpeak` extension. [CLI-01, CLI-02]
+   343	2. Dispatch instantiates MzPeakSpectrumWriter; conversion completes without error (exit 0, no ERROR). [CLI-03]
+   344	3. Parquet.Net low-level nested struct + list-of-struct + parallel nullable top-level columns round-trip
+   345	   read confirms values; def/rep levels locked. [PQ-01]
+   346	4. Reusable public PARAM value-struct builder + CV-accession column-name helper + Column helper exist in a
+   347	   shared support file. [PQ-02]
+   348	5. Archive is STORED ZIP with proven ZSTD-internal Parquet; reference Python reader OPENs it. [PQ-03]
+   349	</success_criteria>
+   350	
+   351	<dependencies>
+   352	- None upstream (first phase).
+   353	- Build: NuGet auto-restore of `Microsoft.NETCore.App.Ref` 8.x (install .NET 8 SDK only if that fails).
+   354	- Run/test: roll-forward env vars in the verify commands (see build_runtime_setup).
+   355	- OPEN gate: python3.11 + pyarrow/pandas/numpy/pynumpress/psims; reference reader vendored at
+   356	  `refs/mzPeak/python/`.
+   357	- Test fixture: `ThermoRawFileParser/ThermoRawFileParserTest/Data/small.RAW`.
+   358	- Reused C# deps (already in csproj): Parquet.Net 5.0.1, Newtonsoft.Json 13.0.3, System.IO.Compression.
+   359	</dependencies>
+   360	
+   361	<risks>
+   362	- Build runtime mismatch (net8 target vs net9/10 machine) — build via NuGet net8 ref-pack restore;
+   363	  run/test via roll-forward env vars in the verify commands.
+   364	- Reader OPEN requires BOTH `(spectrum, data arrays)` and `(spectrum, metadata)` facets with their KV keys
+   365	  (`spectrum_count`, `spectrum_data_point_count`, `spectrum_array_index`, and a `spectrum.index` leaf) —
+   366	  baked into Task 3; omission causes KeyError/IndexError in the reader.
+   367	- Parquet codec default is Snappy — ZSTD must be set AND proven; the gate reads column-chunk metadata.
+   368	- Column write order / nullable-array pitfalls in Parquet.Net — mitigated by pairing each leaf from
+   369	  `GetDataFields()` with its array by DataField identity and passing defined-only values via the `Column`
+   370	  helper with explicit definition levels (Task 2 helper).
+   371	- No in-range spectrum with points — Task 3 throws RawFileParserException rather than fabricating.
+   372	- OPEN gate environment drift (system python < 3.11) — gate pinned to `python3.11`; `numpy.typing` force-import.
+   373	</risks>
+   374	
+   375	<phase_definition_of_done>
+   376	| ROADMAP success criterion | Met by |
+   377	|---------------------------|--------|
+   378	| 1. `-f mzpeak` accepted, in help, `.mzpeak` output | Task 1 (enum, help, README, ConfigureWriter), Task 3 (real output) |
+   379	| 2. Dispatch builds MzPeakSpectrumWriter; run completes | Task 1 (dispatch + stub), Task 3 (exit 0, no ERROR, 0 errors) |
+   380	| 3. Parquet.Net nested/list/parallel round-trip proven | Task 2 (round-trip NUnit test + def/rep lock) |
+   381	| 4. Reusable PARAM + CV-column helpers exist | Task 2 (public MzPeakParquet.BuildParamField, CvColumn, Column) |
+   382	| 5. STORED ZIP + proven ZSTD Parquet; reader OPENs | Task 3 (STORED zip + ZSTD-asserted facets + Python OPEN gate) |
+   383	</phase_definition_of_done>
+   384	
+   385	<output>
+   386	Create `.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/01-01-SUMMARY.md` when done.
+   387	</output>
+
+2026-06-14T06:03:16.204355Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: IO error: failed to lookup address information: nodename nor servname provided, or not known, url: wss://chatgpt.com/backend-api/codex/responses
+ERROR: Reconnecting... 2/5
+2026-06-14T06:03:16.618444Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: IO error: failed to lookup address information: nodename nor servname provided, or not known, url: wss://chatgpt.com/backend-api/codex/responses
+ERROR: Reconnecting... 3/5
+2026-06-14T06:03:17.394938Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: IO error: failed to lookup address information: nodename nor servname provided, or not known, url: wss://chatgpt.com/backend-api/codex/responses
+ERROR: Reconnecting... 4/5
+2026-06-14T06:03:19.076121Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: IO error: failed to lookup address information: nodename nor servname provided, or not known, url: wss://chatgpt.com/backend-api/codex/responses
+ERROR: Reconnecting... 5/5
+2026-06-14T06:03:22.820132Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: IO error: tls handshake eof, url: wss://chatgpt.com/backend-api/codex/responses
+ERROR: Reconnecting... 1/5
+codex
+The revision has explicit hooks for most of the prior findings. I’m doing one extra targeted check against the research notes for the inlined metadata JSON because that finding depends on exact transcription, not just presence.
+exec
+/bin/zsh -lc 'rg -n "spectrum_array_index|buffer_priority|data arrays|spectra_data" .planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md refs/_findings/mzpeak_groundtruth_schema.md' in /Users/kohlbach/Claude/mzPeak4TRFR
+exec
+/bin/zsh -lc "rg -n \"class ParquetSpectrumWriter|ConfigureWriter|RawFileParserException|NewError|Warnings|warning|Warning|Write\\(\" ThermoRawFileParser/Writer/SpectrumWriter.cs ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs ThermoRawFileParser/RawFileParser.cs ThermoRawFileParser/MainClass.cs" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+refs/_findings/mzpeak_groundtruth_schema.md:10:- `spectra_data.parquet` — point layout signal (REQUIRED)
+refs/_findings/mzpeak_groundtruth_schema.md:18:## spectra_data.parquet / spectra_peaks.parquet (point layout)
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:15:(spectra_data + spectra_metadata + mzpeak_index.json) was then built and **opened successfully by the
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:28:struct with an `index` leaf; the spectrum-data facet requires a `spectrum_array_index` JSON KV entry.
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:263:    { "name": "spectra_data.parquet",     "entity_type": "spectrum", "data_kind": "data arrays" },
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:276:- A `(spectrum, data arrays)` facet — builds `MzPeakArrayDataReader`, which reads the
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:277:  `spectrum_array_index` KV-metadata JSON (`{"prefix":"point","entries":[...]}`) and `spectrum_count`.
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:280:  `data arrays`/`metadata`/`peaks` (exact lowercase strings) [VERIFIED: file_index.py StrEnums].
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:291:| spectra_data.parquet | `spectrum_array_index` (JSON), `spectrum_count`, `spectrum_data_point_count` | see below |
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:293:`spectrum_array_index` minimal value that opened (entries describe the m/z + intensity arrays):
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:297:   "array_name":"m/z array","unit":"MS:1000040","buffer_format":"point","buffer_priority":"primary"},
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:299:   "array_name":"intensity array","unit":"MS:1000131","buffer_format":"point","buffer_priority":"primary"}
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:317:AddStored("spectra_data.parquet", dataParquetBytes);
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:422:   build spectra_data.parquet (MemoryStream)              build spectra_metadata.parquet (MemoryStream)
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:425:       spectrum_array_index                              KV: spectrum_count, spectrum_data_point_count
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:471:`spectrum_count` / `spectrum_data_point_count` / `spectrum_array_index`, or a listed facet that wasn't
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:501:2. **Exact `spectrum_array_index` fields the Rust reader requires** (Phase 2+ when real data flows).
+
+ succeeded in 0ms:
+ThermoRawFileParser/RawFileParser.cs:39:                    throw new RawFileParserException("No raw files found in folder!");
+ThermoRawFileParser/RawFileParser.cs:76:                    parseInput.NewError();
+ThermoRawFileParser/RawFileParser.cs:78:                else if (ex is RawFileParserException)
+ThermoRawFileParser/RawFileParser.cs:81:                    parseInput.NewError();
+ThermoRawFileParser/RawFileParser.cs:87:                    parseInput.NewError();
+ThermoRawFileParser/RawFileParser.cs:124:                    throw new RawFileParserException("Unable to access the RAW file using the native Thermo API");
+ThermoRawFileParser/RawFileParser.cs:130:                    throw new RawFileParserException($"Native Thermo API reported the following error - RAW file is likely corrupted\n{rawFile.FileError.ErrorMessage}");
+ThermoRawFileParser/RawFileParser.cs:136:                    throw new RawFileParserException("RAW file cannot be processed since it is still being acquired");
+ThermoRawFileParser/RawFileParser.cs:156:                        throw new RawFileParserException("Empty RAW file, no output will be produced");
+ThermoRawFileParser/RawFileParser.cs:173:                            spectrumWriter.Write(rawFile, firstScanNumber, lastScanNumber);
+ThermoRawFileParser/RawFileParser.cs:178:                            spectrumWriter.Write(rawFile, firstScanNumber, lastScanNumber);
+ThermoRawFileParser/RawFileParser.cs:182:                            spectrumWriter.Write(rawFile, firstScanNumber, lastScanNumber);
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:36:    public class ParquetSpectrumWriter : SpectrumWriter
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:48:        public override void Write(IRawDataPlus raw, int firstScanNumber, int lastScanNumber)
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:52:                throw new RawFileParserException("No MS data in RAW file, no output will be produced");
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:55:            ConfigureWriter(".mzparquet");
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:76:                            Console.Write("" + scanProgress + "% ");
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:97:                    ParseInput.NewError();
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:256:                            throw new RawFileParserException(
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:294:                ParseInput.NewError();
+ThermoRawFileParser/MainClass.cs:108:                    "w|warningsAreErrors", "Return non-zero exit code for warnings; default only for errors",
+ThermoRawFileParser/MainClass.cs:112:                    "l=|logging=", "Optional logging level: 0 for silent, 1 for verbose, 2 for default, 3 for warning, 4 for error; both numeric and text (case insensitive) value recognized.",
+ThermoRawFileParser/MainClass.cs:301:                Log.Info($"Processing completed {parameters.Errors} errors, {parameters.Warnings} warnings");
+ThermoRawFileParser/MainClass.cs:303:                exitCode = parameters.Vigilant ? parameters.Errors + parameters.Warnings : parameters.Errors;
+ThermoRawFileParser/MainClass.cs:307:                if (ex is RawFileParserException)
+ThermoRawFileParser/MainClass.cs:358:                   "w|warningsAreErrors", "Return non-zero exit code for warnings; default only for errors",
+ThermoRawFileParser/MainClass.cs:362:                    "l=|logging=", "Optional logging level: 0 for silent, 1 for verbose, 2 for default, 3 for warning, 4 for error; both numeric and text (case insensitive) value recognized.",
+ThermoRawFileParser/MainClass.cs:464:                Log.Info($"Processing completed {parameters.Errors} errors, {parameters.Warnings} warnings");
+ThermoRawFileParser/MainClass.cs:466:                exitCode = parameters.Vigilant ? parameters.Errors + parameters.Warnings : parameters.Errors;
+ThermoRawFileParser/MainClass.cs:470:                if (ex is RawFileParserException)
+ThermoRawFileParser/MainClass.cs:563:                    "l=|logging=", "Optional logging level: 0 for silent, 1 for verbose, 2 for default, 3 for warning, 4 for error; both numeric and text (case insensitive) value recognized.",
+ThermoRawFileParser/MainClass.cs:593:                  "w|warningsAreErrors", "Return non-zero exit code for warnings; default only for errors",
+ThermoRawFileParser/MainClass.cs:788:                        throw new RawFileParserException("Invalid S3 url: " + parseInput.S3Url);
+ThermoRawFileParser/MainClass.cs:843:                Log.Info($"Processing completed {parseInput.Errors} errors, {parseInput.Warnings} warnings");
+ThermoRawFileParser/MainClass.cs:845:                exitCode = parseInput.Vigilant ? parseInput.Errors + parseInput.Warnings: parseInput.Errors;
+ThermoRawFileParser/MainClass.cs:861:                if (ex is RawFileParserException)
+ThermoRawFileParser/MainClass.cs:889:                    Console.Error.Write(optionException.OptionName + ": ");
+ThermoRawFileParser/Writer/SpectrumWriter.cs:72:        public abstract void Write(IRawDataPlus rawFile, int firstScanNumber, int lastScanNumber);
+ThermoRawFileParser/Writer/SpectrumWriter.cs:78:        protected void ConfigureWriter(string extension)
+
+exec
+/bin/zsh -lc "nl -ba .planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md | sed -n '288,305p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+   288	| Facet | Required KV keys | Spike value used |
+   289	|-------|------------------|------------------|
+   290	| spectra_metadata.parquet | `spectrum_count`, `spectrum_data_point_count` | "1", "3" |
+   291	| spectra_data.parquet | `spectrum_array_index` (JSON), `spectrum_count`, `spectrum_data_point_count` | see below |
+   292	
+   293	`spectrum_array_index` minimal value that opened (entries describe the m/z + intensity arrays):
+   294	```json
+   295	{"prefix":"point","entries":[
+   296	  {"context":"spectrum","path":"point.mz","data_type":"MS:1000523","array_type":"MS:1000514",
+   297	   "array_name":"m/z array","unit":"MS:1000040","buffer_format":"point","buffer_priority":"primary"},
+   298	  {"context":"spectrum","path":"point.intensity","data_type":"MS:1000521","array_type":"MS:1000515",
+   299	   "array_name":"intensity array","unit":"MS:1000131","buffer_format":"point","buffer_priority":"primary"}
+   300	]}
+   301	```
+   302	
+   303	---
+   304	
+   305	## Unknown 5 — ZIP STORED — DECISION: ZipArchive + CompressionLevel.NoCompression (verified STORED)
+
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/RawFileParser.cs | sed -n '160,190p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/Writer/SpectrumWriter.cs | sed -n '74,100p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/MainClass.cs | sed -n '820,850p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+   820	                        break;
+   821	                    case LogFormat.SILENT:
+   822	                        ((log4net.Repository.Hierarchy.Hierarchy) LogManager.GetRepository()).Root.Level =
+   823	                            Level.Off;
+   824	                        ((log4net.Repository.Hierarchy.Hierarchy) LogManager.GetRepository())
+   825	                            .RaiseConfigurationChanged(EventArgs.Empty);
+   826	                        break;
+   827	                    case LogFormat.WARNING:
+   828	                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository()).Root.Level =
+   829	                            Level.Warn;
+   830	                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository())
+   831	                            .RaiseConfigurationChanged(EventArgs.Empty);
+   832	                        break;
+   833	                    case LogFormat.ERROR:
+   834	                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository()).Root.Level =
+   835	                            Level.Error;
+   836	                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository())
+   837	                            .RaiseConfigurationChanged(EventArgs.Empty);
+   838	                        break;
+   839	                }
+   840	
+   841	                RawFileParser.Parse(parseInput);
+   842	
+   843	                Log.Info($"Processing completed {parseInput.Errors} errors, {parseInput.Warnings} warnings");
+   844	
+   845	                exitCode = parseInput.Vigilant ? parseInput.Errors + parseInput.Warnings: parseInput.Errors;
+   846	            }
+   847	            catch (UnauthorizedAccessException ex)
+   848	            {
+   849	                Log.Error(!ex.Message.IsNullOrEmpty()
+   850	                    ? ex.Message
+
+ succeeded in 0ms:
+   160	                if (parseInput.MetadataFormat != MetadataFormat.None)
+   161	                {
+   162	                    MetadataWriter metadataWriter = new MetadataWriter(parseInput);
+   163	                    metadataWriter.WriteMetadata(rawFile, firstScanNumber, lastScanNumber);
+   164	                }
+   165	
+   166	                if (parseInput.OutputFormat != OutputFormat.None)
+   167	                {
+   168	                    SpectrumWriter spectrumWriter;
+   169	                    switch (parseInput.OutputFormat)
+   170	                    {
+   171	                        case OutputFormat.MGF:
+   172	                            spectrumWriter = new MgfSpectrumWriter(parseInput);
+   173	                            spectrumWriter.Write(rawFile, firstScanNumber, lastScanNumber);
+   174	                            break;
+   175	                        case OutputFormat.MzML:
+   176	                        case OutputFormat.IndexMzML:
+   177	                            spectrumWriter = new MzMlSpectrumWriter(parseInput);
+   178	                            spectrumWriter.Write(rawFile, firstScanNumber, lastScanNumber);
+   179	                            break;
+   180	                        case OutputFormat.Parquet:
+   181	                            spectrumWriter = new ParquetSpectrumWriter(parseInput);
+   182	                            spectrumWriter.Write(rawFile, firstScanNumber, lastScanNumber);
+   183	                            break;
+   184	                    }
+   185	                }
+   186	
+   187	                Log.Info("Finished parsing " + parseInput.UserProvidedPath);
+   188	            }
+   189	        }
+   190	    }
+
+ succeeded in 0ms:
+    74	        /// <summary>
+    75	        /// Configure the output writer
+    76	        /// </summary>
+    77	        /// <param name="extension">The extension of the output file</param>
+    78	        protected void ConfigureWriter(string extension)
+    79	        {
+    80	            if (ParseInput.StdOut)
+    81	            {
+    82	                Writer = new StreamWriter(Console.OpenStandardOutput());
+    83	                Writer.AutoFlush = true;
+    84	                return;
+    85	            }
+    86	
+    87	            var fileName = NormalizeFileName(ParseInput.OutputFile, extension, ParseInput.Gzip);
+    88	            if (ParseInput.OutputFormat == OutputFormat.Parquet)
+    89	            {
+    90	                Writer = new StreamWriter(File.Create(fileName));
+    91	            }
+    92	            else if (!ParseInput.Gzip || ParseInput.OutputFormat == OutputFormat.IndexMzML)
+    93	            {
+    94	                Writer = File.CreateText(fileName);
+    95	            }
+    96	            else
+    97	            {
+    98	                var fileStream = File.Create(fileName);
+    99	                var compress = new GZipStream(fileStream, CompressionMode.Compress);
+   100	                Writer = new StreamWriter(compress);
+
+codex
+The research JSON matches the revised plan’s inline value. I’m checking a couple of C# project settings now because nullable-reference wording can be cosmetic or compile-relevant depending on the project.
+exec
+/bin/zsh -lc 'rg -n "Nullable|TargetFramework|LangVersion|TreatWarningsAsErrors|ImplicitUsings|Parquet.Net|Newtonsoft" ThermoRawFileParser/**/*.csproj ThermoRawFileParser/*.csproj' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+ThermoRawFileParser/ThermoRawFileParserTest/ThermoRawFileParserTest.csproj:5:    <TargetFramework>net8.0</TargetFramework>
+ThermoRawFileParser/ThermoRawFileParserTest/ThermoRawFileParserTest.csproj:6:    <ImplicitUsings>disable</ImplicitUsings>
+ThermoRawFileParser/ThermoRawFileParserTest/ThermoRawFileParserTest.csproj:7:    <Nullable>annotations</Nullable>
+ThermoRawFileParser/ThermoRawFileParserTest/ThermoRawFileParserTest.csproj:35:    <PackageReference Include="Parquet.Net" Version="5.0.1" />
+ThermoRawFileParser/ThermoRawFileParser.csproj:5:    <TargetFramework>net8.0</TargetFramework>
+ThermoRawFileParser/ThermoRawFileParser.csproj:6:    <ImplicitUsings>disable</ImplicitUsings>
+ThermoRawFileParser/ThermoRawFileParser.csproj:7:    <Nullable>annotations</Nullable>
+ThermoRawFileParser/ThermoRawFileParser.csproj:42:    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+ThermoRawFileParser/ThermoRawFileParser.csproj:44:    <PackageReference Include="Parquet.Net" Version="5.0.1" />
+ThermoRawFileParser/ThermoRawFileParser.csproj:5:    <TargetFramework>net8.0</TargetFramework>
+ThermoRawFileParser/ThermoRawFileParser.csproj:6:    <ImplicitUsings>disable</ImplicitUsings>
+ThermoRawFileParser/ThermoRawFileParser.csproj:7:    <Nullable>annotations</Nullable>
+ThermoRawFileParser/ThermoRawFileParser.csproj:42:    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+ThermoRawFileParser/ThermoRawFileParser.csproj:44:    <PackageReference Include="Parquet.Net" Version="5.0.1" />
+
+exec
+/bin/zsh -lc 'rg -n "MzPeak|OutputFormat|format=|format" ThermoRawFileParser/OutputFormat.cs ThermoRawFileParser/MainClass.cs ThermoRawFileParser/README.md | head -80' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+ThermoRawFileParser/MainClass.cs:530:                    "f=|format=",
+ThermoRawFileParser/MainClass.cs:531:                    "The spectra output format: 0 for MGF, 1 for mzML, 2 for indexed mzML, 3 for Parquet, 4 for None (no output); both numeric and text (case insensitive) value recognized. Defaults to indexed mzML if no format is specified.",
+ThermoRawFileParser/MainClass.cs:535:                    "m=|metadata=", "The metadata output format: 0 for JSON, 1 for TXT, 2 for None (no output); both numeric and text (case insensitive) value recognized. Defaults to None",
+ThermoRawFileParser/MainClass.cs:729:                    parseInput.OutputFormat = OutputFormat.IndexMzML;
+ThermoRawFileParser/MainClass.cs:734:                    parseInput.OutputFormat = (OutputFormat)ParseToEnum(typeof(OutputFormat), outputFormatString, "-f, --format");
+ThermoRawFileParser/MainClass.cs:751:                    throw new OptionException("specify a metadata format (0 for JSON, 1 for TXT)",
+ThermoRawFileParser/MainClass.cs:772:                    if (parseInput.OutputFormat == OutputFormat.IndexMzML) parseInput.OutputFormat = OutputFormat.MzML;
+ThermoRawFileParser/MainClass.cs:776:                if (parseInput.OutputFormat == OutputFormat.Parquet) parseInput.Gzip = false;
+ThermoRawFileParser/MainClass.cs:911:        private static int ParseToEnum(Type enumType, string formatString, string keyName)
+ThermoRawFileParser/MainClass.cs:913:            if (int.TryParse(formatString, out var formatInt)) //can be parsed as int
+ThermoRawFileParser/MainClass.cs:915:                if (Enum.IsDefined(enumType, formatInt))
+ThermoRawFileParser/MainClass.cs:917:                    return formatInt;
+ThermoRawFileParser/MainClass.cs:922:                    String.Format("unknown format value, the following values recognized (case insensitive)\n{0}", GetValidEnumLevels(enumType)),
+ThermoRawFileParser/MainClass.cs:931:                    return (int)Enum.Parse(enumType, formatString, true);
+ThermoRawFileParser/MainClass.cs:937:                    String.Format("unknown format value, the following values recognized (case insensitive)\n{0}", GetValidEnumLevels(enumType)),
+ThermoRawFileParser/OutputFormat.cs:3:    public enum OutputFormat
+ThermoRawFileParser/README.md:3:A tool allowing reading Thermo RAW mass spectrometer files and converting to common open formats on all platforms supporting .NET Core.
+ThermoRawFileParser/README.md:5:Supported formats:
+ThermoRawFileParser/README.md:61: The optional parameters only work in the -option=value format. The tool can output some RAW file metadata `-m=0|1` (0 for JSON, 1 for TXT) and the spectra file `-f=0|1|2|3|4` (0 for MGF, 1 for mzML, 2 for indexed mzML, 3 for Parquet, 4 for no output) or both. Use the `-p` flag to disable the thermo native peak picking. 
+ThermoRawFileParser/README.md:83:  -f, --format=VALUE         The spectra output format: 0 for MGF, 1 for mzML,
+ThermoRawFileParser/README.md:87:                               indexed mzML if no format is specified.
+ThermoRawFileParser/README.md:88:  -m, --metadata=VALUE       The metadata output format: 0 for JSON, 1 for TXT,
+ThermoRawFileParser/README.md:137:Output file extension is determined by the used output format and (optional) gzip compression, for example, if format is MGF without gzip compression, the output file will receive `.mgf` extension, if format is mzML with gzip compression the output file will have `.mzML.gz` extension. All user input will be standardized to fulfill abovementioned requirements.
+ThermoRawFileParser/README.md:142:Enables the retrieval spectra by (a) scan number(s) in [PROXI format](https://github.com/HUPO-PSI/proxi-schemas).
+
+exec
+/bin/zsh -lc 'rg -n "RetentionTimeFromScanNumber|MSOrder|ReadMZData|NoPeakPicking|MaxLevel|MsLevel|Warning|NewWarning|NewError|HasMsData" ThermoRawFileParser/Writer/*.cs ThermoRawFileParser/*.cs ThermoRawFileParser/Util/*.cs' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+ThermoRawFileParser/Writer/SpectrumWriter.cs:194:                var order = (int)scanEvent.MSOrder;
+ThermoRawFileParser/Writer/SpectrumWriter.cs:354:        private protected MZData ReadMZData(IRawData rawFile, IScanEvent scanEvent, int scanNumber, bool centroid, bool charge, bool noiseData)
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:50:            if (!raw.HasMsData)
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:84:                    int level = (int)raw.GetScanEventForScanNumber(scanNumber).MSOrder; //applying MS level filter
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:85:                    if (level <= ParseInput.MaxLevel) // Primary MS level filter
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:88:                        if (scanData != null && ParseInput.MsLevel.Contains(level)) // Final MS level filter
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:97:                    ParseInput.NewError();
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:140:            var msLevel = (int)scanFilter.MSOrder;
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:166:            double rt = raw.RetentionTimeFromScanNumber(scanNumber);
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:182:            else if (msLevel == (int)MSOrderType.Nl)
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:186:            else if (msLevel == (int)MSOrderType.Ng)
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:200:                else if (msLevel == (int)MSOrderType.Par)
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:285:                mzData = ReadMZData(raw, scanEvent, scanNumber,
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:286:                    !ParseInput.NoPeakPicking.Contains((int)scanFilter.MSOrder), //requestCentroidedData
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:294:                ParseInput.NewError();
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:22:            ParseInput.MsLevel.Remove(1); // MS1 spectra are not supposed to be in MGF
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:28:            if (!rawFile.HasMsData)
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:68:                        ParseInput.NewError();
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:88:            var retentionTime = rawFile.RetentionTimeFromScanNumber(scanNumber);
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:111:            var msLevel = (int)scanFilter.MSOrder;
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:155:                    ParseInput.NewError();
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:159:            if (ParseInput.MsLevel.Contains(msLevel))
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:182:                if (reaction != null && !(msLevel == (int)MSOrderType.Nl || msLevel == (int)MSOrderType.Ng))
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:190:                            ParseInput.NoPeakPicking.Contains(msLevel - 1)) : 0;
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:213:                    mzData = ReadMZData(rawFile, scanEvent, scanNumber,
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:214:                        !ParseInput.NoPeakPicking.Contains((int)scanFilter.MSOrder), //requestCentroidedData
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:222:                    ParseInput.NewError();
+ThermoRawFileParser/ParseInput.cs:50:        public int Warnings
+ThermoRawFileParser/ParseInput.cs:85:        public HashSet<int> NoPeakPicking { get; set; }
+ThermoRawFileParser/ParseInput.cs:97:        public HashSet<int> MsLevel { get; set; }
+ThermoRawFileParser/ParseInput.cs:99:        public int MaxLevel { get; set; }
+ThermoRawFileParser/ParseInput.cs:131:            NoPeakPicking = new HashSet<int>();
+ThermoRawFileParser/ParseInput.cs:136:            MsLevel = AllLevels;
+ThermoRawFileParser/ParseInput.cs:144:            MaxLevel = 10;
+ThermoRawFileParser/ParseInput.cs:161:        public void NewError()
+ThermoRawFileParser/Writer/WriterUtil.cs:11:        public static Dictionary<MSOrderType, int> CountScanOrder(IRawDataPlus rawFile, int firstScan, int lastScan)
+ThermoRawFileParser/Writer/WriterUtil.cs:13:            var scanOrderCounts = new Dictionary<MSOrderType, int>();
+ThermoRawFileParser/Writer/WriterUtil.cs:14:            foreach (MSOrderType item in Enum.GetValuesAsUnderlyingType(typeof(MSOrderType)))
+ThermoRawFileParser/Writer/WriterUtil.cs:22:                scanOrderCounts[filter.MSOrder] += 1;
+ThermoRawFileParser/Writer/WriterUtil.cs:25:            scanOrderCounts[MSOrderType.Any] = scanOrderCounts.Values.Sum();
+ThermoRawFileParser/Writer/WriterUtil.cs:30:        public static Dictionary<MSOrderType, int> CountScanOrder(IRawDataPlus rawFile)
+ThermoRawFileParser/RawFileParser.cs:76:                    parseInput.NewError();
+ThermoRawFileParser/RawFileParser.cs:81:                    parseInput.NewError();
+ThermoRawFileParser/RawFileParser.cs:87:                    parseInput.NewError();
+ThermoRawFileParser/MainClass.cs:301:                Log.Info($"Processing completed {parameters.Errors} errors, {parameters.Warnings} warnings");
+ThermoRawFileParser/MainClass.cs:303:                exitCode = parameters.Vigilant ? parameters.Errors + parameters.Warnings : parameters.Errors;
+ThermoRawFileParser/MainClass.cs:464:                Log.Info($"Processing completed {parameters.Errors} errors, {parameters.Warnings} warnings");
+ThermoRawFileParser/MainClass.cs:466:                exitCode = parameters.Vigilant ? parameters.Errors + parameters.Warnings : parameters.Errors;
+ThermoRawFileParser/MainClass.cs:550:                    v => parseInput.NoPeakPicking = v is null ? ParseInput.AllLevels : ParseMsLevel(v)
+ThermoRawFileParser/MainClass.cs:577:                    v => parseInput.MsLevel = ParseMsLevel(v)
+ThermoRawFileParser/MainClass.cs:778:                parseInput.MaxLevel = parseInput.MsLevel.Max();
+ThermoRawFileParser/MainClass.cs:843:                Log.Info($"Processing completed {parseInput.Errors} errors, {parseInput.Warnings} warnings");
+ThermoRawFileParser/MainClass.cs:845:                exitCode = parseInput.Vigilant ? parseInput.Errors + parseInput.Warnings: parseInput.Errors;
+ThermoRawFileParser/MainClass.cs:943:        private static HashSet<int> ParseMsLevel(string inputString)
+ThermoRawFileParser/Writer/MetadataWriter.cs:28:        private Dictionary<MSOrderType, int> msLevels = new Dictionary<MSOrderType, int>();
+ThermoRawFileParser/Writer/MetadataWriter.cs:55:                    var time = rawFile.RetentionTimeFromScanNumber(scanNumber);
+ThermoRawFileParser/Writer/MetadataWriter.cs:68:                    if (scanFilter.MSOrder == MSOrderType.Ms2)
+ThermoRawFileParser/Writer/MetadataWriter.cs:173:                if (msLevels[MSOrderType.Ms] > 0)
+ThermoRawFileParser/Writer/MetadataWriter.cs:175:                        msLevels[MSOrderType.Ms].ToString()));
+ThermoRawFileParser/Writer/MetadataWriter.cs:176:                if (msLevels[MSOrderType.Ms2] > 0)
+ThermoRawFileParser/Writer/MetadataWriter.cs:178:                        msLevels[MSOrderType.Ms2].ToString()));
+ThermoRawFileParser/Writer/MetadataWriter.cs:179:                if (msLevels[MSOrderType.Ms3] > 0)
+ThermoRawFileParser/Writer/MetadataWriter.cs:181:                        msLevels[MSOrderType.Ms3].ToString()));
+ThermoRawFileParser/Writer/MetadataWriter.cs:364:                if (msLevels[MSOrderType.Ms] > 0)
+ThermoRawFileParser/Writer/MetadataWriter.cs:365:                    output.Add("Number of MS1 spectra=" + msLevels[MSOrderType.Ms]);
+ThermoRawFileParser/Writer/MetadataWriter.cs:366:                if (msLevels[MSOrderType.Ms2] > 0)
+ThermoRawFileParser/Writer/MetadataWriter.cs:367:                    output.Add("Number of MS2 spectra=" + msLevels[MSOrderType.Ms2]);
+ThermoRawFileParser/Writer/MetadataWriter.cs:368:                if (msLevels[MSOrderType.Ms3] > 0)
+ThermoRawFileParser/Writer/MetadataWriter.cs:369:                    output.Add("Number of MS3 spectra=" + msLevels[MSOrderType.Ms3]);
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:138:                if (_rawFile.HasMsData)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:141:                    //Sum all scans with MSOrder > 1
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:144:                    if (ParseInput.MsLevel.Contains(1) && scanCounts[MSOrderType.Ms] > 0)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:153:                    if(ParseInput.MsLevel.Any(n => n > 1) && nMSn > 0)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:161:                    if (scanCounts[MSOrderType.Par] > 0)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:169:                    if (scanCounts[MSOrderType.Nl] > 0)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:177:                    if (scanCounts[MSOrderType.Ng] > 0)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:281:                if (_rawFile.HasMsData)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:326:                if (_rawFile.HasMsData)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:358:                if (_rawFile.HasMsData && ParseInput.NoPeakPicking.Count < ParseInput.AllLevels.Count)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:393:                if (_rawFile.HasMsData)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:424:                            level = (int) _rawFile.GetScanEventForScanNumber(scanNumber).MSOrder; //applying MS level pre filter
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:425:                            if (level <= ParseInput.MaxLevel)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:432:                            ParseInput.NewError();
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:435:                        level = spectrum != null ? (int)_rawFile.GetScanEventForScanNumber(scanNumber).MSOrder : 0;
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:437:                        if (spectrum != null && ParseInput.MsLevel.Contains(level)) //applying final MS filter
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:506:                                ParseInput.NewError();
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:689:                        ParseInput.NewError();
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:716:            if (_rawFile.HasMsData)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:722:                foreach (var level in ParseInput.MsLevel)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:724:                    levelFilter.MSOrder = (MSOrderType)level;
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:926:            if (_rawFile.HasMsData)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1250:            var msLevel = (int)scanFilter.MSOrder;
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1365:                else if (msLevel == (int)MSOrderType.Par)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1378:                else if (msLevel == (int)MSOrderType.Nl)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1388:                else if (msLevel == (int)MSOrderType.Ng)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1433:                if (msLevel == (int)MSOrderType.Ng)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1447:                else if (msLevel == (int)MSOrderType.Nl)
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1561:                mzData = ReadMZData(_rawFile, scanEvent, scanNumber,
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1562:                    !ParseInput.NoPeakPicking.Contains((int)scanFilter.MSOrder), //requestCentroidedData
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:1570:                ParseInput.NewError();
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2364:            int msLevel = (int)scanEvent.MSOrder;
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2421:                    ParseInput.NoPeakPicking.Contains(msLevel - 1));
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2722:                    value = _rawFile.RetentionTimeFromScanNumber(scanNumber).ToString(),
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2837:                    value = _rawFile.RetentionTimeFromScanNumber(scanNumber).ToString(),
+
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/ParseInput.cs | sed -n '40,70p;150,170p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+    40	        }
+    41	        public string UserProvidedPath
+    42	        {
+    43	            get => _userProvidedFilePath;
+    44	        }
+    45	
+    46	        public int Errors
+    47	        {
+    48	            get => _errors;
+    49	        }
+    50	        public int Warnings
+    51	        {
+    52	            get => _warnings;
+    53	        }
+    54	
+    55	        /// <summary>
+    56	        /// The output directory.
+    57	        /// </summary>
+    58	        public string OutputDirectory { get; set; }
+    59	
+    60	        /// <summary>
+    61	        /// The output file.
+    62	        /// </summary>>
+    63	        public string OutputFile { get; set; }
+    64	
+    65	        /// <summary>
+    66	        /// The output format.
+    67	        /// </summary>
+    68	        public OutputFormat OutputFormat { get; set; }
+    69	
+    70	        /// <summary>
+   150	            RawFilePath = rawFilePath;
+   151	            RawDirectoryPath = rawDirectoryPath;
+   152	            OutputDirectory = outputDirectory;
+   153	            OutputFormat = outputFormat;
+   154	        }
+   155	
+   156	        public void InitializeS3Bucket()
+   157	        {
+   158	            S3Loader = new S3Loader(S3Url, S3AccessKeyId, S3SecretAccessKey, BucketName);
+   159	        }
+   160	
+   161	        public void NewError()
+   162	        {
+   163	            _errors++;
+   164	        }
+   165	
+   166	        public void NewWarn()
+   167	        {
+   168	            _warnings++;
+   169	        }
+   170	
+
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs | sed -n '78,105p;278,300p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+    78	                        }
+    79	                    }
+    80	                }
+    81	
+    82	                try
+    83	                {
+    84	                    int level = (int)raw.GetScanEventForScanNumber(scanNumber).MSOrder; //applying MS level filter
+    85	                    if (level <= ParseInput.MaxLevel) // Primary MS level filter
+    86	                    {
+    87	                        var scanData = ReadScan(raw, scanNumber);
+    88	                        if (scanData != null && ParseInput.MsLevel.Contains(level)) // Final MS level filter
+    89	                            data.AddRange(scanData);
+    90	                    }
+    91	                    
+    92	                }
+    93	                catch (Exception ex)
+    94	                {
+    95	                    Log.Error($"Scan #{scanNumber} cannot be processed because of the following exception: {ex.Message}");
+    96	                    Log.Debug($"{ex.StackTrace}\n{ex.InnerException}");
+    97	                    ParseInput.NewError();
+    98	                }
+    99	
+   100	                // If we have enough ions to write a row group, do so
+   101	                // - some row groups might have more than this number of ions
+   102	                //   but this ensures that all ions from a single scan are always
+   103	                //   present in the same row group (critical property of mzparquet)
+   104	                if (data.Count >= ParquetSliceSize)
+   105	                {
+   278	            }
+   279	
+   280	            MZData mzData;
+   281	
+   282	            // Get each mz data for scan
+   283	            try
+   284	            {
+   285	                mzData = ReadMZData(raw, scanEvent, scanNumber,
+   286	                    !ParseInput.NoPeakPicking.Contains((int)scanFilter.MSOrder), //requestCentroidedData
+   287	                    false, //requestChargeData
+   288	                    false); //requestNoiseData
+   289	            }
+   290	            catch (Exception ex)
+   291	            {
+   292	                Log.ErrorFormat("Failed reading mz data for scan #{0} due to following exception: {1}\nMZ data will be empty", scanNumber, ex.Message);
+   293	                Log.DebugFormat("{0}\n{1}", ex.StackTrace, ex.InnerException);
+   294	                ParseInput.NewError();
+   295	
+   296	                mzData = new MZData
+   297	                {
+   298	                    basePeakMass = null,
+   299	                    basePeakIntensity = null,
+   300	                    masses = Array.Empty<double>(),
+
+exec
+/bin/zsh -lc "rg -n \"ConsoleAppender|stderr|target|System.Console|RollingFile|log4net|appender\" ThermoRawFileParser -g '*.config' -g '*.xml' -g '*.cs'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+ThermoRawFileParser/RawFileParser.cs:6:using log4net;
+ThermoRawFileParser/Query/ProxiSpectrumReader.cs:7:using log4net;
+ThermoRawFileParser/Query/ProxiSpectrumReader.cs:158:                                name: "isolation window target m/z",
+ThermoRawFileParser/MainClass.cs:4:using log4net;
+ThermoRawFileParser/MainClass.cs:5:using log4net.Core;
+ThermoRawFileParser/MainClass.cs:16:[assembly: log4net.Config.XmlConfigurator()]
+ThermoRawFileParser/MainClass.cs:274:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository()).Root.Level =
+ThermoRawFileParser/MainClass.cs:276:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository())
+ThermoRawFileParser/MainClass.cs:280:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository()).Root.Level =
+ThermoRawFileParser/MainClass.cs:282:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository())
+ThermoRawFileParser/MainClass.cs:286:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository()).Root.Level =
+ThermoRawFileParser/MainClass.cs:288:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository())
+ThermoRawFileParser/MainClass.cs:292:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository()).Root.Level =
+ThermoRawFileParser/MainClass.cs:294:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository())
+ThermoRawFileParser/MainClass.cs:437:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository()).Root.Level =
+ThermoRawFileParser/MainClass.cs:439:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository())
+ThermoRawFileParser/MainClass.cs:443:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository()).Root.Level =
+ThermoRawFileParser/MainClass.cs:445:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository())
+ThermoRawFileParser/MainClass.cs:449:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository()).Root.Level =
+ThermoRawFileParser/MainClass.cs:451:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository())
+ThermoRawFileParser/MainClass.cs:455:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository()).Root.Level =
+ThermoRawFileParser/MainClass.cs:457:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository())
+ThermoRawFileParser/MainClass.cs:816:                        ((log4net.Repository.Hierarchy.Hierarchy) LogManager.GetRepository()).Root.Level =
+ThermoRawFileParser/MainClass.cs:818:                        ((log4net.Repository.Hierarchy.Hierarchy) LogManager.GetRepository())
+ThermoRawFileParser/MainClass.cs:822:                        ((log4net.Repository.Hierarchy.Hierarchy) LogManager.GetRepository()).Root.Level =
+ThermoRawFileParser/MainClass.cs:824:                        ((log4net.Repository.Hierarchy.Hierarchy) LogManager.GetRepository())
+ThermoRawFileParser/MainClass.cs:828:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository()).Root.Level =
+ThermoRawFileParser/MainClass.cs:830:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository())
+ThermoRawFileParser/MainClass.cs:834:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository()).Root.Level =
+ThermoRawFileParser/MainClass.cs:836:                        ((log4net.Repository.Hierarchy.Hierarchy)LogManager.GetRepository())
+ThermoRawFileParser/App.config:5:    <section name="log4net" type="System.Configuration.IgnoreSectionHandler" />
+ThermoRawFileParser/App.config:8:  <log4net>
+ThermoRawFileParser/App.config:11:      <appender-ref ref="console" />
+ThermoRawFileParser/App.config:12:      <!-- <appender-ref ref="file" /> -->
+ThermoRawFileParser/App.config:14:    <appender name="console" type="log4net.Appender.ConsoleAppender">
+ThermoRawFileParser/App.config:15:      <layout type="log4net.Layout.PatternLayout">
+ThermoRawFileParser/App.config:18:    </appender>
+ThermoRawFileParser/App.config:19:    <!--<appender name="file" type="log4net.Appender.RollingFileAppender">        
+ThermoRawFileParser/App.config:26:        <layout type="log4net.Layout.PatternLayout">
+ThermoRawFileParser/App.config:29:    </appender>-->
+ThermoRawFileParser/App.config:30:  </log4net>
+ThermoRawFileParser/Writer/ParquetSpectrumWriter.cs:1:using log4net;
+ThermoRawFileParser/XIC/XicExecutor.cs:7:using log4net;
+ThermoRawFileParser/XIC/XicReader.cs:6:using log4net;
+ThermoRawFileParser/Util/NativeMethods.cs:10:    /// Uses Windows API to resolve reparse point target
+ThermoRawFileParser/Util/NativeMethods.cs:13:    /// https://stackoverflow.com/questions/2302416/how-to-obtain-the-target-of-a-symbolic-link-or-reparse-point-using-net
+ThermoRawFileParser/Writer/MgfSpectrumWriter.cs:4:using log4net;
+ThermoRawFileParser/Writer/MetadataWriter.cs:7:using log4net;
+ThermoRawFileParser/Writer/SpectrumWriter.cs:1:using log4net;
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2:using log4net;
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2447:                    name = "isolation window target m/z",
+ThermoRawFileParser/Writer/MzMlSpectrumWriter.cs:2605:                        name = "isolation window target m/z",
+ThermoRawFileParser/Writer/MzML/mzML1_1_1_idx.cs:1672:        private TargetListType targetListField;
+ThermoRawFileParser/Writer/MzML/mzML1_1_1_idx.cs:1687:        public TargetListType targetList {
+ThermoRawFileParser/Writer/MzML/mzML1_1_1_idx.cs:1689:                return this.targetListField;
+ThermoRawFileParser/Writer/MzML/mzML1_1_1_idx.cs:1692:                this.targetListField = value;
+ThermoRawFileParser/Writer/MzML/mzML1_1_1_idx.cs:1773:        private ParamGroupType[] targetField;
+ThermoRawFileParser/Writer/MzML/mzML1_1_1_idx.cs:1778:        [System.Xml.Serialization.XmlElementAttribute("target")]
+ThermoRawFileParser/Writer/MzML/mzML1_1_1_idx.cs:1779:        public ParamGroupType[] target {
+ThermoRawFileParser/Writer/MzML/mzML1_1_1_idx.cs:1781:                return this.targetField;
+ThermoRawFileParser/Writer/MzML/mzML1_1_1_idx.cs:1784:                this.targetField = value;
+
+exec
+/bin/zsh -lc 'rg -n "ulong|uint64|UInt64|spectrum_index|spectrum.index|index:ulong|Zstd|CompressionMethod|DataField<" .planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md refs/_findings/mzpeak_groundtruth_schema.md' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+refs/_findings/mzpeak_groundtruth_schema.md:6:## Archive layout (uncompressed ZIP, `CompressionMethod::Stored`)
+refs/_findings/mzpeak_groundtruth_schema.md:21:point: struct<spectrum_index: uint64, mz: double, intensity: float>
+refs/_findings/mzpeak_groundtruth_schema.md:29:point: struct<chromatogram_index: uint64, time: double, intensity: float, ms_level: int64>
+refs/_findings/mzpeak_groundtruth_schema.md:39:index: uint64
+refs/_findings/mzpeak_groundtruth_schema.md:48:MS_1003060_number_of_data_points: uint64
+refs/_findings/mzpeak_groundtruth_schema.md:49:MS_1003059_number_of_peaks: uint64
+refs/_findings/mzpeak_groundtruth_schema.md:62:source_index: uint64
+refs/_findings/mzpeak_groundtruth_schema.md:63:scan_index: uint64
+refs/_findings/mzpeak_groundtruth_schema.md:81:source_index: uint64
+refs/_findings/mzpeak_groundtruth_schema.md:82:precursor_index: uint64
+refs/_findings/mzpeak_groundtruth_schema.md:94:source_index: uint64
+refs/_findings/mzpeak_groundtruth_schema.md:95:precursor_index: uint64
+refs/_findings/mzpeak_groundtruth_schema.md:109:    MS_1003060_number_of_data_points:uint64, parameters, auxiliary_arrays,
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:31:**Primary recommendation:** Use `ParquetWriter.CreateAsync` + `StructField`/`ListField`/`DataField<T>`
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:33:set `writer.CompressionMethod = CompressionMethod.Zstd` and `writer.CustomMetadata`; emit plain
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:67:Parquet.Schema.DataField<T>(string name, bool? nullable = null)
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:71:  ParquetWriter.CompressionMethod { get; set; }         // enum, settable
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:75:Parquet.CompressionMethod = { None, Snappy, Gzip, Lzo, Brotli, LZ4, Zstd, Lz4Raw }
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:90:spectrum: struct<index: uint64, mz_range: struct<lo,hi>, parameters: list<struct<name:string, val:double>>>
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:91:scan:     struct<source_index: uint64, rt: float>
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:104:    new DataField<double>("lo"),
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:105:    new DataField<double>("hi"));
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:111:    new DataField<string>("name"),
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:112:    new DataField<double?>("val"));
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:119:    new DataField<ulong>("index"), mzStruct, paramsList);
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:121:    new DataField<ulong>("source_index"), new DataField<float>("rt"));
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:142:spectrum/index                         maxDef=1  maxRep=0   (1=spectrum present)
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:151:writer.CompressionMethod = CompressionMethod.Zstd;
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:162:// spectrum.index present on rows 0,2 (def=1), absent on row1 (def=0):
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:163:await rg.WriteColumnAsync(new DataColumn(F("spectrum/index"),
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:164:    new ulong[]{10, 11}, new int[]{1,0,1}, null));         // rep=null for non-repeated leaves
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:174:    new ulong[]{10}, new int[]{0,1,0}, null));
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:190:**ZSTD:** [VERIFIED: spike round-trip] `Parquet.CompressionMethod.Zstd` exists and works.
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:191:Set `writer.CompressionMethod = CompressionMethod.Zstd;` before creating the row group. pyarrow
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:275:  (`path_in_schema == "spectrum.index"`). [VERIFIED]
+.planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md:423:   schema: point<spectrum_index,mz,intensity>            schema: spectrum<index,id,ms_level,time,
+
+exec
+/bin/zsh -lc 'rg -n "ParquetSchema|DataField<ulong>|DataField<|UInt64|uint64" -S . ThermoRawFileParser | head -120' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+./refs/_findings/mzpeak_mapping_report.md:39:| `spectrum_index` | uint64 | — | Ordinal spectrum position (0-based) |
+./refs/_findings/mzpeak_mapping_report.md:68:| `spectrum_index` | uint64 | — | Reference to spectrum in metadata |
+./refs/_findings/mzpeak_mapping_report.md:85:| `spectrum_index` | uint64 | — |
+./refs/_findings/mzpeak_mapping_report.md:100:| `chromatogram_index` | uint64 | Ordinal chromatogram position |
+./refs/_findings/mzpeak_mapping_report.md:110:| `chromatogram_index` | uint64 | — |
+./refs/_findings/mzpeak_groundtruth_schema.md:21:point: struct<spectrum_index: uint64, mz: double, intensity: float>
+./refs/_findings/mzpeak_groundtruth_schema.md:29:point: struct<chromatogram_index: uint64, time: double, intensity: float, ms_level: int64>
+./refs/_findings/mzpeak_groundtruth_schema.md:39:index: uint64
+./refs/_findings/mzpeak_groundtruth_schema.md:48:MS_1003060_number_of_data_points: uint64
+./refs/_findings/mzpeak_groundtruth_schema.md:49:MS_1003059_number_of_peaks: uint64
+./refs/_findings/mzpeak_groundtruth_schema.md:62:source_index: uint64
+./refs/_findings/mzpeak_groundtruth_schema.md:63:scan_index: uint64
+./refs/_findings/mzpeak_groundtruth_schema.md:81:source_index: uint64
+./refs/_findings/mzpeak_groundtruth_schema.md:82:precursor_index: uint64
+./refs/_findings/mzpeak_groundtruth_schema.md:94:source_index: uint64
+./refs/_findings/mzpeak_groundtruth_schema.md:95:precursor_index: uint64
+./refs/_findings/mzpeak_groundtruth_schema.md:109:    MS_1003060_number_of_data_points:uint64, parameters, auxiliary_arrays,
+./refs/_findings/mzpeak_groundtruth_schema.md:141:  low-level Parquet.Net schema/column API (`ParquetSchema`, `DataColumn`, struct/list fields),
+
+exec
+/bin/zsh -lc "nl -ba .planning/phases/01-walking-skeleton-cli-wiring-parquet-zip-foundation/RESEARCH.md | sed -n '248,286p;414,432p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+   248	
+   249	## Unknown 4 — mzpeak_index.json minimum — DECISION: 2 file entries, empty metadata block
+   250	
+   251	[VERIFIED: schema/mzpeak_index.json requires only `files` + `metadata`; reader `_from_zip_archive`
+   252	keys on `entity_type`/`data_kind`; OPEN succeeded with the JSON below]
+   253	
+   254	The JSON schema (`refs/mzPeak/schema/mzpeak_index.json`) requires exactly two top-level keys:
+   255	`files` (array) and `metadata` (object, `additionalProperties: true` → **may be `{}`**). Each file
+   256	entry needs `name`, `entity_type`, `data_kind`. The reader matches on the `(EntityType, DataKind)`
+   257	tuple to decide which facet reader to construct (`reader.py` `_from_zip_archive` / `file_index.py`).
+   258	
+   259	**Minimal index for OPEN** (the metadata block may be empty for the skeleton):
+   260	```json
+   261	{
+   262	  "files": [
+   263	    { "name": "spectra_data.parquet",     "entity_type": "spectrum", "data_kind": "data arrays" },
+   264	    { "name": "spectra_metadata.parquet", "entity_type": "spectrum", "data_kind": "metadata" }
+   265	  ],
+   266	  "metadata": {}
+   267	}
+   268	```
+   269	
+   270	**Reader OPEN actually requires** (beyond the index file itself):
+   271	- `mzpeak_index.json` MUST exist in the zip, else `FileNotFoundError` (reader `_from_zip_archive`).
+   272	- A `(spectrum, metadata)` facet — the reader builds `MzPeakSpectrumMetadataReader`, which reads
+   273	  KV-metadata keys `spectrum_count` and `spectrum_data_point_count` from that Parquet (both required,
+   274	  else `IndexError`/`KeyError`). The `spectrum` struct must have an `index` leaf
+   275	  (`path_in_schema == "spectrum.index"`). [VERIFIED]
+   276	- A `(spectrum, data arrays)` facet — builds `MzPeakArrayDataReader`, which reads the
+   277	  `spectrum_array_index` KV-metadata JSON (`{"prefix":"point","entries":[...]}`) and `spectrum_count`.
+   278	  [VERIFIED: spike supplied this and OPEN passed]
+   279	- Valid `entity_type`/`data_kind` strings: `spectrum`/`chromatogram` and
+   280	  `data arrays`/`metadata`/`peaks` (exact lowercase strings) [VERIFIED: file_index.py StrEnums].
+   281	
+   282	> Insight: only **list the facets you actually write**. Listing a facet in `files[]` that doesn't
+   283	> exist (or lacks its required KV keys) makes the reader try to construct that facet reader and fail.
+   284	> For the skeleton, write exactly the two facets above and list exactly those two.
+   285	
+   286	**KV metadata keys the reader needs** (set via `writer.CustomMetadata`):
+   414	```
+   415	RAW file ──(TRFP RawFileReader)──> SpectrumWriter.ReadScan/ReadMZData (existing, reused)
+   416	                                          │ first/placeholder spectrum points
+   417	                                          ▼
+   418	                         MzPeakSpectrumWriter.Write()
+   419	                                          │
+   420	            ┌─────────────────────────────┴─────────────────────────────┐
+   421	            ▼                                                             ▼
+   422	   build spectra_data.parquet (MemoryStream)              build spectra_metadata.parquet (MemoryStream)
+   423	   schema: point<spectrum_index,mz,intensity>            schema: spectrum<index,id,ms_level,time,
+   424	   KV: spectrum_count, spectrum_data_point_count,                 number_of_data_points, TIC, parameters>
+   425	       spectrum_array_index                              KV: spectrum_count, spectrum_data_point_count
+   426	   ZSTD                                                  ZSTD
+   427	            └─────────────────────────────┬─────────────────────────────┘
+   428	                                          ▼
+   429	                 ZipArchive (STORED) <── mzpeak_index.json + both parquet byte[]
+   430	                                          ▼
+   431	                                  <rawname>.mzpeak
+   432	                                          ▼
+
+exec
+/bin/zsh -lc "nl -ba refs/_findings/mzpeak_groundtruth_schema.md | sed -n '34,58p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+    34	Four independent TOP-LEVEL struct columns in one file. Each row populates exactly one;
+    35	the others are null. (`scan`/`precursor`/`selected_ion` reference back via `source_index`.)
+    36	
+    37	### spectrum
+    38	```
+    39	index: uint64
+    40	id: large_string
+    41	MS_1000511_ms_level: uint8
+    42	time: double
+    43	MS_1000465_scan_polarity: int8
+    44	MS_1000525_spectrum_representation: string   (CURIE: MS:1000127 centroid / MS:1000128 profile)
+    45	MS_1000559_spectrum_type: string             (CURIE: MS:1000579 MS1 / MS:1000580 MSn)
+    46	MS_1000528_lowest_observed_mz_unit_MS_1000040: double
+    47	MS_1000527_highest_observed_mz_unit_MS_1000040: double
+    48	MS_1003060_number_of_data_points: uint64
+    49	MS_1003059_number_of_peaks: uint64
+    50	MS_1000504_base_peak_mz_unit_MS_1000040: double
+    51	MS_1000505_base_peak_intensity_unit_MS_1000131: float
+    52	MS_1000285_total_ion_current_unit_MS_1000131: float
+    53	data_processing_ref: large_string
+    54	parameters: large_list<PARAM>
+    55	auxiliary_arrays: large_list<AUX_ARRAY>
+    56	number_of_auxiliary_arrays: uint32
+    57	mz_delta_model: large_list<double>
+    58	```
+
+codex
+One mechanical concern has emerged in the revised verify command itself rather than the implementation design. I’m checking whether it is an actual failing shell/Python fragment or just awkward.
+codex
+The sandbox blocks here-doc temp files, so I’m switching to direct `python -c` snippets for the verify-command check.
+exec
+/bin/zsh -lc "python3 -c \"[exec('print(n)') for n in ('a','b')]\"" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+a
+b
+
+exec
+/bin/zsh -lc "python3 -c \"[exec('assert True, n') for n in ('a','b')]; print('ok')\"" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+ok
+
+exec
+/bin/zsh -lc "python3 -c \"import sys;\\ntry:\\n [exec('assert False, n') for n in ('a','b')]\\nexcept Exception as e:\\n print(type(e).__name__, e)\"" in /Users/kohlbach/Claude/mzPeak4TRFR
+ exited 1 in 0ms:
+  File "<string>", line 1
+    import sys;\ntry:\n [exec('assert False, n') for n in ('a','b')]\nexcept Exception as e:\n print(type(e).__name__, e)
+                                                                                                                        ^
+SyntaxError: unexpected character after line continuation character
+
+codex
+Plan refs are `01-01-PLAN.md`.
+
+- F1 RESOLVED — public helper/struct required at lines 198-200.
+- F2 RESOLVED — DataField identity, no path splitting at 106-111 and 218-220.
+- F3 RESOLVED — net8 ref-pack vs roll-forward clarified at 293-305.
+- F4 RESOLVED — `ZipArchive(... leaveOpen: true)` and dispose-before-flush at 276-281.
+- F5 RESOLVED — selects first real point-bearing scan; no fabrication at 241-251.
+- F6 RESOLVED — no points throws `RawFileParserException`, no archive at 249-250.
+- F7 RESOLVED — metadata facet count set to `"0"` at 264-268.
+- F8 RESOLVED — gate asserts both Parquet entries are ZSTD at 286.
+- F9 NOT-RESOLVED — concrete field list still says `string`, not `string?`, for nullable PARAM fields at 199-202.
+- F10 RESOLVED — named `Column(...)` helper + def/rep lock at 186-188, 211-214.
+- F11 RESOLVED — pre-normalized label contract at 206-210.
+- F12 RESOLVED — README help update required at 150-151.
+- F13 RESOLVED — verify greps `"4 for mzPeak"` in MainClass and README at 169.
+- F14 NOT-RESOLVED — verify checks RC/no `ERROR`, but still does not assert `0 warnings`; warning claim remains prose at 286, 288, 338.
+- F15 RESOLVED — exact `spectrum_array_index` JSON is inlined at 257-263.
+
+NEW issues:
+- `files_modified` omits `ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs` despite Task 2 creating it, lines 7-15 vs 177-178.
+- Task 3 redirects only stderr to `run.log`; log4net console output is stdout by default, so the no-`ERROR` grep can miss emitted log lines, line 286.
+
+VERDICT: SHIP-WITH-FIXES.
+tokens used
+37.343
