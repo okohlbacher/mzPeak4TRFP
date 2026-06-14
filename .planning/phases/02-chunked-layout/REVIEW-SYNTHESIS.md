@@ -1,0 +1,13 @@
+# v2 Phase 2 plan review synthesis (plan gate)
+
+codex = REWORK (1 BLOCKER, 2 HIGH, 1 MEDIUM). vibe = unavailable (broken this session; codex carries).
+
+| # | Sev | Finding | Resolution |
+|---|-----|---------|------------|
+| P1 | BLOCKER | The reference `refs/mzPeak/small.chunked.mzpeak` `chromatograms_data` is **chunk** layout (time_chunk_start/end/values, chunk_encoding=MS:1003089, intensity, ms_level) — NOT point. The plan/CONTEXT/RESEARCH wrongly claim "the reference keeps chromatograms point" | **Decision: Phase 2 keeps `chromatograms_data` POINT as an EXPLICIT, documented deviation** (validator has no chromatogram structural rule; the TIC is tiny so chunking yields negligible size benefit). REMOVE the false "reference keeps it point" claim everywhere; state it as a deliberate scope choice. **Add chromatogram chunking to Phase 5 scope** (or a tracked follow-up) for full structural parity. Phase 2 chunks ONLY `spectra_data`. |
+| P2 | HIGH | The "EXACT lossless" lock rounds m/z to 6 decimals → can pass with sub-ppm/ULP drift while claiming exact v1 multiset. f64 delta encode+sum is not generally bit-exact | Test the chunked-vs-`--point` multiset with **bitwise** keys (`BitConverter.DoubleToInt64Bits`) — exact. The executor EMPIRICALLY determines whether delta-f64 round-trips bit-exactly on real Thermo m/z: if YES, claim exact (CHUNK-06 holds, L1). If NO, set a documented tight tolerance, reframe delta mode as bounded/sub-ULP (still spec-lossless), and record it. No 6-dp rounding that hides drift. Intensity is not delta-encoded → must be exact. |
+| P3 | HIGH | The schema diff doesn't lock the `spectrum_array_index` footer (CHUNK-04 depends on buffer formats/transforms/sorting_rank); validator too lax to be the only guard | Add an automated footer test: parse `spectra_data.parquet` custom metadata, assert prefix `chunk`, the exact chunk buffer-format entries, the transform CURIEs (MS:1003901/MS:1003902 per RESEARCH — verify vs the reference footer), m/z `sorting_rank:0`, AND that `--point` mode retains the v1 point array_index. |
+| P4 | MED | Codec/chunker edge cases named in the threat model but untested: empty spectrum, descending-m/z guard, all-equal-m/z chunk, sparse boundary singleton, and the reference's null-decode cases `[None, absolute, delta]` / `[None, None]` | Define exact behavior for empty/all-equal/non-monotonic input, then add unit tests for those + the reference leading-null decode examples (even though Phase 2 produces no nulls, the DECODER must handle them to read reference files / Phase-4 output). |
+
+P1 (scope honesty) and P2 (real losslessness definition) are load-bearing. After revision, recommend a codex
+confirm on the bitwise-lossless decision + footer lock before execution.
