@@ -1,0 +1,24 @@
+corpus pairs: 97  already done: 21  to run: 76  workers=2 timeout=1800s
+[1/76] DIFF            73.05MB 2013_30_Amrutha_050713_1.raw  (4.2s) exact=1.0 refContained=1.0 spectra=18318
+[2/76] DIFF            69.94MB QC_Shew_12_02_Run-11_8Dec12_Lion_12-10-03.RAW  (4.1s) exact=1.0 refContained=1.0 spectra=12940
+[3/76] PASS           131.12MB t04175_EH_Malaria_WT_PK7_KO_Phos_SCX1.RAW  (4.6s) exact=1.0 refContained=1.0 spectra=22287
+[4/76] PASS           131.67MB t04177_EH_Malaria_WT_PK7_KO_Phos_SCX3.RAW  (4.2s) exact=1.0 refContained=1.0 spectra=20847
+[5/76] PASS           139.24MB t04176_EH_Malaria_WT_PK7_KO_Phos_SCX2.RAW  (4.8s) exact=1.0 refContained=1.0 spectra=18696
+[6/76] PASS           141.51MB t04178_EH_Malaria_WT_PK7_KO_Phos_SCX4.RAW  (4.7s) exact=1.0 refContained=1.0 spectra=21121
+[7/76] PASS           147.03MB t04184_EH_Malaria_WT_PK7_KO_Phos_SCX9.RAW  (5.0s) exact=1.0 refContained=1.0 spectra=21284
+[8/76] PASS           147.99MB t04179_EH_Malaria_WT_PK7_KO_Phos_SCX5.RAW  (4.8s) exact=1.0 refContained=1.0 spectra=19848
+[9/76] PASS           159.28MB t04182_EH_Malaria_WT_PK7_KO_Phos_SCX7.RAW  (5.4s) exact=1.0 refContained=1.0 spectra=22345
+[10/76] PASS           160.15MB t04183_EH_Malaria_WT_PK7_KO_Phos_SCX8.RAW  (5.0s) exact=1.0 refContained=1.0 spectra=19953
+[11/76] PASS           164.63MB t04181_EH_Malaria_WT_PK7_KO_Phos_SCX6.RAW  (5.1s) exact=1.0 refContained=1.0 spectra=19347
+[12/76] PASS           227.77MB t04185_EH_Malaria_WT_PK7_KO_Phos_SCX10.RAW  (6.6s) exact=1.0 refContained=1.0 spectra=23255
+[13/76] CONVERT_FAIL   437.86MB S4_5foldGHRP.raw  (0.7s)
+[14/76] DIFF           231.88MB mtab_BIOS_CRAM1620_1_072617_34.RAW  (10.4s) exact=0.0018 refContained=0.7834 spectra=4880
+[15/76] COMPARE_ERROR  516.02MB 20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_TiO2_Fr9.raw  (29.0s) exact=None refContained=None spectra=None
+[16/76] COMPARE_ERROR  533.13MB 20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_TiO2_Fr7.raw  (29.8s) exact=None refContained=None spectra=None
+[17/76] COMPARE_ERROR  543.03MB MFA381.raw  (26.5s) exact=None refContained=None spectra=None
+[18/76] COMPARE_ERROR  548.91MB MFA380.raw  (25.6s) exact=None refContained=None spectra=None
+[19/76] COMPARE_ERROR  551.98MB MFA382.raw  (25.6s) exact=None refContained=None spectra=None
+[20/76] COMPARE_ERROR  483.17MB 20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_TiO2_Fr2.raw  (25.2s) exact=None refContained=None spectra=None
+[21/76] COMPARE_ERROR  568.26MB MFA390.raw  (27.1s) exact=None refContained=None spectra=None
+[22/76] COMPARE_ERROR  577.69MB MFA389.raw  (28.5s) exact=None refContained=None spectra=None
+[23/76] COMPARE_ERROR  579.88MB MFA386.raw  (27.5s) exact=None refContained=None spectra=None

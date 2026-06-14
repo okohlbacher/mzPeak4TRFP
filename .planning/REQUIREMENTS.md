@@ -1,98 +1,95 @@
-# Requirements: mzPeak Writer for ThermoRawFileParser
+# Requirements: mzPeak Writer for ThermoRawFileParser — v2 ("compression, fidelity & scale")
 
 **Defined:** 2026-06-14
-**Core Value:** Produce a spec-valid mzPeak archive readable by the reference readers, straight from Thermo RAW, without losing spectral information.
+**Builds on:** v1 (point-layout writer, certified; archived under `.planning/archive/v1-point-layout/`).
+**Core Value:** Smaller, reference-structured mzPeak output (chunked + Numpress) that scales to multi-GB
+RAW files and is robust to imperfect scans — without regressing v1 conformance.
 
-## v1 Requirements
+## Milestone decisions (locked)
 
-### CLI Integration
-
-- [x] **CLI-01**: `MzPeak` added to `OutputFormat` enum and selectable via `-f mzpeak` / `--format mzpeak`
-- [x] **CLI-02**: `--format` help text lists mzPeak; output filename gets `.mzpeak` extension
-- [x] **CLI-03**: `RawFileParser` dispatch instantiates `MzPeakSpectrumWriter` for the new format
-
-### Parquet Foundation
-
-- [x] **PQ-01**: Write a Parquet file with nested structs + lists-of-structs using Parquet.Net (spike-validated approach)
-- [x] **PQ-02**: Reusable helpers to build the repeated `PARAM` value-struct and CV-accession-named columns
-- [x] **PQ-03**: Per-Parquet ZSTD compression; assemble facets into a STORED (uncompressed) ZIP archive
-
-### Spectra Data
-
-- [ ] **DATA-01**: `spectra_data.parquet` in point layout `struct<spectrum_index:u64, mz:f64, intensity:f32>`
-- [ ] **DATA-02**: m/z coerced to float64, intensity to float32; m/z sorted ascending per spectrum (multiset preserved)
-- [ ] **DATA-03**: Centroid peaks written to `spectra_peaks.parquet` when a centroid representation exists
-- [ ] **DATA-04**: MS-level / scan-range filtering honored (reuse `ParseInput` filters)
-
-### Spectra Metadata (packed parallel tables)
-
-- [x] **META-01**: `spectrum` struct rows — index, id, ms_level, time, polarity, representation, type, observed m/z range, counts, base peak, TIC
-- [x] **META-02**: `scan` struct rows — scan_start_time (minutes), filter_string, ion_injection_time, instrument_configuration_ref, scan_windows
-- [x] **META-03**: `precursor` struct rows — isolation window (target/lower/upper offsets) + activation params
-- [x] **META-04**: `selected_ion` struct rows — selected ion m/z, charge state, intensity
-- [x] **META-05**: CV terms encoded as CURIEs via the established mzML-CV→mzPeak mapping table
-
-### File-Level Metadata & Index
-
-- [x] **IDX-01**: `mzpeak_index.json` lists all present facets (`files[]`) with entity_type/data_kind
-- [x] **IDX-02**: `metadata{}` block with instrument_configuration_list (ionsource/analyzer/detector + CV params) from Thermo instrument info via `OntologyMapping`
-- [x] **IDX-03**: software_list (TRFP entry) and data_processing_method_list (conversion + any narrowing/sort provenance)
-- [x] **IDX-04**: file_description (source RAW file, contents params) and cv_list (MS, UO)
-
-### Chromatograms
-
-- [ ] **CHROM-01**: `chromatograms_data.parquet` point layout `struct<chromatogram_index:u64, time:f64, intensity:f32, ms_level:i64>` with the TIC
-- [ ] **CHROM-02**: `chromatograms_metadata.parquet` with the chromatogram struct (type=TIC CURIE, polarity, point count)
-
-### Conformance & Verification
-
-- [ ] **VER-01**: `mzpeak-validate <out>.mzpeak` exits 0 (no error-level findings) against profile mzpeak-0.9 — the authoritative conformance gate
-- [ ] **VER-02**: Differential equivalence vs `mzML2mzPeak`: same RAW via `RAW→(TRFP mzML)→(mzML2mzPeak)→mzpeak` matches our direct `RAW→mzpeak` on spectrum count, per-spectrum peak counts, (m/z,intensity) multiset (f32 tol), ms_level, polarity, RT, precursor m/z/charge, TIC
-- [ ] **VER-03**: NUnit test converts `ThermoRawFileParserTest/Data/small.RAW` to mzPeak and asserts archive structure + invokes `mzpeak-validate` (skip-with-warning if absent)
-- [ ] **VER-04**: L1/L2 round-trip — read our `.mzpeak` back and confirm m/z value-equal (L1) and intensity bounded-equal under the recorded f32-narrowing transform (L2), mirroring mzML2mzPeak's conformance framing
+- **New defaults:** output is **chunked layout + Numpress-linear m/z** (lossy m/z, transform recorded).
+  `--point` restores v1 point layout; `--lossless` / `--no-numpress` keeps chunked but lossless (delta).
+- **Scope:** format features **and** operational hardening (streaming + per-scan robustness).
+- **Non-negotiable:** every mode still passes `mzpeak-validate`; lossless modes preserve the v1
+  (m/z, intensity) multiset exactly; lossy (Numpress) modes are bounded under the recorded transform (L2).
 
 ## v2 Requirements
 
-### Optimizations
+### Streaming writer (operational foundation)
 
-- **OPT-01**: Chunked layout with delta-encoded m/z chunks
-- **OPT-02**: Numpress (SLOF/linear) intensity/m/z compression
-- **OPT-03**: Null-marking / zero-run stripping for profile data
-- **OPT-04**: Ion-mobility (FAIMS) value + type columns populated
-- **OPT-05**: Profile + centroid dual emission (`spectra_data` profile, `spectra_peaks` centroid) for the same scan
+- [ ] **MEM-01**: Writer streams spectra and flushes Parquet in bounded row groups (configurable cap on rows/bytes) — constant memory, not full-facet accumulation
+- [ ] **MEM-02**: Multi-GB RAW (e.g. the ~1 GB Orbitrap and 9 GB Astral corpus files) convert without OOM, output validates
+- [ ] **MEM-03**: STORED-zip assembly streams facet bytes (no whole-archive-in-memory) so peak memory is independent of run size
 
-## Out of Scope
+### Per-scan robustness
+
+- [ ] **ROB-01**: A single scan read failure (e.g. "Cannot get scan event for N") is logged + counted and SKIPPED; conversion continues (mirrors `MzMlSpectrumWriter`), never aborts the whole archive
+- [ ] **ROB-02**: A run with skipped scans still emits a valid archive of the good scans, with facet/metadata spectrum sets consistent (skipped scans absent from all facets, ordinals dense)
+
+### Chunked layout
+
+- [ ] **CHUNK-01**: `spectra_data` (and `spectra_peaks`) emitted as the chunk struct matching the reference: `chunk<spectrum_index:u64, mz_chunk_start:f64, mz_chunk_end:f64, mz_chunk_values:list<f64>, chunk_encoding:string, intensity:list<f32>, mz_numpress_linear_bytes:list<u8>>`
+- [ ] **CHUNK-02**: Chunking = fixed m/z window over the sorted m/z axis (default 50 m/z, configurable); one chunk row per non-empty window per spectrum; `mz_chunk_start`/`end` bound the window
+- [ ] **CHUNK-03**: `mz_chunk_values` delta-encoded with `chunk_encoding="delta"` (lossless) when Numpress is off
+- [ ] **CHUNK-04**: `spectrum_array_index` describes chunk buffer formats (chunk_start/end/values/encoding) + `sorting_rank:0`; cv_list stays exhaustive
+- [ ] **CHUNK-05**: `--point` flag restores the v1 point layout; chunked is the new default
+- [ ] **CHUNK-06**: Chunked output passes `mzpeak-validate` and round-trips the (m/z, intensity) multiset exactly in lossless mode
+
+### Numpress-linear m/z
+
+- [ ] **NP-01**: C# Numpress-linear encode (and decode for tests) — vendored/ported MSNumpress, no x64-only deps
+- [ ] **NP-02**: m/z encoded into `mz_numpress_linear_bytes` with `chunk_encoding` set accordingly; transform CURIE **MS:1003089** recorded in `spectrum_array_index` AND a `data_processing` step
+- [ ] **NP-03**: Numpress ON by default; `--no-numpress` / `--lossless` produces delta chunks instead; lossy-m/z noted in `data_processing` + a CLI warning
+- [ ] **NP-04**: L2 conformance — decoded m/z within the Numpress-linear bound vs source; intensity stays lossless f32
+
+### Null-marking / zero-run stripping (profile data)
+
+- [ ] **ZRS-01**: Zero-run stripping — interior runs of zero-intensity profile points removed (flanking zeros kept); peak apex/centroid unaffected
+- [ ] **ZRS-02**: Null-marking — flanking zeros replaced with null m/z+intensity; per-spectrum δmz model (β0+β1·mz+β2·mz², weighted least squares) stored in `spectrum.mz_delta_model` for reconstruction
+- [ ] **ZRS-03**: Flag-controlled; reconstruction verified near-lossless (peak shape preserved within tolerance); only applied to profile spectra
+- [ ] **ZRS-04**: Centroid facets (`spectra_peaks`) untouched by stripping/marking
+
+### Ion-mobility values
+
+- [ ] **IM-01**: Populate `scan.ion_mobility_value` + `ion_mobility_type` from the Thermo FAIMS scan-trailer (`FAIMS CV` / `FAIMS Voltage On`), CV term MS:1001581 (FAIMS compensation voltage)
+- [ ] **IM-02**: `selected_ion` ion-mobility populated where applicable; spectra without FAIMS leave the columns null (as today)
+
+### CLI & docs
+
+- [ ] **CLI2-01**: New flags — `--point`, `--no-numpress`/`--lossless`, chunk-size, null-marking toggle — documented in `--format` help + `RUNNING.md`; sensible defaults (chunked+numpress)
+- [ ] **CLI2-02**: Provenance: chosen encodings recorded in `data_processing_method_list` so the output self-describes its transforms
+
+### Conformance & corpus re-verification
+
+- [ ] **VER2-01**: All modes (default chunked+numpress, `--lossless`, `--point`) pass `mzpeak-validate` (0 errors)
+- [ ] **VER2-02**: E2E corpus differential re-run — with chunk+numpress matching the reference structure, exact-match rate rises materially vs v1; report per-file deltas
+- [ ] **VER2-03**: L1 (lossless modes) / L2 (numpress) conformance locked by NUnit tests, native arm64
+- [ ] **VER2-04**: Comparator hardened for large facets (the v1-sweep `COMPARE_ERROR`s) so the full 97-pair corpus completes
+- [ ] **VER2-05**: Multi-GB corpus files (Astral 9 GB, ~1 GB Orbitrap) convert + validate end-to-end
+
+## Out of Scope (v2)
 
 | Feature | Reason |
 |---------|--------|
-| imzML / imaging spatial extension | Not applicable to Thermo LC-MS; reference imaging path ignored |
-| mzPeak → RAW/mzML reverse conversion | TRFP is one-directional |
-| Cloud/S3 streaming output | Existing TRFP S3 path not in scope for the prototype |
-| Full data-transform provenance graph | Minimal provenance only for v1 |
+| imzML / imaging spatial extension | Not applicable to Thermo LC-MS |
+| mzPeak → RAW/mzML reverse conversion | TRFP one-directional |
+| Numpress for intensity (SLOF/pic) | m/z Numpress is the size win; intensity stays lossless f32 unless a later need arises |
+| Richer mzLib MGF validation | Backlog BL-01 (mzLib x64-only) |
 
-## Traceability
+## Traceability (to be finalized by the roadmap)
 
-| Requirement | Phase | Status |
-|-------------|-------|--------|
-| CLI-01..03 | Phase 1 | Pending |
-| PQ-01..03 | Phase 1 | Pending |
-| DATA-01..04 | Phase 2 | Pending |
-| META-01..05 | Phase 3 | Pending |
-| IDX-01..04 | Phase 3 | Pending |
-| CHROM-01..02 | Phase 4 | Pending |
-| VER-01..04 | Phase 4 | Pending |
+| Requirement group | Phase |
+|---|---|
+| MEM-*, ROB-* | Phase 1 (streaming + robustness foundation) |
+| CHUNK-* | Phase 2 (chunked layout) |
+| NP-* | Phase 3 (Numpress) |
+| ZRS-*, IM-* | Phase 4 (profile compaction + ion mobility) |
+| CLI2-*, VER2-* | Phase 5 (CLI/docs + conformance & corpus re-verify) |
 
-**Coverage:**
+## Testing tools (unchanged from v1)
 
-- v1 requirements: 25 total
-- Mapped to phases: 25
-- Unmapped: 0
-
-## Testing tools (alignment)
-
-- **`~/Claude/mzPeakValidator`** — `mzpeak-validate <archive>` conformance oracle (profile mzpeak-0.9, exit 0/1/2, `--json`). The per-phase certification gate and VER-01.
-- **`~/Claude/mzML2mzPeak`** — reference converter + 523-file `.mzpeak` corpus + L1/L2 conformance tests. Source of the differential equivalence baseline (VER-02) and the corpus sweep model (`validate_everything.py`).
+- **`~/Claude/mzPeakValidator`** — `mzpeak-validate` conformance oracle (the gate, VER2-01).
+- **`~/Claude/mzML2mzPeak`** — reference converter + corpus; the E2E harness in `tools/e2e/` (VER2-02/04).
 
 ---
-*Requirements defined: 2026-06-14*
-*Last updated: 2026-06-14 after initialization*
+*Requirements defined: 2026-06-14 (v2)*

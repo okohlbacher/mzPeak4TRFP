@@ -26,23 +26,30 @@ from Thermo RAW.
 - ✓ Parquet.Net v5.0.1 dependency + a flat-schema `ParquetSpectrumWriter` reference — existing
 - ✓ CV/ontology dictionaries (`OntologyMapping`) for instrument/analyzer/ionization/dissociation terms — existing
 
-### Active
+### Validated (v1 — shipped & certified 2026-06-14, archived under `.planning/archive/v1-point-layout/`)
 
-- [ ] Emit a valid mzPeak ZIP archive (`mzpeak_index.json` + spectra/chromatogram Parquet facets)
-- [ ] Point-layout spectra data (`spectrum_index:u64, mz:f64, intensity:f32`), m/z sorted ascending
-- [ ] Packed-parallel-table spectra metadata (spectrum / scan / precursor / selected_ion structs)
-- [ ] File-level metadata block (file_description, instrument_configuration, software, data_processing) via CV mappings
-- [ ] TIC chromatogram facet
-- [ ] `--format mzpeak` wired through CLI dispatch
-- [ ] Round-trip validation against the reference Python/Rust mzPeak reader
+- ✓ `--format mzpeak` end-to-end; valid mzPeak ZIP (index + spectra/chromatogram Parquet facets) — v1
+- ✓ Point-layout `spectra_data`/`spectra_peaks` (dual representation), m/z sorted, canonical widths — v1
+- ✓ Packed-parallel-table `spectra_metadata` (spectrum/scan/precursor/selected_ion) + file-level metadata/index — v1
+- ✓ TIC chromatogram facets — v1
+- ✓ `mzpeak-validate` PASS (0/0); differential vs mzML2mzPeak (exact multiset on matched corpus pairs) — v1
+- ✓ Native arm64 (RawFileReader 8.0.37 AnyCPU), 52/52 tests, no Rosetta — post-v1
+
+### Active (v2 — "compression, fidelity & scale")
+
+- [ ] **Chunked layout** (default) — `spectra_data`/`spectra_peaks` as chunk facets matching the reference schema
+- [ ] **Numpress-linear m/z** (default) — `mz_numpress_linear_bytes` + recorded transform CURIE; `--lossless`/`--no-numpress` opt-out
+- [ ] **Null-marking / zero-run stripping** for profile data (with the δmz model in `spectrum.mz_delta_model`)
+- [ ] **Ion-mobility values** — populate `ion_mobility_value`/`type` from Thermo FAIMS CV (columns already exist, null in v1)
+- [ ] **Streaming writer** — bounded row-group writes (constant memory) to convert multi-GB RAW without OOM
+- [ ] **Per-scan robustness** — tolerate individual scan read failures (continue + log) instead of aborting the archive
+- [ ] **Conformance & corpus re-verification** — validate all modes; re-run the E2E corpus (now structurally matching the reference)
 
 ### Out of Scope
 
-- Chunked layout, Numpress, delta-encoding — v2; point layout is spec-valid and simplest
-- Null-marking / zero-run stripping — v2 optimization, not required for validity
 - imzML / imaging (spatial) extension — not applicable to Thermo LC-MS; the Rust reference's imaging path is ignored
-- mzPeak → RAW reverse conversion — out of scope; TRFP is one-directional
-- Ion-mobility (FAIMS) full modeling — capture CV value if cheap, otherwise defer
+- mzPeak → RAW reverse conversion — TRFP is one-directional
+- Richer mzLib-based MGF test validation — backlog BL-01 (mzLib is x64-only)
 
 ## Context
 
@@ -81,7 +88,10 @@ from Thermo RAW.
 | External codex+vibe review at each phase boundary | User-mandated quality gate | — Pending |
 | `mzpeak-validate` is the conformance gate (replaces ad-hoc reader OPEN) | Profile-driven, language-independent oracle; stronger than "a reader opens it" | — Pending |
 | Differential equivalence vs mzML2mzPeak for the same input | Pins our mapping to the established reference converter's semantics | — Pending |
-| Private derivative repo okohlbacher/mzPeak4TRFP, TRFP vendored | GitHub can't make a private fork of a public repo; vendoring keeps planning paths + provenance | — Pending |
+| Private derivative repo okohlbacher/mzPeak4TRFP, TRFP vendored | GitHub can't make a private fork of a public repo; vendoring keeps planning paths + provenance | ✓ Good |
+| Native arm64 via RawFileReader 8.0.37 (AnyCPU), drop x64 pin + mzLib | Removes Rosetta; 52/52 tests native | ✓ Good |
+| v2 default = chunked layout + Numpress-linear m/z (lossy m/z, recorded) | Smallest files, structurally matches the reference corpus; `--lossless`/`--point` opt-outs | — Pending |
+| v2 includes operational work (streaming + per-scan robustness), not just format | E2E surfaced multi-GB OOM risk + a per-scan CONVERT_FAIL; needed for real-world corpus | — Pending |
 
 ---
 *Last updated: 2026-06-14 after initialization*
