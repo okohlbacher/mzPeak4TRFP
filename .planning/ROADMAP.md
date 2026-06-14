@@ -28,7 +28,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 - [x] **Phase 1: Walking Skeleton — CLI Wiring + Parquet/ZIP Foundation** - `-f mzpeak` produces a minimal valid archive; nested-schema Parquet.Net approach spike-validated (completed 2026-06-14)
 - [x] **Phase 2: Spectra Signal Data** - Point-layout `spectra_data`/`spectra_peaks` with sorted m/z, honoring MS-level/scan-range filters (completed 2026-06-14)
-- [ ] **Phase 3: Spectra Metadata + File-Level Metadata/Index** - Packed parallel metadata tables and the full `mzpeak_index.json` metadata block
+- [x] **Phase 3: Spectra Metadata + File-Level Metadata/Index** - Packed parallel metadata tables and the full `mzpeak_index.json` metadata block (completed 2026-06-14)
 - [ ] **Phase 4: Chromatograms + Conformance Verification** - TIC chromatogram facets and round-trip verification against the reference reader
 
 ## Phase Details
@@ -99,7 +99,7 @@ Decimal phases appear between their surrounding integers in numeric order.
 
 **Plans**: 1 plan
 
-  - [ ] 03-01-PLAN.md — list-of-struct (large_list<struct>) Parquet write support + four-table spectra_metadata (rich spectrum, required scan, MSn precursor/selected_ion) + mzpeak_index metadata{}/footer (cv_list, instrument/software/data-processing/file-description) with NUnit locks and the mzpeak-validate gate
+  - [x] 03-01-PLAN.md — list-of-struct (large_list<struct>) Parquet write support + four-table spectra_metadata (rich spectrum, required scan, MSn precursor/selected_ion) + mzpeak_index metadata{}/footer (cv_list, instrument/software/data-processing/file-description) with NUnit locks and the mzpeak-validate gate
 
 ### Phase 4: Chromatograms + Conformance Verification
 
@@ -131,5 +131,5 @@ Phases execute in numeric order: 1 → 2 → 3 → 4
 |-------|----------------|--------|-----------|
 | 1. Walking Skeleton — CLI Wiring + Parquet/ZIP Foundation | 1/1 | Complete   | 2026-06-14 |
 | 2. Spectra Signal Data | 0/1 | Not started | - |
-| 3. Spectra Metadata + File-Level Metadata/Index | 0/1 | Not started | - |
+| 3. Spectra Metadata + File-Level Metadata/Index | 1/1 | Complete   | 2026-06-14 |
 | 4. Chromatograms + Conformance Verification | 0/TBD | Not started | - |

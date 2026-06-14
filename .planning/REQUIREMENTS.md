@@ -26,18 +26,18 @@
 
 ### Spectra Metadata (packed parallel tables)
 
-- [ ] **META-01**: `spectrum` struct rows — index, id, ms_level, time, polarity, representation, type, observed m/z range, counts, base peak, TIC
-- [ ] **META-02**: `scan` struct rows — scan_start_time (minutes), filter_string, ion_injection_time, instrument_configuration_ref, scan_windows
-- [ ] **META-03**: `precursor` struct rows — isolation window (target/lower/upper offsets) + activation params
-- [ ] **META-04**: `selected_ion` struct rows — selected ion m/z, charge state, intensity
-- [ ] **META-05**: CV terms encoded as CURIEs via the established mzML-CV→mzPeak mapping table
+- [x] **META-01**: `spectrum` struct rows — index, id, ms_level, time, polarity, representation, type, observed m/z range, counts, base peak, TIC
+- [x] **META-02**: `scan` struct rows — scan_start_time (minutes), filter_string, ion_injection_time, instrument_configuration_ref, scan_windows
+- [x] **META-03**: `precursor` struct rows — isolation window (target/lower/upper offsets) + activation params
+- [x] **META-04**: `selected_ion` struct rows — selected ion m/z, charge state, intensity
+- [x] **META-05**: CV terms encoded as CURIEs via the established mzML-CV→mzPeak mapping table
 
 ### File-Level Metadata & Index
 
-- [ ] **IDX-01**: `mzpeak_index.json` lists all present facets (`files[]`) with entity_type/data_kind
-- [ ] **IDX-02**: `metadata{}` block with instrument_configuration_list (ionsource/analyzer/detector + CV params) from Thermo instrument info via `OntologyMapping`
-- [ ] **IDX-03**: software_list (TRFP entry) and data_processing_method_list (conversion + any narrowing/sort provenance)
-- [ ] **IDX-04**: file_description (source RAW file, contents params) and cv_list (MS, UO)
+- [x] **IDX-01**: `mzpeak_index.json` lists all present facets (`files[]`) with entity_type/data_kind
+- [x] **IDX-02**: `metadata{}` block with instrument_configuration_list (ionsource/analyzer/detector + CV params) from Thermo instrument info via `OntologyMapping`
+- [x] **IDX-03**: software_list (TRFP entry) and data_processing_method_list (conversion + any narrowing/sort provenance)
+- [x] **IDX-04**: file_description (source RAW file, contents params) and cv_list (MS, UO)
 
 ### Chromatograms
 
