@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using NUnit.Framework;
@@ -195,6 +196,283 @@ namespace ThermoRawFileParserTest
                 Assert.That(name.Data, Is.EqualTo(new[] { "ms level", "intensity" }));
             }
         }
+
+        [Test]
+        public void NestedLevels_Reproduces_CheatSheet_Levels()
+        {
+            var paramItem = new StructField("item",
+                new DataField<string>("name"), new DataField<double>("val", true));
+            var paramsList = new ListField("parameters", paramItem);
+            var mzRange = new StructField("mz_range",
+                new DataField<double>("lo"), new DataField<double>("hi"));
+            var spectrum = new StructField("spectrum",
+                new DataField<ulong>("index"), mzRange, paramsList);
+            var schema = new ParquetSchema(spectrum);
+
+            var indexLeaf = Leaf(schema, "spectrum/index");
+            var loLeaf = Leaf(schema, "spectrum/mz_range/lo");
+            var nameLeaf = Leaf(schema, "spectrum/parameters/list/item/name");
+            var valLeaf = Leaf(schema, "spectrum/parameters/list/item/val");
+
+            // top struct leaf: max-def 1 -> [1,0,1]
+            Assert.That(indexLeaf.MaxDefinitionLevel, Is.EqualTo(1));
+            var (idxDef, idxRep) = MzPeakParquet.NestedLevels(indexLeaf, new[]
+            {
+                MzPeakParquet.Present(indexLeaf), MzPeakParquet.Absent(), MzPeakParquet.Present(indexLeaf)
+            });
+            Assert.That(idxDef, Is.EqualTo(new[] { 1, 0, 1 }));
+            Assert.That(idxRep, Is.Null);
+
+            // nested struct-in-struct leaf: max-def 2 -> [2,0,2]
+            Assert.That(loLeaf.MaxDefinitionLevel, Is.EqualTo(2));
+            var (loDef, _) = MzPeakParquet.NestedLevels(loLeaf, new[]
+            {
+                MzPeakParquet.Present(loLeaf), MzPeakParquet.Absent(), MzPeakParquet.Present(loLeaf)
+            });
+            Assert.That(loDef, Is.EqualTo(new[] { 2, 0, 2 }));
+
+            // list-of-struct leaves: max-def 5; present-elem 5, leaf-null-in-elem 4, empty-list 2, null-list 0
+            Assert.That(nameLeaf.MaxDefinitionLevel, Is.EqualTo(5));
+            Assert.That(paramsList.MaxDefinitionLevel, Is.EqualTo(3));
+            // empty-list level for these leaves is the cheat-sheet 2 (= list MaxDef - 1)
+            Assert.That(MzPeakParquet.EmptyList(paramsList).Cells[0], Is.EqualTo(2));
+            // row0: 2 elements (both name present); row1: null list; row2: empty list
+            var (nDef, nRep) = MzPeakParquet.NestedLevels(nameLeaf, new[]
+            {
+                MzPeakParquet.ListOf(new[] { 5, 5 }, new[] { true, true }),
+                MzPeakParquet.NullList(),
+                MzPeakParquet.EmptyList(paramsList)
+            });
+            Assert.That(nDef, Is.EqualTo(new[] { 5, 5, 0, 2 }));
+            Assert.That(nRep, Is.EqualTo(new[] { 0, 1, 0, 0 }));
+
+            // val: row0 elem0 present (5), elem1 null (4); row1 null list; row2 empty list
+            var (vDef, vRep) = MzPeakParquet.NestedLevels(valLeaf, new[]
+            {
+                MzPeakParquet.ListOf(new[] { 5, 4 }, new[] { true, false }),
+                MzPeakParquet.NullList(),
+                MzPeakParquet.EmptyList(paramsList)
+            });
+            Assert.That(vDef, Is.EqualTo(new[] { 5, 4, 0, 2 }));
+            Assert.That(vRep, Is.EqualTo(new[] { 0, 1, 0, 0 }));
+        }
+
+        [Test]
+        public void NestedLevels_RoundTrips_ActualPhase3Shapes_ViaPyArrow()
+        {
+            var python = ResolvePython();
+            if (python == null) Assert.Ignore("python3/pyarrow not available");
+
+            // precursor top-level struct: isolation_window (nested struct) + activation.parameters (PARAM list).
+            // scan top-level struct: scan_windows (list-of-struct). Mirrors the real Phase-3 facet shapes.
+            var isoWindow = new StructField("isolation_window",
+                new DataField<float>("target"), new DataField<float>("lower_offset"));
+            var activation = new StructField("activation",
+                new ListField("parameters", MzPeakParquet.BuildParamField("item")));
+            var precursor = new StructField("precursor",
+                new DataField<ulong>("source_index"), isoWindow, activation);
+
+            var windowItem = new StructField("item",
+                new DataField<float>("lower"), new DataField<float>("upper"));
+            var scanWindows = new ListField("scan_windows", windowItem);
+            var scan = new StructField("scan",
+                new DataField<ulong>("source_index"), scanWindows);
+
+            var schema = new ParquetSchema(precursor, scan);
+
+            // 4 rows. precursor present on rows 0,1,2 and NULL on row 3 (padded tail).
+            //   row0: iso present; activation.parameters = 2 items (CID accession, CE float)
+            //   row1: iso present; activation.parameters = EMPTY list
+            //   row2: iso present; activation.parameters = NULL list
+            //   row3: precursor struct NULL
+            var srcIdx = Leaf(schema, "precursor/source_index");
+            var isoTarget = Leaf(schema, "precursor/isolation_window/target");
+            var actAcc = Leaf(schema, "precursor/activation/parameters/list/item/accession");
+            var actFloat = Leaf(schema, "precursor/activation/parameters/list/item/value/float");
+            var actList = (ListField)((StructField)((StructField)schema.Fields
+                .First(f => f.Name == "precursor")).Fields.First(f => f.Name == "activation"))
+                .Fields.First(f => f.Name == "parameters");
+
+            var winLower = Leaf(schema, "scan/scan_windows/list/item/lower");
+            var scanSrc = Leaf(schema, "scan/source_index");
+
+            var (srcDef, _) = MzPeakParquet.NestedLevels(srcIdx, new[]
+            {
+                MzPeakParquet.Present(srcIdx), MzPeakParquet.Present(srcIdx),
+                MzPeakParquet.Present(srcIdx), MzPeakParquet.Absent()
+            });
+            var (isoDef, _) = MzPeakParquet.NestedLevels(isoTarget, new[]
+            {
+                MzPeakParquet.Present(isoTarget), MzPeakParquet.Present(isoTarget),
+                MzPeakParquet.Present(isoTarget), MzPeakParquet.Absent()
+            });
+            // accession: row0 both elements present; row1 empty; row2 null; row3 precursor null
+            var (accDef, accRep) = MzPeakParquet.NestedLevels(actAcc, new[]
+            {
+                MzPeakParquet.ListOf(new[] { actAcc.MaxDefinitionLevel, actAcc.MaxDefinitionLevel }, new[] { true, true }),
+                MzPeakParquet.EmptyList(actList),
+                MzPeakParquet.NullList(),
+                MzPeakParquet.NullList()
+            });
+            // value/float: row0 elem0 null (CID has no float), elem1 present (CE)
+            var (fltDef, fltRep) = MzPeakParquet.NestedLevels(actFloat, new[]
+            {
+                MzPeakParquet.ListOf(new[] { actFloat.MaxDefinitionLevel - 1, actFloat.MaxDefinitionLevel }, new[] { false, true }),
+                MzPeakParquet.EmptyList(actList),
+                MzPeakParquet.NullList(),
+                MzPeakParquet.NullList()
+            });
+            // scan present on all 4 rows; one window each
+            var (scanSrcDef, _) = MzPeakParquet.NestedLevels(scanSrc, new[]
+            {
+                MzPeakParquet.Present(scanSrc), MzPeakParquet.Present(scanSrc),
+                MzPeakParquet.Present(scanSrc), MzPeakParquet.Present(scanSrc)
+            });
+            var (winDef, winRep) = MzPeakParquet.NestedLevels(winLower, Enumerable.Range(0, 4)
+                .Select(_ => MzPeakParquet.ListOf(new[] { winLower.MaxDefinitionLevel }, new[] { true })).ToArray());
+
+            var cols = new Dictionary<DataField, (Array, int[], int[])>
+            {
+                [srcIdx] = (new ulong[] { 2, 3, 4 }, srcDef, null),
+                [isoTarget] = (new[] { 810.7f, 837.3f, 725.3f }, isoDef, null),
+                [Leaf(schema, "precursor/isolation_window/lower_offset")] =
+                    (new[] { 1.0f, 1.0f, 1.0f }, isoDef, null),
+                [actAcc] = (new[] { "MS:1000133", "MS:1000045" }, accDef, accRep),
+                [Leaf(schema, "precursor/activation/parameters/list/item/value/integer")] =
+                    (new long[0], NullLeaf(schema, "precursor/activation/parameters/list/item/value/integer", accDef, accRep), accRep),
+                [actFloat] = (new[] { 35.0 }, fltDef, fltRep),
+                [Leaf(schema, "precursor/activation/parameters/list/item/value/string")] =
+                    (new string[0], NullLeaf(schema, "precursor/activation/parameters/list/item/value/string", accDef, accRep), accRep),
+                [Leaf(schema, "precursor/activation/parameters/list/item/value/boolean")] =
+                    (new bool[0], NullLeaf(schema, "precursor/activation/parameters/list/item/value/boolean", accDef, accRep), accRep),
+                [Leaf(schema, "precursor/activation/parameters/list/item/name")] =
+                    (new[] { "collision-induced dissociation", "collision energy" }, accDef, accRep),
+                [Leaf(schema, "precursor/activation/parameters/list/item/unit")] =
+                    (new[] { "UO:0000266" }, UnitLevels(accDef, actAcc.MaxDefinitionLevel), accRep),
+                [scanSrc] = (new ulong[] { 0, 1, 2, 3 }, scanSrcDef, null),
+                [winLower] = (new[] { 200f, 200f, 210f, 210f }, winDef, winRep),
+                [Leaf(schema, "scan/scan_windows/list/item/upper")] =
+                    (new[] { 2000f, 2000f, 1635f, 1635f }, winDef, winRep)
+            };
+
+            var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".parquet");
+            using (var fs = File.Create(path))
+            {
+                MzPeakParquet.WriteAsync(fs, schema, new Dictionary<string, string>(),
+                    cols.ToDictionary(kv => kv.Key, kv => kv.Value)).GetAwaiter().GetResult();
+            }
+
+            try
+            {
+                var py = $@"
+import pyarrow.parquet as pq, json
+t = pq.read_table(r'{path}')
+d = t.to_pylist()
+out = {{}}
+out['rows'] = len(d)
+out['precursor_present'] = [r['precursor'] is not None and r['precursor']['source_index'] is not None for r in d]
+out['activation_lens'] = [ (None if (r['precursor'] is None or r['precursor']['activation'] is None or r['precursor']['activation']['parameters'] is None) else len(r['precursor']['activation']['parameters'])) for r in d ]
+out['scan_window_lens'] = [ (None if (r['scan'] is None or r['scan']['scan_windows'] is None) else len(r['scan']['scan_windows'])) for r in d ]
+p0 = d[0]['precursor']['activation']['parameters']
+out['row0_accessions'] = [e['accession'] for e in p0]
+out['row0_floats'] = [ (None if e['value']['float'] is None else e['value']['float']) for e in p0 ]
+out['row0_iso_target'] = round(d[0]['precursor']['isolation_window']['target'], 1)
+out['row0_window_lower'] = d[0]['scan']['scan_windows'][0]['lower']
+print(json.dumps(out))
+";
+                var psi = new ProcessStartInfo(python, "-c " + Quote(py))
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false
+                };
+                using (var proc = Process.Start(psi))
+                {
+                    var stdout = proc.StandardOutput.ReadToEnd();
+                    var stderr = proc.StandardError.ReadToEnd();
+                    proc.WaitForExit();
+                    Assert.That(proc.ExitCode, Is.EqualTo(0), $"pyarrow read failed: {stderr}");
+
+                    var o = Newtonsoft.Json.Linq.JObject.Parse(stdout.Trim());
+                    Assert.That((int)o["rows"], Is.EqualTo(4));
+                    Assert.That(o["precursor_present"].Select(x => (bool)x).ToArray(),
+                        Is.EqualTo(new[] { true, true, true, false }));
+                    // null list and empty list distinguished: row1 empty (0), row2 null (None)
+                    var actLens = o["activation_lens"].Select(x => x.Type == Newtonsoft.Json.Linq.JTokenType.Null ? (int?)null : (int)x).ToArray();
+                    Assert.That(actLens, Is.EqualTo(new int?[] { 2, 0, null, null }));
+                    var winLens = o["scan_window_lens"].Select(x => (int)x).ToArray();
+                    Assert.That(winLens, Is.EqualTo(new[] { 1, 1, 1, 1 }));
+                    Assert.That(o["row0_accessions"].Select(x => (string)x).ToArray(),
+                        Is.EqualTo(new[] { "MS:1000133", "MS:1000045" }));
+                    var floats = o["row0_floats"].Select(x => x.Type == Newtonsoft.Json.Linq.JTokenType.Null ? (double?)null : (double)x).ToArray();
+                    Assert.That(floats, Is.EqualTo(new double?[] { null, 35.0 }));
+                    Assert.That((double)o["row0_iso_target"], Is.EqualTo(810.7).Within(0.05));
+                    Assert.That((float)o["row0_window_lower"], Is.EqualTo(200f));
+                }
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        // For a value/* sibling leaf never populated in any element, every element entry is one level
+        // below the present level (null inside present element) mirroring the accession's rep pattern.
+        private static int[] NullLeaf(ParquetSchema schema, string path, int[] siblingDef, int[] siblingRep)
+        {
+            var leaf = Leaf(schema, path);
+            int present = leaf.MaxDefinitionLevel;
+            var def = new int[siblingDef.Length];
+            for (int i = 0; i < siblingDef.Length; i++)
+            {
+                // mirror sibling: element-present sibling levels become leaf-null (present-1);
+                // empty/null list levels carry through unchanged.
+                def[i] = siblingDef[i] >= present ? present - 1 : siblingDef[i];
+            }
+            return def;
+        }
+
+        private static int[] UnitLevels(int[] accDef, int present)
+        {
+            // unit present only for the collision-energy element (2nd entry); first present element
+            // (CID) has no unit -> present-1. Empty/null entries carry through unchanged.
+            var def = (int[])accDef.Clone();
+            int seenPresent = 0;
+            for (int i = 0; i < def.Length; i++)
+            {
+                if (def[i] == present)
+                {
+                    seenPresent++;
+                    if (seenPresent == 1) def[i] = present - 1; // CID: no unit
+                }
+            }
+            return def;
+        }
+
+        private static string ResolvePython()
+        {
+            foreach (var cand in new[] { "python3", "python" })
+            {
+                try
+                {
+                    var psi = new ProcessStartInfo(cand, "-c \"import pyarrow\"")
+                    {
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false
+                    };
+                    using (var p = Process.Start(psi))
+                    {
+                        p.WaitForExit();
+                        if (p.ExitCode == 0) return cand;
+                    }
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        private static string Quote(string s) => "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
 
         [Test]
         public void WrittenFile_ReportsZstdCompression()
