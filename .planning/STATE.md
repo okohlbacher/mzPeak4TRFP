@@ -20,12 +20,12 @@ progress:
 See: .planning/PROJECT.md (updated 2026-06-14)
 
 **Core value:** Smaller, reference-structured mzPeak output (chunked + Numpress) that scales to multi-GB RAW and is robust to imperfect scans — without regressing v1 conformance.
-**Current focus:** v2 milestone — Phase 2 (Chunked Layout)
+**Current focus:** v2 milestone — Phase 3 (Numpress-Linear m/z)
 
 ## Current Position
 
 Milestone: v2 ("compression, fidelity & scale") — 5 phases, sequential
-Phase: 2 of 5 (Chunked Layout) — COMPLETE; ready to plan Phase 3 (Numpress-Linear m/z)
+Phase: 3 of 5 (Numpress-Linear m/z) — COMPLETE; ready to plan Phase 3 (Numpress-Linear m/z)
 Status: Phase 2 executed (02-01-PLAN.md → 02-01-SUMMARY.md); chunked default, CHUNK-01..06 done
 Last activity: 2026-06-14 — Phase 2 chunked layout shipped; full suite 72/72 green native arm64.
 
