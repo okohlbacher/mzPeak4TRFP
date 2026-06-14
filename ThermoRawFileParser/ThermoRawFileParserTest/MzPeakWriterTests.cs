@@ -507,6 +507,200 @@ namespace ThermoRawFileParserTest
             }
         }
 
+        // Every MS_/UO_/IMS_ CV code embedded in any column name across the metadata schema, as the
+        // validator's cv_list_declared rule collects them.
+        private static HashSet<string> CollectedCvCodes(byte[] metaBytes)
+        {
+            var codes = new HashSet<string>();
+            using (var ms = new MemoryStream(metaBytes))
+            using (var reader = ParquetReader.CreateAsync(ms).Result)
+            {
+                foreach (var d in reader.Schema.GetDataFields())
+                {
+                    foreach (System.Text.RegularExpressions.Match mch in
+                        System.Text.RegularExpressions.Regex.Matches(d.Path.ToString(), @"(MS|UO|IMS)_\d+"))
+                    {
+                        codes.Add(mch.Groups[1].Value);
+                    }
+                }
+            }
+            return codes;
+        }
+
+        private static Dictionary<string, string> FooterKv(byte[] metaBytes)
+        {
+            using (var ms = new MemoryStream(metaBytes))
+            using (var reader = ParquetReader.CreateAsync(ms).Result)
+            {
+                return new Dictionary<string, string>(reader.CustomMetadata);
+            }
+        }
+
+        [Test]
+        public void Metadata_CvList_Covers_Collected_Set_In_Index_And_Footer()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+            try
+            {
+                var metaBytes = ReadEntry(archive, "spectra_metadata.parquet");
+                var collected = CollectedCvCodes(metaBytes);
+                Assert.That(collected, Is.Not.Empty, "metadata must use CV-named columns");
+
+                var index = JObject.Parse(
+                    System.Text.Encoding.UTF8.GetString(ReadEntry(archive, "mzpeak_index.json")));
+                var idxCv = (JArray)index["metadata"]["cv_list"];
+                Assert.That(idxCv, Is.Not.Null.And.Not.Empty);
+
+                var idxIds = idxCv.Select(e => (string)e["id"]).ToHashSet();
+                Assert.That(idxIds.IsSupersetOf(collected), Is.True,
+                    $"index cv_list {string.Join(",", idxIds)} must cover collected {string.Join(",", collected)}");
+                foreach (var e in idxCv)
+                {
+                    Assert.That((string)e["id"], Is.Not.Null.And.Not.Empty);
+                    Assert.That((string)e["version"], Is.Not.Null.And.Not.Empty);
+                    Assert.That((string)e["uri"], Is.Not.Null.And.Not.Empty);
+                }
+
+                var footer = FooterKv(metaBytes);
+                Assert.That(footer.ContainsKey("cv_list"), "footer carries cv_list");
+                var footCv = JArray.Parse(footer["cv_list"]);
+                var footIds = footCv.Select(e => (string)e["id"]).ToHashSet();
+                Assert.That(footIds.IsSupersetOf(collected), Is.True,
+                    "footer cv_list must cover the collected CV-prefix set");
+                Assert.That(footIds, Is.EquivalentTo(idxIds), "index and footer cv_list agree");
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
+        public void Metadata_FileLevel_Blocks_Present_In_Index_And_Footer()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+            try
+            {
+                var metaBytes = ReadEntry(archive, "spectra_metadata.parquet");
+                var index = JObject.Parse(
+                    System.Text.Encoding.UTF8.GetString(ReadEntry(archive, "mzpeak_index.json")));
+                var m = (JObject)index["metadata"];
+
+                Assert.That((string)m["version"], Is.Not.Null.And.Not.Empty);
+
+                var ics = (JArray)m["instrument_configuration_list"];
+                Assert.That(ics.Count, Is.EqualTo(2), "small.RAW yields two distinct analyzers");
+                foreach (var ic in ics)
+                {
+                    Assert.That((string)ic["software_reference"], Is.EqualTo("ThermoRawFileParser"));
+                    Assert.That(((JArray)ic["parameters"]).Count, Is.GreaterThanOrEqualTo(2));
+                    var comps = ((JArray)ic["components"])
+                        .Select(c => (string)c["component_type"]).ToArray();
+                    Assert.That(comps, Is.EqualTo(new[] { "ionsource", "analyzer", "detector" }),
+                        "components ordered ionsource/analyzer/detector");
+                    foreach (var c in (JArray)ic["components"])
+                        Assert.That(((JArray)c["parameters"]).Count, Is.GreaterThanOrEqualTo(1));
+                }
+
+                Assert.That(((JArray)m["software_list"]).Count, Is.GreaterThanOrEqualTo(1));
+                Assert.That(((JArray)m["data_processing_method_list"]).Count, Is.GreaterThanOrEqualTo(1));
+                var fd = (JObject)m["file_description"];
+                Assert.That(((JArray)fd["contents"]).Count, Is.GreaterThanOrEqualTo(1));
+                Assert.That(((JArray)fd["source_files"]).Count, Is.EqualTo(1));
+                Assert.That((string)((JArray)fd["source_files"])[0]["id"], Is.EqualTo("RAW1"));
+                Assert.That(m["sample_list"].Type, Is.EqualTo(JTokenType.Array));
+                Assert.That(m["scan_settings_list"].Type, Is.EqualTo(JTokenType.Array));
+
+                var footer = FooterKv(metaBytes);
+                foreach (var key in new[]
+                    {
+                        "instrument_configuration_list", "software_list",
+                        "data_processing_method_list", "file_description", "run"
+                    })
+                {
+                    Assert.That(footer.ContainsKey(key), $"footer carries {key}");
+                }
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        private static string ResolveValidator()
+        {
+            foreach (var cand in new[] { "mzpeak-validate" })
+            {
+                try
+                {
+                    var psi = new ProcessStartInfo(cand, "--help")
+                    {
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false
+                    };
+                    using (var p = Process.Start(psi))
+                    {
+                        p.WaitForExit();
+                        return cand;
+                    }
+                }
+                catch { }
+            }
+            return null;
+        }
+
+        [Test]
+        public void Validator_Gate_ScanError_And_CvList_Absent_NoNewError()
+        {
+            var validator = ResolveValidator();
+            if (validator == null) Assert.Ignore("mzpeak-validate not available");
+
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+            var jsonPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".json");
+            try
+            {
+                var psi = new ProcessStartInfo(validator, $"\"{archive}\" --json \"{jsonPath}\"")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false
+                };
+                using (var p = Process.Start(psi))
+                {
+                    p.StandardOutput.ReadToEnd();
+                    p.StandardError.ReadToEnd();
+                    p.WaitForExit();
+                }
+
+                Assert.That(File.Exists(jsonPath), "validator must emit a JSON report");
+                var report = JObject.Parse(File.ReadAllText(jsonPath));
+                var errorIds = ((JArray)report["findings"])
+                    .Where(f => (string)f["level"] == "error")
+                    .Select(f => (string)f["ruleId"])
+                    .ToHashSet();
+
+                // The pre-existing reference-archive failures; our writer introduces none of them.
+                var allowlist = new HashSet<string> { "index_schema_valid", "cv_list_declared" };
+
+                Assert.That(errorIds, Does.Not.Contain("columns_spectra_metadata"),
+                    "scan-facet error must be cleared");
+                Assert.That(errorIds, Does.Not.Contain("cv_list_declared"),
+                    "cv_list_declared must be cleared by the generated cv_list");
+                var newErrors = errorIds.Except(allowlist).ToArray();
+                Assert.That(newErrors, Is.Empty,
+                    $"no new ERROR id beyond the pre-existing allowlist: {string.Join(",", newErrors)}");
+            }
+            finally
+            {
+                if (File.Exists(jsonPath)) File.Delete(jsonPath);
+                Directory.Delete(dir, true);
+            }
+        }
+
         [Test]
         public void OrderedPairs_Preserves_Duplicate_Mz_In_Input_Order()
         {

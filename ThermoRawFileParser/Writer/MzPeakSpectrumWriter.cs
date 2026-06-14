@@ -14,6 +14,7 @@ using ThermoFisher.CommonCore.Data.Business;
 using ThermoFisher.CommonCore.Data.FilterEnums;
 using ThermoFisher.CommonCore.Data.Interfaces;
 using ThermoRawFileParser.Util;
+using ThermoRawFileParser.Writer.MzML;
 
 namespace ThermoRawFileParser.Writer
 {
@@ -86,6 +87,7 @@ namespace ThermoRawFileParser.Writer
 
         private readonly HashSet<string> _cvPrefixes = new HashSet<string>();
         private readonly List<MassAnalyzerType> _analyzerOrder = new List<MassAnalyzerType>();
+        private readonly List<IonizationModeType> _ionizationOrder = new List<IonizationModeType>();
         private string _instrumentModel;
         private string _instrumentSerial;
         private DateTime _creationDate;
@@ -196,7 +198,7 @@ namespace ThermoRawFileParser.Writer
                         ScanStartTime = (float)raw.RetentionTimeFromScanNumber(scanNumber),
                         FilterString = scanEvent.ToString(),
                         IonInjectionTime = (float)(trailer.AsDouble("Ion Injection Time (ms):") ?? 0.0),
-                        InstrumentConfigRef = AnalyzerIndex(scanFilter.MassAnalyzer),
+                        InstrumentConfigRef = AnalyzerIndex(scanFilter.MassAnalyzer, scanFilter.IonizationMode),
                         WindowLower = (float)scanStats.LowMass,
                         WindowUpper = (float)scanStats.HighMass
                     };
@@ -289,12 +291,13 @@ namespace ThermoRawFileParser.Writer
             return (sortedMz, sortedInten);
         }
 
-        private uint AnalyzerIndex(MassAnalyzerType analyzer)
+        private uint AnalyzerIndex(MassAnalyzerType analyzer, IonizationModeType ionization)
         {
             int idx = _analyzerOrder.IndexOf(analyzer);
             if (idx < 0)
             {
                 _analyzerOrder.Add(analyzer);
+                _ionizationOrder.Add(ionization);
                 idx = _analyzerOrder.Count - 1;
             }
             return (uint)idx;
@@ -824,10 +827,220 @@ namespace ThermoRawFileParser.Writer
             }
         }
 
+        // File-level metadata blocks shared verbatim between the parquet footer KV and the index
+        // metadata{}. Built once after all CV-named columns/params are emitted so the generated
+        // cv_list covers exactly the collected CV-prefix set.
+        private JObject _metadataBlocks;
+
         private void AddMetadataBlocks(IDictionary<string, string> custom, List<Record> records)
         {
-            // Placeholder: file-level metadata blocks (cv_list, instrument_configuration_list, etc.)
-            // are written in Task 4.
+            var instruments = BuildInstrumentConfigurations();
+            var software = BuildSoftwareList();
+            var dataProcessing = BuildDataProcessingList();
+            var fileDescription = BuildFileDescription(records);
+            var run = BuildRun();
+
+            // cv_list is generated LAST: every accession/unit routed through Cv() or a param helper
+            // has been recorded in _cvPrefixes by this point.
+            var cvList = BuildCvList();
+
+            _metadataBlocks = new JObject
+            {
+                ["version"] = MzPeakVersion,
+                ["cv_list"] = cvList,
+                ["file_description"] = fileDescription,
+                ["instrument_configuration_list"] = instruments,
+                ["software_list"] = software,
+                ["data_processing_method_list"] = dataProcessing,
+                ["run"] = run,
+                ["sample_list"] = new JArray(),
+                ["scan_settings_list"] = new JArray()
+            };
+
+            var enc = new UTF8Encoding(false);
+            custom["cv_list"] = Compact(cvList);
+            custom["file_description"] = Compact(fileDescription);
+            custom["instrument_configuration_list"] = Compact(instruments);
+            custom["software_list"] = Compact(software);
+            custom["data_processing_method_list"] = Compact(dataProcessing);
+            custom["run"] = Compact(run);
+            custom["sample_list"] = "[]";
+            custom["scan_settings_list"] = "[]";
+        }
+
+        private static string Compact(JToken token) =>
+            token.ToString(Newtonsoft.Json.Formatting.None);
+
+        private JArray BuildCvList()
+        {
+            var defs = new Dictionary<string, (string version, string fullName, string uri)>
+            {
+                ["MS"] = (MsCvVersion, "PSI-MS controlled vocabulary",
+                    "https://raw.githubusercontent.com/HUPO-PSI/psi-ms-CV/master/psi-ms.obo"),
+                ["UO"] = (UoCvVersion, "Unit Ontology", "http://purl.obolibrary.org/obo/uo.obo")
+            };
+
+            var list = new JArray();
+            foreach (var prefix in _cvPrefixes.OrderBy(p => p))
+            {
+                defs.TryGetValue(prefix, out var d);
+                list.Add(new JObject
+                {
+                    ["id"] = prefix,
+                    ["version"] = d.version ?? "unknown",
+                    ["full_name"] = d.fullName ?? prefix,
+                    ["uri"] = d.uri ?? ""
+                });
+            }
+            return list;
+        }
+
+        private JArray BuildInstrumentConfigurations()
+        {
+            OntologyMapping.UpdateFTMSDefinition(_instrumentModel);
+            var model = OntologyMapping.GetInstrumentModel(_instrumentModel);
+            var detectors = OntologyMapping.GetDetectors(model.accession);
+
+            var list = new JArray();
+            for (int i = 0; i < _analyzerOrder.Count; i++)
+            {
+                var ionization = OntologyMapping.IonizationTypes.TryGetValue(_ionizationOrder[i], out var ion)
+                    ? ion
+                    : OntologyMapping.IonizationTypes[IonizationModeType.Any];
+                var analyzer = OntologyMapping.MassAnalyzerTypes[_analyzerOrder[i]];
+                var detector = i < detectors.Count ? detectors[i] : OntologyMapping.GetDetectors("default")[0];
+
+                var configParams = new JArray
+                {
+                    CvParam(model.accession, model.name, model.value),
+                    CvParam("MS:1000529", "instrument serial number", _instrumentSerial)
+                };
+                var components = new JArray
+                {
+                    Component("ionsource", 1, ionization),
+                    Component("analyzer", 2, analyzer),
+                    Component("detector", 3, detector)
+                };
+                list.Add(new JObject
+                {
+                    ["id"] = i,
+                    ["software_reference"] = "ThermoRawFileParser",
+                    ["parameters"] = configParams,
+                    ["components"] = components
+                });
+            }
+            return list;
+        }
+
+        private JObject Component(string type, int order, CVParamType cv)
+        {
+            return new JObject
+            {
+                ["component_type"] = type,
+                ["order"] = order,
+                ["parameters"] = new JArray { CvParam(cv.accession, cv.name, cv.value) }
+            };
+        }
+
+        private JArray BuildSoftwareList()
+        {
+            return new JArray
+            {
+                new JObject
+                {
+                    ["id"] = "ThermoRawFileParser",
+                    ["version"] = MainClass.Version,
+                    ["parameters"] = new JArray { CvParam("MS:1003145", "ThermoRawFileParser", null) }
+                }
+            };
+        }
+
+        private JArray BuildDataProcessingList()
+        {
+            return new JArray
+            {
+                new JObject
+                {
+                    ["id"] = "trfp_conversion",
+                    ["methods"] = new JArray
+                    {
+                        new JObject
+                        {
+                            ["order"] = 0,
+                            ["software_reference"] = "ThermoRawFileParser",
+                            ["parameters"] = new JArray { CvParam("MS:1000544", "Conversion to mzML", null) }
+                        },
+                        new JObject
+                        {
+                            ["order"] = 1,
+                            ["software_reference"] = "ThermoRawFileParser",
+                            ["parameters"] = new JArray { JParam("intensity narrowing", null, "f64 to f32", null) }
+                        }
+                    }
+                }
+            };
+        }
+
+        private JObject BuildFileDescription(List<Record> records)
+        {
+            var contents = new JArray
+            {
+                CvParam("MS:1000579", "MS1 spectrum", null),
+                CvParam("MS:1000580", "MSn spectrum", null)
+            };
+            var sourceParams = new JArray
+            {
+                CvParam("MS:1000768", "Thermo nativeID format", null),
+                CvParam("MS:1000563", "Thermo RAW format", null)
+            };
+            return new JObject
+            {
+                ["contents"] = contents,
+                ["source_files"] = new JArray
+                {
+                    new JObject
+                    {
+                        ["id"] = "RAW1",
+                        ["name"] = _sourceName,
+                        ["location"] = _sourceLocation,
+                        ["parameters"] = sourceParams
+                    }
+                }
+            };
+        }
+
+        private JObject BuildRun()
+        {
+            return new JObject
+            {
+                ["id"] = Path.GetFileNameWithoutExtension(_sourceName),
+                ["default_instrument_id"] = 0,
+                ["default_data_processing_id"] = "trfp_conversion",
+                ["default_source_file_id"] = "RAW1",
+                ["start_time"] = _creationDate.ToUniversalTime()
+                    .ToString("yyyy-MM-ddTHH:mm:ssZ", CultureInfo.InvariantCulture)
+            };
+        }
+
+        // A controlled-value PARAM (accession + name, no value). Records the CV prefix so the
+        // generated cv_list stays exhaustive.
+        private JObject CvParam(string accession, string name, string value)
+        {
+            CollectPrefix(accession);
+            return JParam(name, accession, string.IsNullOrEmpty(value) ? null : value, null);
+        }
+
+        // A PARAM object matching the param.json schema (name required; accession/value/unit nullable).
+        private JObject JParam(string name, string accession, object value, string unit)
+        {
+            CollectPrefix(unit);
+            return new JObject
+            {
+                ["name"] = name,
+                ["accession"] = accession == null ? JValue.CreateNull() : new JValue(accession),
+                ["value"] = value == null ? JValue.CreateNull() : JToken.FromObject(value),
+                ["unit"] = unit == null ? JValue.CreateNull() : new JValue(unit)
+            };
         }
 
         private byte[] BuildIndex(bool hasPeaks)
@@ -858,14 +1071,15 @@ namespace ThermoRawFileParser.Writer
                 });
             }
 
+            var metadata = _metadataBlocks != null
+                ? (JObject)_metadataBlocks.DeepClone()
+                : new JObject { ["version"] = MzPeakVersion };
+
             var index = new JObject
             {
                 ["version"] = MzPeakVersion,
                 ["files"] = files,
-                ["metadata"] = new JObject
-                {
-                    ["version"] = MzPeakVersion
-                }
+                ["metadata"] = metadata
             };
 
             return new UTF8Encoding(false).GetBytes(index.ToString());
