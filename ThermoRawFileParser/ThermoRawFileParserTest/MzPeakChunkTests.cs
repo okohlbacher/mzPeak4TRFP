@@ -436,13 +436,20 @@ namespace ThermoRawFileParserTest
         private static string TestRawFile =>
             Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data", "small.RAW");
 
-        private static string Convert(bool point, out string dir)
+        private enum DataMode { Numpress, Lossless, Point }
+
+        // Phase-2 delta-chunk (--lossless) conversion; point=true selects the v1 point layout.
+        private static string Convert(bool point, out string dir) =>
+            Convert(point ? DataMode.Point : DataMode.Lossless, out dir);
+
+        private static string Convert(DataMode mode, out string dir)
         {
             dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
             Directory.CreateDirectory(dir);
             var input = new ParseInput(TestRawFile, null, dir, OutputFormat.MzPeak)
             {
-                MzPeakPointLayout = point
+                MzPeakPointLayout = mode == DataMode.Point,
+                MzPeakNumpress = mode == DataMode.Numpress
             };
             RawFileParser.Parse(input);
             Assert.That(input.Errors, Is.EqualTo(0));
@@ -799,6 +806,267 @@ namespace ThermoRawFileParserTest
                     $"chunked spectra_data ({chunkSize}) must be smaller than point ({pointSize})");
             }
             finally { Directory.Delete(cdir, true); Directory.Delete(pdir, true); }
+        }
+
+        // --- Numpress (default) integration locks ---
+
+        [Test]
+        public void Numpress_Schema_Footer_NullValues_Encoding()
+        {
+            var archive = Convert(DataMode.Numpress, out var dir);
+            try
+            {
+                var snippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "t = pq.read_table(r'{PARQUET}')\n" +
+                    "ct = t.schema.field('chunk').type\n" +
+                    "col = t.column('chunk').combine_chunks()\n" +
+                    "cv = col.field('mz_chunk_values').to_pylist()\n" +
+                    "out = {'names':[ct.field(i).name for i in range(ct.num_fields)],\n" +
+                    "       'enc':sorted(set(col.field('chunk_encoding').to_pylist())),\n" +
+                    "       'cv_null':sum(1 for x in cv if x is None),\n" +
+                    "       'cv_present_empty':sum(1 for x in cv if x is not None and len(x)==0),\n" +
+                    "       'rows':len(cv),\n" +
+                    "       'npk_item':str(ct.field(6).type.value_field.type)}\n" +
+                    "print(json.dumps(out))\n";
+                var o = PyArrow(archive, "spectra_data.parquet", snippet);
+                var names = o["names"].Select(x => (string)x).ToArray();
+                Assert.That(names, Is.EqualTo(new[]
+                {
+                    "spectrum_index", "mz_chunk_start", "mz_chunk_end", "mz_chunk_values",
+                    "chunk_encoding", "intensity", "mz_numpress_linear_bytes"
+                }), "numpress chunk struct has 7 fields incl mz_numpress_linear_bytes");
+                Assert.That(o["enc"].Select(x => (string)x).ToArray(), Is.EqualTo(new[] { "MS:1002312" }),
+                    "chunk_encoding == MS:1002312");
+                Assert.That((int)o["cv_null"], Is.EqualTo((int)o["rows"]),
+                    "mz_chunk_values null_count == row count");
+                Assert.That((int)o["cv_present_empty"], Is.EqualTo(0),
+                    "mz_chunk_values has ZERO present/empty lists (genuinely null, not zero-length)");
+                Assert.That((string)o["npk_item"], Is.EqualTo("uint8"), "numpress bytes item is uint8");
+
+                var footerSnippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "m = pq.read_metadata(r'{PARQUET}').metadata\n" +
+                    "print(m[b'spectrum_array_index'].decode())\n";
+                var f = PyArrow(archive, "spectra_data.parquet", footerSnippet);
+                Assert.That((string)f["prefix"], Is.EqualTo("chunk"));
+                var entries = (JArray)f["entries"];
+                Assert.That(entries.Select(e => (string)e["buffer_format"]).ToArray(),
+                    Is.EqualTo(new[] { "chunk_start", "chunk_end", "chunk_values", "chunk_encoding", "chunk_secondary", "chunk_transform" }));
+                var npk = entries.First(e => (string)e["path"] == "chunk.mz_numpress_linear_bytes");
+                Assert.That((string)npk["buffer_format"], Is.EqualTo("chunk_transform"));
+                Assert.That((string)npk["transform"], Is.EqualTo("MS:1002312"));
+                Assert.That((int)npk["sorting_rank"], Is.EqualTo(0));
+                var inten = entries.First(e => (string)e["path"] == "chunk.intensity");
+                Assert.That((string)inten["buffer_format"], Is.EqualTo("chunk_secondary"));
+                Assert.That((string)inten["transform"], Is.EqualTo("MS:1003902"));
+                Assert.That(inten["sorting_rank"].Type, Is.EqualTo(JTokenType.Null), "intensity entry unchanged");
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Test]
+        public void Numpress_L2_Bound_And_Intensity_BitExact_vs_Lossless()
+        {
+            var numpress = Convert(DataMode.Numpress, out var ndir);
+            var lossless = Convert(DataMode.Lossless, out var ldir);
+            try
+            {
+                // Decode numpress m/z per chunk via OUR C# anchor-aligned codec (pyarrow only supplies the
+                // raw bytes / anchors / intensity). Compare positionally to --lossless (Phase-2 bit-exact).
+                var npSnippet =
+                    "import pyarrow.parquet as pq, json, struct\n" +
+                    "t = pq.read_table(r'{PARQUET}').column('chunk').combine_chunks()\n" +
+                    "si=t.field('spectrum_index').to_pylist(); cs=t.field('mz_chunk_start').to_pylist()\n" +
+                    "ce=t.field('mz_chunk_end').to_pylist(); nb=t.field('mz_numpress_linear_bytes').to_pylist()\n" +
+                    "inn=t.field('intensity').to_pylist()\n" +
+                    "rows=[]\n" +
+                    "for i in range(len(si)):\n" +
+                    "    rows.append({'si':si[i],'cs':cs[i],'ce':ce[i],'nb':[int(x) for x in bytes(nb[i])],\n" +
+                    "                 'int':[struct.unpack('<i',struct.pack('<f',float(x)))[0] for x in inn[i]]})\n" +
+                    "print(json.dumps(rows))\n";
+                var npRows = PyArrowArray(numpress, "spectra_data.parquet", npSnippet);
+
+                var lossSnippet =
+                    "import pyarrow.parquet as pq, json, struct\n" +
+                    "def dd(start, arr):\n" +
+                    "    buf=[]; last=start\n" +
+                    "    if not arr: return [start]\n" +
+                    "    if arr[0] is None:\n" +
+                    "        if len(arr)>1 and arr[1] is None: buf.append(last)\n" +
+                    "        last=None\n" +
+                    "    else: buf.append(start)\n" +
+                    "    for it in arr:\n" +
+                    "        if it is not None:\n" +
+                    "            if last is not None: last=it+last; buf.append(last)\n" +
+                    "            else: buf.append(it); last=it\n" +
+                    "        else: buf.append(None); last=None\n" +
+                    "    return buf\n" +
+                    "from collections import defaultdict\n" +
+                    "t = pq.read_table(r'{PARQUET}').column('chunk').combine_chunks()\n" +
+                    "si=t.field('spectrum_index').to_pylist(); cs=t.field('mz_chunk_start').to_pylist()\n" +
+                    "cv=t.field('mz_chunk_values').to_pylist(); inn=t.field('intensity').to_pylist()\n" +
+                    "mz=defaultdict(list); it=defaultdict(list)\n" +
+                    "for i in range(len(si)):\n" +
+                    "    dmz=dd(cs[i], cv[i] if cv[i] is not None else [])\n" +
+                    "    for m,v in zip(dmz, inn[i]):\n" +
+                    "        if m is None or v is None: continue\n" +
+                    "        mz[si[i]].append(m); it[si[i]].append(struct.unpack('<i',struct.pack('<f',float(v)))[0])\n" +
+                    "print(json.dumps({'mz':{str(k):v for k,v in mz.items()},'it':{str(k):v for k,v in it.items()}}))\n";
+                var loss = PyArrow(lossless, "spectra_data.parquet", lossSnippet);
+                var lossMz = (JObject)loss["mz"];
+                var lossIt = (JObject)loss["it"];
+
+                // Anti-vacuity: at least one chunk row.
+                Assert.That(npRows.Count, Is.GreaterThan(0), "numpress has at least one chunk row");
+
+                long pointCount = ArchivePointCount(numpress);
+
+                var npMz = new Dictionary<string, List<double>>();
+                var npIt = new Dictionary<string, List<int>>();
+                long totalCompared = 0;
+
+                foreach (var row in npRows)
+                {
+                    double cs = (double)row["cs"], ce = (double)row["ce"];
+                    var bytes = ((JArray)row["nb"]).Select(x => (byte)(int)x).ToArray();
+                    var inten = ((JArray)row["int"]).Select(x => (int)x).ToList();
+
+                    double fp = NpFixedPoint(bytes);
+                    Assert.That(double.IsFinite(fp) && fp > 0.0, Is.True, "per-chunk fp finite and > 0");
+
+                    var dec = MzPeakChunkCodec.NumpressDecode(cs, ce, bytes);
+                    Assert.That(dec.Length, Is.EqualTo(inten.Count),
+                        "decoded m/z length == chunk intensity length");
+
+                    // The numpress half-step bound is 0.5/fp; allow a small relative slack for the
+                    // round-half quantization and the floating-point division on reconstruction.
+                    double bound = (0.5 / fp) * (1.0 + 1e-6);
+                    // start anchor (always); end anchor when >= 1 value; 1/2-value chunks guarded.
+                    Assert.That(Math.Abs(dec[0] - cs), Is.LessThanOrEqualTo(bound), "start anchor within 0.5/fp");
+                    Assert.That(Math.Abs(dec[dec.Length - 1] - ce), Is.LessThanOrEqualTo(bound), "end anchor within 0.5/fp");
+
+                    var key = ((ulong)(double)row["si"]).ToString();
+                    if (!npMz.ContainsKey(key)) { npMz[key] = new List<double>(); npIt[key] = new List<int>(); }
+                    foreach (var m in dec) npMz[key].Add(m);
+                    npIt[key].AddRange(inten);
+
+                    // per-chunk: numpress m/z within 0.5/fp of the SAME-position lossless m/z handled below.
+                    totalCompared += dec.Length;
+                }
+
+                Assert.That(totalCompared, Is.EqualTo(pointCount),
+                    "total compared m/z == spectrum_data_point_count (no chunk skipped, no value dropped)");
+
+                Assert.That(npMz.Keys.OrderBy(x => x), Is.EqualTo(lossMz.Properties().Select(p => p.Name).OrderBy(x => x)),
+                    "same spectrum_index set as --lossless");
+
+                int intMismatch = 0;
+                double worstAbs = 0;
+                foreach (var kv in npMz)
+                {
+                    var lm = ((JArray)lossMz[kv.Key]).Select(x => (double)x).ToArray();
+                    var li = ((JArray)lossIt[kv.Key]).Select(x => (int)x).ToArray();
+                    Assert.That(kv.Value.Count, Is.EqualTo(lm.Length),
+                        $"spectrum {kv.Key} decoded length == lossless length");
+                    for (int i = 0; i < lm.Length; i++)
+                        worstAbs = Math.Max(worstAbs, Math.Abs(kv.Value[i] - lm[i]));
+                    if (!npIt[kv.Key].SequenceEqual(li)) intMismatch++;
+                }
+
+                Assert.That(intMismatch, Is.EqualTo(0), "intensity bit-exact f32 vs --lossless");
+                // Worst case across small.RAW with smallest fp ~ 1e6 => ~5e-7 Th.
+                Assert.That(worstAbs, Is.LessThanOrEqualTo(5e-7),
+                    $"numpress m/z within the numpress-linear bound vs lossless (worst {worstAbs})");
+            }
+            finally { Directory.Delete(ndir, true); Directory.Delete(ldir, true); }
+        }
+
+        [Test]
+        public void Numpress_Smaller_Than_Delta_Chunked()
+        {
+            var numpress = Convert(DataMode.Numpress, out var ndir);
+            var lossless = Convert(DataMode.Lossless, out var ldir);
+            try
+            {
+                long np = ReadEntry(numpress, "spectra_data.parquet").Length;
+                long delta = ReadEntry(lossless, "spectra_data.parquet").Length;
+                Assert.That(np, Is.LessThan(delta),
+                    $"numpress spectra_data ({np}) must be smaller than delta-chunked ({delta})");
+            }
+            finally { Directory.Delete(ndir, true); Directory.Delete(ldir, true); }
+        }
+
+        [Test]
+        public void Validator_ThreeModes_ZeroErrors()
+        {
+            var validator = ResolveValidator();
+            if (validator == null) Assert.Ignore("mzpeak-validate not available");
+
+            foreach (var mode in new[] { DataMode.Numpress, DataMode.Lossless, DataMode.Point })
+            {
+                var archive = Convert(mode, out var dir);
+                var jsonPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".json");
+                try
+                {
+                    var psi = new ProcessStartInfo(validator, $"\"{archive}\" --json \"{jsonPath}\"")
+                    { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                    using (var p = Process.Start(psi))
+                    { p.StandardOutput.ReadToEnd(); p.StandardError.ReadToEnd(); p.WaitForExit(); }
+
+                    Assert.That(File.Exists(jsonPath), "validator must emit a JSON report");
+                    var report = JObject.Parse(File.ReadAllText(jsonPath));
+                    var errors = ((JArray)report["findings"])
+                        .Where(f => (string)f["level"] == "error")
+                        .Select(f => (string)f["ruleId"]).ToArray();
+                    Assert.That(errors, Is.Empty, $"{mode} archive must validate 0 errors: {string.Join(",", errors)}");
+                }
+                finally
+                {
+                    if (File.Exists(jsonPath)) File.Delete(jsonPath);
+                    Directory.Delete(dir, true);
+                }
+            }
+        }
+
+        private static double NpFixedPoint(byte[] b)
+        {
+            var fp = new byte[8];
+            for (int i = 0; i < 8; i++) fp[i] = BitConverter.IsLittleEndian ? b[7 - i] : b[i];
+            return BitConverter.ToDouble(fp, 0);
+        }
+
+        private static long ArchivePointCount(string archive)
+        {
+            var snippet =
+                "import pyarrow.parquet as pq\n" +
+                "m = pq.read_metadata(r'{PARQUET}').metadata\n" +
+                "print('{\\\"n\\\":' + m[b'spectrum_data_point_count'].decode() + '}')\n";
+            return (long)PyArrow(archive, "spectra_data.parquet", snippet)["n"];
+        }
+
+        // PyArrow variant that returns a JSON array (the standard PyArrow asserts a JSON object).
+        private static List<JObject> PyArrowArray(string archive, string entry, string snippet)
+        {
+            var python = ResolvePython();
+            if (python == null) Assert.Ignore("python3/pyarrow not available");
+            var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".parquet");
+            File.WriteAllBytes(path, ReadEntry(archive, entry));
+            try
+            {
+                var code = snippet.Replace("{PARQUET}", path.Replace("\\", "\\\\"));
+                var psi = new ProcessStartInfo(python, "-c \"" + code.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"")
+                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                using (var proc = Process.Start(psi))
+                {
+                    var stdout = proc.StandardOutput.ReadToEnd();
+                    var stderr = proc.StandardError.ReadToEnd();
+                    proc.WaitForExit();
+                    Assert.That(proc.ExitCode, Is.EqualTo(0), $"pyarrow failed: {stderr}");
+                    return JArray.Parse(stdout.Trim()).Cast<JObject>().ToList();
+                }
+            }
+            finally { File.Delete(path); }
         }
 
         [Test]
