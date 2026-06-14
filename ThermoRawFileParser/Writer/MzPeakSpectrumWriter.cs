@@ -142,7 +142,7 @@ namespace ThermoRawFileParser.Writer
         // preserved. The Thermo SegmentedScan/CentroidStream are already ascending; a paired
         // index sort is applied only when an ascending violation is detected, never dropping or
         // merging equal-m/z points.
-        private static (double[] mz, float[] intensity) OrderedPairs(double[] masses, double[] intensities)
+        public static (double[] mz, float[] intensity) OrderedPairs(double[] masses, double[] intensities)
         {
             var n = masses?.Length ?? 0;
             var mz = new double[n];
