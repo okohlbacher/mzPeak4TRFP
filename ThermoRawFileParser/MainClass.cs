@@ -601,9 +601,13 @@ namespace ThermoRawFileParser
                     "chunk-size=", "mzPeak: m/z window width for chunked spectra_data (default 50.0).",
                     v =>
                     {
-                        if (double.TryParse(v, NumberStyles.Float | NumberStyles.AllowThousands,
-                                CultureInfo.InvariantCulture, out var cs) && cs > 0.0)
-                            parseInput.MzPeakChunkSize = cs;
+                        if (!double.TryParse(v, NumberStyles.Float | NumberStyles.AllowThousands,
+                                CultureInfo.InvariantCulture, out var cs)
+                            || !(cs > 0.0) || double.IsInfinity(cs))
+                            throw new OptionException(
+                                "Invalid --chunk-size '" + v + "': must be a finite number greater than 0.",
+                                "chunk-size");
+                        parseInput.MzPeakChunkSize = cs;
                     }
                 },
                 {

@@ -31,8 +31,9 @@ namespace ThermoRawFileParser.Writer
         // Point rows are ~20 bytes, so one row-group buffer per open facet is bounded and predictable.
         private const int RowGroupRowCap = 1_048_576;
 
-        // Test seam: when set, the streamed flush path uses this cap so a test can force >=2 row groups
-        // through the real writer. Production runs leave it null and use RowGroupRowCap.
+        // Optional override of the streamed flush cap. When set, the streamed flush path uses this value
+        // instead of RowGroupRowCap, lowering the per-row-group bound so a small input still emits
+        // multiple row groups through the writer. Left null in normal operation.
         internal static int? TestRowGroupRowCap;
 
         private int Cap => TestRowGroupRowCap ?? RowGroupRowCap;
@@ -153,16 +154,16 @@ namespace ThermoRawFileParser.Writer
         {
         }
 
-        // Per-scan injection point: when set, it is invoked AFTER the scan's filter key is staged but
-        // BEFORE the scan commits. Throwing here reproduces a read/build failure on an already-keyed scan
-        // so a test can prove that a skipped parent commits no precursor-map entry and a later child never
-        // resolves through it. Production runs leave it null.
+        // Optional per-scan callback invoked AFTER the scan's filter key is staged but BEFORE the scan
+        // commits. Throwing from it simulates a read/build failure on an already-keyed scan, exercising the
+        // guarantee that a skipped parent commits no precursor-map entry and a later child never resolves
+        // through it. Left null in normal operation.
         internal Action<int> AfterFilterKeyStaged;
 
-        // Per-MSn injection point invoked just before a child's precursor is built, with the child scan
-        // number and the live scan->ordinal map. A test can drop the resolved parent's ordinal here to
-        // reproduce a parent that was read but never emitted, proving the child does not read a selected-ion
-        // intensity through that absent parent. Production runs leave it null.
+        // Optional per-MSn callback invoked just before a child's precursor is built, with the child scan
+        // number and the live scan->ordinal map. Removing the resolved parent's ordinal from the map here
+        // simulates a parent that was read but never emitted, exercising the guarantee that the child does
+        // not read a selected-ion intensity through that absent parent. Left null in normal operation.
         internal Action<int, IDictionary<int, ulong>> BeforeBuildPrecursor;
 
         // Everything staged from a single scan, held in locals until the scan fully succeeds. A read/build
@@ -368,7 +369,7 @@ namespace ThermoRawFileParser.Writer
                     : _filterStringParentMzPattern.Match(scanEvent.ToString()));
             var filterKey = level == 1 ? "" : (filterMatch != null && filterMatch.Success ? filterMatch.Groups[1].Value : "");
 
-            // Failure injection point: the filter key is staged but nothing has committed. A throw here is
+            // The filter key is staged but nothing has committed yet. A failure raised here is
             // indistinguishable from a real post-key read failure and must leave no trace of this scan.
             AfterFilterKeyStaged?.Invoke(scanNumber);
 

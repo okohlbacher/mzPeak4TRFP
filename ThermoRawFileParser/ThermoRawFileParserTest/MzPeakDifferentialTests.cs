@@ -96,12 +96,26 @@ namespace ThermoRawFileParserTest
             "    z = zipfile.ZipFile(zpath)\n" +
             "    return pq.read_table(io.BytesIO(z.read(name))).to_pylist() if name in z.namelist() else None\n" +
             "ref_data = read(ref_path, 'spectra_data.parquet')\n" +
+            "def dd(start, arr):\n" +
+            "    buf=[]; last=start\n" +
+            "    if not arr: return [start]\n" +
+            "    if arr[0] is None:\n" +
+            "        if len(arr)>1 and arr[1] is None: buf.append(last)\n" +
+            "        last=None\n" +
+            "    else: buf.append(start)\n" +
+            "    for it in arr:\n" +
+            "        if it is not None:\n" +
+            "            if last is not None: last=it+last; buf.append(last)\n" +
+            "            else: buf.append(it); last=it\n" +
+            "        else: buf.append(None); last=None\n" +
+            "    return buf\n" +
             "ref = collections.defaultdict(list)\n" +
             "for r in ref_data:\n" +
-            "    c = r['chunk']; si = c['spectrum_index']; mz = c['mz_chunk_start']\n" +
-            "    ref[si].append((mz, c['intensity'][0]))\n" +
-            "    for d, it in zip(c['mz_chunk_values'], c['intensity'][1:]):\n" +
-            "        mz += d; ref[si].append((mz, it))\n" +
+            "    c = r['chunk']; si = c['spectrum_index']\n" +
+            "    dmz = dd(c['mz_chunk_start'], c['mz_chunk_values'] if c['mz_chunk_values'] is not None else [])\n" +
+            "    for mz, it in zip(dmz, c['intensity']):\n" +
+            "        if mz is None or it is None: continue\n" +
+            "        ref[si].append((mz, it))\n" +
             "ref_profile_indices = sorted(ref.keys())\n" +
             "ref_peaks = read(ref_path, 'spectra_peaks.parquet')\n" +
             "refpk = collections.defaultdict(list)\n" +

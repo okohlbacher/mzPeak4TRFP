@@ -115,6 +115,25 @@ namespace ThermoRawFileParserTest
         }
 
         [Test]
+        public void Chunk_NonFiniteOrNonPositiveWidth_Throws()
+        {
+            var mz = new[] { 100.0, 150.0, 200.0 };
+
+            // A non-positive or non-finite width never advances the partition threshold; each must throw
+            // rather than loop forever.
+            Assert.Throws<ArgumentOutOfRangeException>(() => MzPeakChunkCodec.Chunk(mz, 0.0), "width 0");
+            Assert.Throws<ArgumentOutOfRangeException>(() => MzPeakChunkCodec.Chunk(mz, -1.0), "width -1");
+            Assert.Throws<ArgumentOutOfRangeException>(() => MzPeakChunkCodec.Chunk(mz, double.NaN), "width NaN");
+            Assert.Throws<ArgumentOutOfRangeException>(
+                () => MzPeakChunkCodec.Chunk(mz, double.PositiveInfinity), "width +inf");
+
+            // A valid finite width partitions normally and covers every point.
+            var chunks = MzPeakChunkCodec.Chunk(mz, 50.0);
+            Assert.That(chunks.Count, Is.GreaterThan(0), "valid width yields chunks");
+            Assert.That(chunks.Sum(c => c.end - c.start), Is.EqualTo(mz.Length), "all points covered");
+        }
+
+        [Test]
         public void RefNull_NoneAbsoluteDelta_DecodesLikeReference()
         {
             // Reproduces refs/mzPeak/small.chunked.mzpeak row 1 (spectrum 0): a leading null, then an
@@ -411,6 +430,88 @@ namespace ThermoRawFileParserTest
             finally { Directory.Delete(cdir, true); Directory.Delete(pdir, true); }
         }
 
+        // The chunk decode snippet shared by the bitwise-equivalence locks: null-aware delta decode of
+        // every chunk row across ALL row groups (pyarrow read_table merges row groups), emitting a
+        // per-spectrum map of sorted [mz_bits, intensity_bits] pairs with null pairs dropped.
+        private const string ChunkDecodeSnippet =
+            "import pyarrow.parquet as pq, json, struct\n" +
+            "from collections import defaultdict\n" +
+            "def dd(start, arr):\n" +
+            "    buf=[]; last=start\n" +
+            "    if not arr: return [start]\n" +
+            "    if arr[0] is None:\n" +
+            "        if len(arr)>1 and arr[1] is None: buf.append(last)\n" +
+            "        last=None\n" +
+            "    else: buf.append(start)\n" +
+            "    for it in arr:\n" +
+            "        if it is not None:\n" +
+            "            if last is not None: last=it+last; buf.append(last)\n" +
+            "            else: buf.append(it); last=it\n" +
+            "        else: buf.append(None); last=None\n" +
+            "    return buf\n" +
+            "t = pq.read_table(r'{PARQUET}').column('chunk').combine_chunks()\n" +
+            "si=t.field('spectrum_index').to_pylist(); cs=t.field('mz_chunk_start').to_pylist()\n" +
+            "cv=t.field('mz_chunk_values').to_pylist(); inn=t.field('intensity').to_pylist()\n" +
+            "d=defaultdict(list)\n" +
+            "for i in range(len(si)):\n" +
+            "    dmz=dd(cs[i], cv[i] if cv[i] is not None else [])\n" +
+            "    for m,it in zip(dmz, inn[i]):\n" +
+            "        if m is None or it is None: continue\n" +
+            "        d[si[i]].append([struct.unpack('<q',struct.pack('<d',float(m)))[0], struct.unpack('<i',struct.pack('<f',float(it)))[0]])\n" +
+            "print(json.dumps({str(k):sorted(v) for k,v in d.items()}))\n";
+
+        private static int RowGroupCount(string archive, string entry)
+        {
+            using (var ms = new MemoryStream(ReadEntry(archive, entry)))
+            using (var reader = ParquetReader.CreateAsync(ms).Result)
+                return reader.RowGroupCount;
+        }
+
+        [Test]
+        public void ChunkFacet_MultiRowGroup_Equals_SingleRowGroup()
+        {
+            // Single-row-group chunked run (production cap): one row group for small.RAW.
+            var single = Convert(false, out var sdir);
+            try
+            {
+                Assert.That(RowGroupCount(single, "spectra_data.parquet"), Is.EqualTo(1),
+                    "production cap yields a single chunk row group for small.RAW");
+                var singleKeys = PyArrow(single, "spectra_data.parquet", ChunkDecodeSnippet);
+
+                // Lowered-cap chunked run through the REAL writer flush path: forces >=2 chunk row groups.
+                string mdir = null, multi = null;
+                try
+                {
+                    MzPeakSpectrumWriter.TestRowGroupRowCap = 8;
+                    multi = Convert(false, out mdir);
+                    Assert.That(RowGroupCount(multi, "spectra_data.parquet"), Is.GreaterThan(1),
+                        "lowered cap must drive the chunk list-column flush path into multiple row groups");
+
+                    var multiKeys = PyArrow(multi, "spectra_data.parquet", ChunkDecodeSnippet);
+
+                    Assert.That(multiKeys.Properties().Select(p => p.Name).OrderBy(x => x),
+                        Is.EqualTo(singleKeys.Properties().Select(p => p.Name).OrderBy(x => x)),
+                        "same spectrum_index set across caps");
+
+                    foreach (var prop in singleKeys.Properties())
+                    {
+                        var s = ((JArray)prop.Value).Select(a => ((long)a[0], (int)a[1]))
+                            .OrderBy(x => x).ToArray();
+                        var m = ((JArray)multiKeys[prop.Name]).Select(a => ((long)a[0], (int)a[1]))
+                            .OrderBy(x => x).ToArray();
+                        Assert.That(m, Is.EqualTo(s),
+                            $"spectrum {prop.Name}: (mz,intensity) multiset BITWISE-identical across caps");
+                    }
+                }
+                finally
+                {
+                    MzPeakSpectrumWriter.TestRowGroupRowCap = null;
+                    if (mdir != null) Directory.Delete(mdir, true);
+                }
+            }
+            finally { Directory.Delete(sdir, true); }
+        }
+
         [Test]
         public void Validator_Chunked_And_Point_ZeroErrors()
         {
@@ -480,7 +581,7 @@ namespace ThermoRawFileParserTest
                 {
                     var schema = reader.Schema;
                     Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "point/chromatogram_index"),
-                        "chromatograms_data stays the point struct (deliberate Phase-2 deviation)");
+                        "chromatograms_data stays the point struct in chunked mode by design");
                     Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "point/time"));
                     Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "point/ms_level"));
                 }

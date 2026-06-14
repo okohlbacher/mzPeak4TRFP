@@ -37,7 +37,7 @@ namespace ThermoRawFileParserTest
             Directory.CreateDirectory(dir);
             parseInput.OutputDirectory = dir;
             // These fixtures assert the v1 point spectra_data layout, which is now the --point opt-in
-            // (chunked is the default); force point so the v1 invariants stay under test.
+            // (chunked is the default); force point so the v1 invariants continue to be asserted here.
             parseInput.MzPeakPointLayout = true;
             RawFileParser.Parse(parseInput);
             Assert.That(parseInput.Errors, Is.EqualTo(0));

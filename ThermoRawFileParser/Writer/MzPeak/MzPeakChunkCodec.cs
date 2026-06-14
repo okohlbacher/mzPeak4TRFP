@@ -102,6 +102,12 @@ namespace ThermoRawFileParser.Writer
         // Throws ArgumentException on non-monotonic (descending) input; the codec assumes ascending order.
         public static List<(int start, int end)> Chunk(double[] mz, double width)
         {
+            // A non-finite or non-positive width never advances the threshold and would loop forever;
+            // reject it up front so the partition loop is always guaranteed to terminate.
+            if (!(width > 0.0) || double.IsInfinity(width))
+                throw new ArgumentOutOfRangeException(nameof(width), width,
+                    "Chunk width must be a finite value greater than 0.");
+
             var result = new List<(int, int)>();
             if (mz == null || mz.Length == 0) return result;
 
