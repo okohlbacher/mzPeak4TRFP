@@ -54,6 +54,31 @@ namespace ThermoRawFileParser.Writer
             "\"array_name\":\"intensity array\",\"unit\":\"MS:1000131\",\"buffer_format\":\"point\",\"buffer_priority\":\"primary\"}" +
             "]}";
 
+        // CURIEs for the chunked spectra_data layout, read verbatim from refs/mzPeak/small.chunked.mzpeak:
+        // the m/z delta-encoding (chunk_encoding column value) and the m/z + intensity transform CURIEs.
+        private const string ChunkEncodingCurie = "MS:1003089";
+        private const string MzTransformCurie = "MS:1003901";
+        private const string IntensityTransformCurie = "MS:1003902";
+
+        private const string ChunkedSpectrumArrayIndex =
+            "{\"prefix\":\"chunk\",\"entries\":[" +
+            "{\"context\":\"spectrum\",\"path\":\"chunk.mz_chunk_start\",\"data_type\":\"MS:1000523\",\"array_type\":\"MS:1000514\"," +
+            "\"array_name\":\"m/z array\",\"unit\":\"MS:1000040\",\"buffer_format\":\"chunk_start\",\"transform\":\"MS:1003901\"," +
+            "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":0}," +
+            "{\"context\":\"spectrum\",\"path\":\"chunk.mz_chunk_end\",\"data_type\":\"MS:1000523\",\"array_type\":\"MS:1000514\"," +
+            "\"array_name\":\"m/z array\",\"unit\":\"MS:1000040\",\"buffer_format\":\"chunk_end\",\"transform\":\"MS:1003901\"," +
+            "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":0}," +
+            "{\"context\":\"spectrum\",\"path\":\"chunk.mz_chunk_values\",\"data_type\":\"MS:1000523\",\"array_type\":\"MS:1000514\"," +
+            "\"array_name\":\"m/z array\",\"unit\":\"MS:1000040\",\"buffer_format\":\"chunk_values\",\"transform\":\"MS:1003901\"," +
+            "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":0}," +
+            "{\"context\":\"spectrum\",\"path\":\"chunk.chunk_encoding\",\"data_type\":\"MS:1000523\",\"array_type\":\"MS:1000514\"," +
+            "\"array_name\":\"m/z array\",\"unit\":\"MS:1000040\",\"buffer_format\":\"chunk_encoding\",\"transform\":\"MS:1003901\"," +
+            "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":0}," +
+            "{\"context\":\"spectrum\",\"path\":\"chunk.intensity\",\"data_type\":\"MS:1000521\",\"array_type\":\"MS:1000515\"," +
+            "\"array_name\":\"intensity array\",\"unit\":\"MS:1000131\",\"buffer_format\":\"chunk_secondary\",\"transform\":\"MS:1003902\"," +
+            "\"data_processing_id\":null,\"buffer_priority\":\"primary\"}" +
+            "]}";
+
         private const string ChromatogramArrayIndex =
             "{\"prefix\":\"point\",\"entries\":[" +
             "{\"context\":\"chromatogram\",\"path\":\"point.time\",\"data_type\":\"MS:1000523\",\"array_type\":\"MS:1000595\"," +
@@ -172,13 +197,15 @@ namespace ThermoRawFileParser.Writer
 
             // Constructed INSIDE the try so a temp-file/handle open that throws for a later facet still
             // disposes and deletes every facet created so far (the finally guards each handle for null).
-            PointFacetStream dataFacet = null;
+            ISpectraDataFacet dataFacet = null;
             PointFacetStream peaksFacet = null;
             ChromDataFacetStream chromFacet = null;
 
             try
             {
-                dataFacet = new PointFacetStream(Cap);
+                dataFacet = ParseInput.MzPeakPointLayout
+                    ? (ISpectraDataFacet)new PointFacetStream(Cap)
+                    : new ChunkFacetStream(Cap, ParseInput.MzPeakChunkSize);
                 peaksFacet = new PointFacetStream(Cap);
                 chromFacet = new ChromDataFacetStream(Cap);
 
@@ -237,8 +264,16 @@ namespace ThermoRawFileParser.Writer
                 // metadata facet so the generated cv_list — finalized inside the metadata facet — covers
                 // every prefix the archive uses.
                 RegisterChromDataPrefixes();
+                if (!ParseInput.MzPeakPointLayout)
+                {
+                    CollectPrefix(ChunkEncodingCurie);
+                    CollectPrefix(MzTransformCurie);
+                    CollectPrefix(IntensityTransformCurie);
+                }
 
-                var dataMeta = PointFooter((int)ordinal, dataFacet.PointCount);
+                var dataMeta = ParseInput.MzPeakPointLayout
+                    ? PointFooter((int)ordinal, dataFacet.PointCount)
+                    : ChunkFooter((int)ordinal, dataFacet.PointCount);
                 var peaksMeta = PointFooter(peakSpectra.Count, peaksFacet.PointCount);
                 var chromMeta = new Dictionary<string, string>
                 {
@@ -394,6 +429,16 @@ namespace ThermoRawFileParser.Writer
                 ["spectrum_count"] = spectrumCount.ToString(),
                 ["spectrum_data_point_count"] = pointCount.ToString(),
                 ["spectrum_array_index"] = SpectrumArrayIndex
+            };
+
+        // Footer KV for the chunked spectra_data facet: same count keys as the point facet, with the chunk
+        // spectrum_array_index instead of the point one.
+        private static Dictionary<string, string> ChunkFooter(int spectrumCount, long pointCount) =>
+            new Dictionary<string, string>
+            {
+                ["spectrum_count"] = spectrumCount.ToString(),
+                ["spectrum_data_point_count"] = pointCount.ToString(),
+                ["spectrum_array_index"] = ChunkedSpectrumArrayIndex
             };
 
         // Returns the (mz,intensity) pairs in non-decreasing m/z order with the full multiset
@@ -737,6 +782,17 @@ namespace ThermoRawFileParser.Writer
                 new DataField<double>("mz"),
                 new DataField<float>("intensity"));
 
+        // The 6-field chunk struct of the reference spectra_data chunk layout. mz_chunk_values / intensity
+        // are nullable-item lists (the writer emits no nulls; the type stays null-aware for read parity).
+        private static StructField ChunkStructField() =>
+            new StructField("chunk",
+                new DataField<ulong>("spectrum_index"),
+                new DataField<double>("mz_chunk_start"),
+                new DataField<double>("mz_chunk_end"),
+                new ListField("mz_chunk_values", new DataField<double>("item", true)),
+                new DataField<string>("chunk_encoding"),
+                new ListField("intensity", new DataField<float>("item", true)));
+
         private static StructField ChromDataStructField() =>
             new StructField("point",
                 new DataField<ulong>("chromatogram_index"),
@@ -749,12 +805,23 @@ namespace ThermoRawFileParser.Writer
             foreach (var curie in ChromDataAccessions) CollectPrefix(curie);
         }
 
+        // The spectra_data facet contract shared by the point and chunk layouts: append a scan's
+        // (mz,intensity) arrays, expose the running data-point count and temp path, and close with the
+        // footer KV. The Write() path selects the implementation by the layout flag.
+        private interface ISpectraDataFacet : IDisposable
+        {
+            string TempPath { get; }
+            long PointCount { get; }
+            void Append(ulong ordinal, double[] mz, float[] intensity);
+            void Close(IReadOnlyDictionary<string, string> finalMetadata);
+        }
+
         // A point-facet (spectra_data / spectra_peaks) streamed to a seekable temp file in bounded row
         // groups. Staging buffers accumulate per scan and flush at the cap; the final residual buffer is
         // flushed by Close, which also attaches the footer KV before disposing the writer.
-        private sealed class PointFacetStream : IDisposable
+        private sealed class PointFacetStream : IDisposable, ISpectraDataFacet
         {
-            public readonly string TempPath;
+            public string TempPath { get; }
             private readonly ParquetSchema _schema;
             private readonly DataField _idx, _mz, _int;
             private readonly int _cap;
@@ -824,6 +891,144 @@ namespace ThermoRawFileParser.Writer
 
             // Finalize order: flush residual buffer -> CloseAsync(final KV) disposes the writer -> dispose
             // the temp FileStream. After this returns the temp file is fully on disk.
+            public void Close(IReadOnlyDictionary<string, string> finalMetadata)
+            {
+                Flush();
+                _handle.CloseAsync(finalMetadata).GetAwaiter().GetResult();
+                _handle = null;
+                _sink.Dispose();
+                _sink = null;
+            }
+
+            public void Dispose()
+            {
+                _handle?.Dispose();
+                _sink?.Dispose();
+            }
+        }
+
+        // A chunked spectra_data facet streamed to a seekable temp file. One chunk struct row per
+        // non-empty m/z window per scan: scalar spectrum_index/start/end/encoding plus the two
+        // nullable-item lists (mz_chunk_values delta-encoded, intensity verbatim). The row-group cap counts
+        // chunk ROWS, not points; a scan contributes as many rows as it has windows.
+        private sealed class ChunkFacetStream : IDisposable, ISpectraDataFacet
+        {
+            public string TempPath { get; }
+            private readonly ParquetSchema _schema;
+            private readonly DataField _idx, _start, _end, _enc, _mzItem, _intItem;
+            private readonly int _cap;
+            private readonly double _chunkSize;
+            private FileStream _sink;
+            private MzPeakParquet.Handle _handle;
+
+            private readonly List<ulong> _bIdx = new List<ulong>();
+            private readonly List<double> _bStart = new List<double>();
+            private readonly List<double> _bEnd = new List<double>();
+            private readonly List<string> _bEnc = new List<string>();
+            private readonly List<MzPeakParquet.LeafRow> _mzRows = new List<MzPeakParquet.LeafRow>();
+            private readonly List<double> _mzVals = new List<double>();
+            private readonly List<MzPeakParquet.LeafRow> _intRows = new List<MzPeakParquet.LeafRow>();
+            private readonly List<float> _intVals = new List<float>();
+
+            public long PointCount { get; private set; }
+
+            public ChunkFacetStream(int cap, double chunkSize)
+            {
+                _cap = cap;
+                _chunkSize = chunkSize;
+                TempPath = Path.GetTempFileName();
+                _schema = new ParquetSchema(ChunkStructField());
+                _idx = Leaf(_schema, "chunk/spectrum_index");
+                _start = Leaf(_schema, "chunk/mz_chunk_start");
+                _end = Leaf(_schema, "chunk/mz_chunk_end");
+                _enc = Leaf(_schema, "chunk/chunk_encoding");
+                _mzItem = Leaf(_schema, "chunk/mz_chunk_values/list/item");
+                _intItem = Leaf(_schema, "chunk/intensity/list/item");
+                try
+                {
+                    _sink = new FileStream(TempPath, FileMode.Create, FileAccess.Write);
+                    _handle = MzPeakParquet.OpenAsync(_sink, _schema, null).GetAwaiter().GetResult();
+                }
+                catch
+                {
+                    _handle?.Dispose();
+                    _sink?.Dispose();
+                    TryDelete(TempPath);
+                    throw;
+                }
+            }
+
+            // Builds one chunk row per non-empty window. Empty scans contribute no row.
+            public void Append(ulong ordinal, double[] mz, float[] intensity)
+            {
+                foreach (var (s, e) in MzPeakChunkCodec.Chunk(mz, _chunkSize))
+                {
+                    var slice = new double?[e - s];
+                    for (int i = s; i < e; i++) slice[i - s] = mz[i];
+                    MzPeakChunkCodec.DeltaEncode(slice, out var start, out var end, out var values);
+
+                    _bIdx.Add(ordinal);
+                    _bStart.Add(start);
+                    _bEnd.Add(end);
+                    _bEnc.Add(ChunkEncodingCurie);
+
+                    if (values.Length == 0)
+                    {
+                        _mzRows.Add(MzPeakParquet.EmptyList((ListField)FindField(_schema, "chunk/mz_chunk_values")));
+                    }
+                    else
+                    {
+                        var levels = new int[values.Length];
+                        var has = new bool[values.Length];
+                        for (int i = 0; i < values.Length; i++)
+                        {
+                            levels[i] = _mzItem.MaxDefinitionLevel; has[i] = true;
+                            _mzVals.Add(values[i].Value);
+                        }
+                        _mzRows.Add(MzPeakParquet.ListOf(levels, has));
+                    }
+
+                    int k = e - s;
+                    var iLevels = new int[k];
+                    var iHas = new bool[k];
+                    for (int i = 0; i < k; i++)
+                    {
+                        iLevels[i] = _intItem.MaxDefinitionLevel; iHas[i] = true;
+                        _intVals.Add(intensity[s + i]);
+                    }
+                    _intRows.Add(MzPeakParquet.ListOf(iLevels, iHas));
+
+                    PointCount += k;
+                    if (_bIdx.Count >= _cap) Flush();
+                }
+            }
+
+            private void Flush()
+            {
+                if (_bIdx.Count == 0) return;
+                var present = _bIdx.Select(_ => true).ToArray();
+                var (idxDef, _i) = MzPeakParquet.NestedLevels(_idx, present.Select(_ => MzPeakParquet.Present(_idx)).ToArray());
+                var (startDef, _s) = MzPeakParquet.NestedLevels(_start, present.Select(_ => MzPeakParquet.Present(_start)).ToArray());
+                var (endDef, _e) = MzPeakParquet.NestedLevels(_end, present.Select(_ => MzPeakParquet.Present(_end)).ToArray());
+                var (encDef, _c) = MzPeakParquet.NestedLevels(_enc, present.Select(_ => MzPeakParquet.Present(_enc)).ToArray());
+                var (mzDef, mzRep) = MzPeakParquet.NestedLevels(_mzItem, _mzRows);
+                var (intDef, intRep) = MzPeakParquet.NestedLevels(_intItem, _intRows);
+
+                var cols = new Dictionary<DataField, (Array, int[], int[])>
+                {
+                    [_idx] = (_bIdx.ToArray(), idxDef, null),
+                    [_start] = (_bStart.ToArray(), startDef, null),
+                    [_end] = (_bEnd.ToArray(), endDef, null),
+                    [_enc] = (_bEnc.ToArray(), encDef, null),
+                    [_mzItem] = (_mzVals.ToArray(), mzDef, mzRep),
+                    [_intItem] = (_intVals.ToArray(), intDef, intRep)
+                };
+                _handle.WriteRowGroupAsync(_schema, cols).GetAwaiter().GetResult();
+
+                _bIdx.Clear(); _bStart.Clear(); _bEnd.Clear(); _bEnc.Clear();
+                _mzRows.Clear(); _mzVals.Clear(); _intRows.Clear(); _intVals.Clear();
+            }
+
             public void Close(IReadOnlyDictionary<string, string> finalMetadata)
             {
                 Flush();

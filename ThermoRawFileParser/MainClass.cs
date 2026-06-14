@@ -591,7 +591,20 @@ namespace ThermoRawFileParser
                 },
                 {
                   "w|warningsAreErrors", "Return non-zero exit code for warnings; default only for errors",
-                    v => parseInput.Vigilant = v != null 
+                    v => parseInput.Vigilant = v != null
+                },
+                {
+                    "point", "mzPeak: emit spectra_data in point layout instead of the default chunk layout.",
+                    v => parseInput.MzPeakPointLayout = v != null
+                },
+                {
+                    "chunk-size=", "mzPeak: m/z window width for chunked spectra_data (default 50.0).",
+                    v =>
+                    {
+                        if (double.TryParse(v, NumberStyles.Float | NumberStyles.AllowThousands,
+                                CultureInfo.InvariantCulture, out var cs) && cs > 0.0)
+                            parseInput.MzPeakChunkSize = cs;
+                    }
                 },
                 {
                     "u:|s3_url:",

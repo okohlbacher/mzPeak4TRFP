@@ -108,6 +108,10 @@ namespace ThermoRawFileParser
 
         public bool Vigilant { get; set; }
 
+        public bool MzPeakPointLayout { get; set; }
+
+        public double MzPeakChunkSize { get; set; }
+
         private S3Loader S3Loader { get; set; }
 
         public string S3AccessKeyId { get; set; }
@@ -139,6 +143,8 @@ namespace ThermoRawFileParser
             NoiseData = false;
             ChargeData = false;
             Vigilant = false;
+            MzPeakPointLayout = false;
+            MzPeakChunkSize = MzPeakChunkCodec.DefaultChunkSize;
             _errors = 0;
             _warnings = 0;
             MaxLevel = 10;
