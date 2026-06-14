@@ -55,3 +55,1020 @@ Output findings as a Markdown list (descriptions only).
 - HALT if zero findings — this is suspicious, re-analyze or ask for guidance
 - HALT if content is empty or unreadable
 
+codex
+I’m reading both files with line numbers so the resolution calls can cite exact plan locations instead of relying on section names alone.
+exec
+/bin/zsh -lc "nl -ba .planning/phases/01-streaming-writer-per-scan-robustness/REVIEW-SYNTHESIS.md | sed -n '1,260p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+     1	# v2 Phase 1 plan review synthesis (plan gate)
+     2	
+     3	codex = REWORK (6 findings). vibe = hung/no-output (flaky again; bp37ltan6) — codex findings are
+     4	comprehensive; fold vibe in if it lands before execution.
+     5	
+     6	## Fixes to fold into 01-01-PLAN.md
+     7	
+     8	| # | Sev | Finding (codex) | Resolution |
+     9	|---|-----|-----------------|------------|
+    10	| S1 | BLOCKER | Streaming footer KV (`spectrum_count`, point counts, `chromatogram_tic_source`) is only known at FINALIZE, but Parquet `CustomMetadata` must be set before the writer is disposed — the plan opens the streaming writer before these are known | Streaming handle supports setting final `CustomMetadata` AFTER all row groups, BEFORE dispose: `CloseAsync(finalMetadata)` (or settable `handle.CustomMetadata` then dispose). Add a test: write row groups → set final metadata → dispose → read footer KV back. |
+    11	| S2 | HIGH | `_precursorScanNumbers[filterKey] = scanNumber` mutates shared state PRE-commit (MzPeakSpectrumWriter.cs:189), so a skipped scan can still influence later precursor resolution even though no rows committed — breaks all-or-nothing | Stage the precursor-map update locally; apply ONLY in the success-commit block (or roll back in `catch`). Test: force a failure after this point, prove later scans don't resolve through the skipped scan. ALL staged state (data, peaks, metadata, precursor/selected_ion, scanNumber→ordinal map, TIC point) commits atomically. |
+    12	| S3 | MED | Disposal ordering of `ParquetWriter` + temp `FileStream` underspecified — `File.OpenRead(temp)` before flush/close → truncated bytes / sharing error | Streaming handle OWNS writer+stream; finalize order = flush residual row group → set final metadata → dispose writer → flush/dispose temp FileStream → `AddStoredFromFile` → delete temp in `finally`. |
+    13	| S4 | MED | Streaming `chromatograms_data` may drop `BuildChromatogramDataFacet`'s `CollectPrefix` side-effects (MzPeakSpectrumWriter.cs:409) that feed the metadata `cv_list` → validation regression | Factor chrom-data schema + CURIE-prefix registration into a helper used by both the streaming path and tests; call prefix registration BEFORE `BuildMetadataFacet`. |
+    14	| S5 | MED | `DataFacetMultiRowGroup` test not decisive: fixed `RowGroupRowCap = 1_048_576` won't trigger multiple row groups on `small.RAW` | Make the cap injectable/internal for tests (or a writer-level synthetic test that forces ≥2 row groups through the real flush path). |
+    15	| S6 | LOW | Task 2 verify validates `/tmp/small-stream.mzpeak` but never creates it (tests stale output) | Make it self-contained: the command creates the archive (CLI convert) or the NUnit test creates+validates that exact file. |
+    16	
+    17	S1 and S2 are load-bearing (S2 is the core all-or-nothing correctness). After revision, recommend a codex
+    18	confirm before execution (the customMetadata-timing + atomic-commit are the make-or-break details).
+
+exec
+/bin/zsh -lc "nl -ba .planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md | sed -n '1,320p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+     1	---
+     2	phase: 01-streaming-writer-per-scan-robustness
+     3	plan: 01
+     4	type: execute
+     5	wave: 1
+     6	depends_on: []
+     7	files_modified:
+     8	  - ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs
+     9	  - ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs
+    10	  - ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs
+    11	  - ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs
+    12	autonomous: true
+    13	requirements: [MEM-01, MEM-02, MEM-03, ROB-01, ROB-02]
+    14	
+    15	must_haves:
+    16	  truths:
+    17	    - "A multi-row-group Parquet facet written via the new streaming path reads back identical (index, m/z, intensity) multiset to the v1 single-row-group facet."
+    18	    - "Footer CustomMetadata set AFTER all row groups are written but BEFORE dispose lands in the file footer and reads back via ParquetReader.CustomMetadata."
+    19	    - "Each streamed data facet is written to a seekable temp FileStream, never to the non-seekable zip-entry stream (no silent in-RAM buffering)."
+    20	    - "small.RAW converts to logical output identical to v1: mzpeak-validate 0/0; spectrum_count == distinct spectrum_index == metadata rows; identical point totals; cv_list covers every CURIE prefix the archive uses."
+    21	    - "A scan that fails after the precursor-map bookkeeping point commits NOTHING: no data/peaks/metadata rows, no ordinal consumed, no scanNumber->ordinal entry, no TIC point, and no _precursorScanNumbers entry — a later child does not resolve its precursor through the skipped scan."
+    22	    - "A RAW file with a bad scan converts to completion: the scan is skipped, logged, error-counted, the archive is valid, and ordinals stay dense with facet/metadata parity intact."
+    23	    - "A ~1 GB Orbitrap RAW converts under bounded peak RSS (independent of spectrum/point count) and validates 0/0."
+    24	  artifacts:
+    25	    - path: "ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs"
+    26	      provides: "Multi-row-group streaming handle (Open -> WriteRowGroup* -> set final CustomMetadata -> Close/Dispose) over a seekable sink; existing WriteAsync untouched"
+    27	      contains: "OpenAsync"
+    28	    - path: "ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs"
+    29	      provides: "Streamed data facets to temp files + STORED-zip stream-copy; per-scan all-or-nothing staging incl. precursor-map; shared chrom-data schema/prefix helper"
+    30	      contains: "AddStoredFromFile"
+    31	    - path: "ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs"
+    32	      provides: "Multi-row-group round-trip + final-metadata-after-row-groups + seekable-sink guard tests"
+    33	      contains: "MultiRowGroup"
+    34	  key_links:
+    35	    - from: "MzPeakSpectrumWriter data-facet flush"
+    36	      to: "MzPeakParquet.WriteRowGroupAsync"
+    37	      via: "row-group buffer flush at RowGroupRowCap"
+    38	      pattern: "WriteRowGroupAsync"
+    39	    - from: "MzPeakSpectrumWriter finalize"
+    40	      to: "STORED zip entry"
+    41	      via: "AddStoredFromFile bounded CopyTo from temp file"
+    42	      pattern: "AddStoredFromFile"
+    43	    - from: "MzPeakSpectrumWriter finalize"
+    44	      to: "facet footer KV (spectrum_count / point counts / chromatogram_tic_source)"
+    45	      via: "final CustomMetadata set after all row groups, before dispose"
+    46	      pattern: "CloseAsync"
+    47	    - from: "MzPeakParquet.OpenAsync"
+    48	      to: "seekable temp FileStream"
+    49	      via: "CanSeek assertion before CreateAsync"
+    50	      pattern: "CanSeek"
+    51	---
+    52	
+    53	<objective>
+    54	Refactor the mzPeak writer so it converts arbitrarily large RAW files in constant memory and survives individual bad scans — WITHOUT changing the v1 point layout, so the work is verifiable against the v1 conformance bar (mzpeak-validate 0/0, identical logical output).
+    55	
+    56	Two mechanical pillars, both fully specified by RESEARCH.md:
+    57	1. Streaming: extend MzPeakParquet with a multi-row-group Open->WriteRowGroup*->(set final metadata)->Close path (verified: one ParquetWriter + N CreateRowGroup() reads back as one logical table). Stream the unbounded DATA facets (spectra_data, spectra_peaks, chromatograms_data) to seekable temp files in bounded row groups (cap 1,048,576 rows), then bounded CopyTo each temp file into its STORED zip entry and delete it. Metadata facets stay buffered (bounded by spectrum count). The seekable temp file is mandatory: a ParquetWriter on a non-seekable stream SILENTLY buffers the whole facet in RAM (no throw) — the trap this plan must structurally prevent. The footer KV (spectrum_count / point counts / chromatogram_tic_source) is only KNOWN at finalize, so the streaming handle must accept final CustomMetadata AFTER the last row group and BEFORE the writer is disposed.
+    58	2. Robustness: make each scan all-or-nothing. The current ROB defect is two-fold: (a) points are appended (lines 154-176) BEFORE the metadata record + ordinal++ (223-225), so a mid-scan throw orphans points under an ordinal with no metadata row and reuses that ordinal; (b) `_precursorScanNumbers[filterKey] = scanNumber` (line 190) mutates SHARED precursor-resolution state PRE-commit, so a scan that fails afterward still poisons a later child's parent lookup even though it committed no rows. Fix: stage ALL of a scan's state (data/peaks/metadata rows, precursor/selected_ion, scanNumber->ordinal map, the precursor-map entry, the TIC/chromatogram contribution) locally and apply EVERYTHING only on full success; on failure log + ParseInput.NewError() and skip (nothing applied, ordinal NOT consumed), mirroring MzMlSpectrumWriter.
+    59	
+    60	Purpose: operational foundation (constant memory + fault tolerance) that the chunked/Numpress phases build on.
+    61	Output: extended MzPeakParquet streaming API, refactored MzPeakSpectrumWriter, new NUnit tests, and recorded MEM-02 peak-RSS measurement.
+    62	</objective>
+    63	
+    64	<execution_context>
+    65	@$HOME/.claude/get-shit-done/workflows/execute-plan.md
+    66	@$HOME/.claude/get-shit-done/templates/summary.md
+    67	</execution_context>
+    68	
+    69	<context>
+    70	@.planning/phases/01-streaming-writer-per-scan-robustness/RESEARCH.md
+    71	@.planning/phases/01-streaming-writer-per-scan-robustness/CONTEXT.md
+    72	@.planning/ROADMAP.md
+    73	@.planning/REQUIREMENTS.md
+    74	@ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs
+    75	@ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs
+    76	
+    77	<interfaces>
+    78	<!-- Authoritative contracts the executor needs. Extracted from the codebase. Use directly — no exploration required. -->
+    79	
+    80	MzPeakParquet (existing, REUSE — extend, do not fork):
+    81	  // single-row-group one-shot, leave intact for metadata facets:
+    82	  static Task WriteAsync(Stream output, ParquetSchema schema,
+    83	      IReadOnlyDictionary<string,string> customMetadata,
+    84	      IDictionary<DataField,(Array defined,int[] defLevels,int[] repLevels)> columns)
+    85	  static DataColumn Column(DataField field, Array defined, int[] defLevels, int[] repLevels)
+    86	  // NestedLevels / Present / ListOf / etc. — the per-leaf level builders, reused unchanged.
+    87	  // CustomMetadata is a writer-level footer field: Parquet.Net writes writer.CustomMetadata into
+    88	  // the single footer on dispose, so it may be ASSIGNED at any point before dispose — including
+    89	  // after every row group. (WriteAsync sets it at open only because it has one row group.)
+    90	
+    91	MzPeakSpectrumWriter (existing seams):
+    92	  Write(IRawDataPlus raw, int firstScanNumber, int lastScanNumber)        // the per-scan loop, MzPeakSpectrumWriter.cs:112-285
+    93	  private sealed class Record { ... }                                      // per-spectrum metadata, buffered in `records`
+    94	  protected readonly Dictionary<string,int> _precursorScanNumbers         // SpectrumWriter base: filterKey -> last scan number (parent lookup), mutated at 190
+    95	  static byte[] WriteFacet(ParquetSchema, IReadOnlyDictionary<string,string> meta,
+    96	      IDictionary<DataField,(Array,int[],int[])> cols)                     // MemoryStream wrapper over WriteAsync (used by metadata facets)
+    97	  static byte[] BuildPointFacet(List<ulong> index, List<double> mz, List<float> intensity, int spectrumCount)  // 638-661
+    98	  byte[] BuildChromatogramDataFacet(List<double> time, List<float> intensity, List<long> msLevel)              // 390-426 — owns the chrom-data StructField schema AND the CollectPrefix CURIE registration at 409-416 that feeds cv_list
+    99	  static void AddStored(ZipArchive zip, string name, byte[] bytes)         // 629-636 (STORED, CompressionLevel.NoCompression)
+   100	  void CollectPrefix(string curie)                                         // 841-846 — registers a CURIE prefix into _cvPrefixes for cv_list
+   101	  static DataField Leaf(ParquetSchema schema, string slashPath)           // leaf lookup by "point/mz" style path
+   102	  ConfigureWriter(".mzpeak"); Writer.BaseStream; Writer.Flush(); Writer.Close()  // 263-281 finalize; ZipArchive uses leaveOpen:true
+   103	
+   104	ParseInput (existing): public int Errors (get); void NewError(); void NewWarn()   // ParseInput.cs:46,161,166
+   105	
+   106	Point-facet schema (spectra_data / spectra_peaks), unchanged:
+   107	  StructField "point" { ulong spectrum_index; double mz; float intensity }   // BuildPointFacet:640-643
+   108	Chromatogram-data schema, unchanged:
+   109	  StructField "point" { ulong chromatogram_index; double time; float intensity; long ms_level }  // 393-397
+   110	  CollectPrefix CURIEs (409-416, MUST run before BuildMetadataFacet): MS:1000523, MS:1000595, UO:0000031,
+   111	  MS:1000521, MS:1000515, MS:1000131, MS:1000522, MS:1000786, UO:0000186
+   112	Facet footer KV that MUST be preserved byte-for-byte (computed at finalize, attached before Close):
+   113	  spectra_data/peaks: spectrum_count, spectrum_data_point_count, spectrum_array_index   // 653-658
+   114	  chromatograms_data: chromatogram_data_point_count, chromatogram_array_index, chromatogram_tic_source  // 418-423
+   115	
+   116	Established constant to match: ParquetSpectrumWriter.cs:41 `ParquetSliceSize = 1_048_576`.
+   117	</interfaces>
+   118	
+   119	<runtime>
+   120	<!-- Native arm64, AnyCPU (RawFileReader 8.0.37, no native dylib). Put this prefix on EVERY build/test/run command. -->
+   121	Build/test:  DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 dotnet ...
+   122	Run/measure: DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 /usr/bin/time -l arch -arm64 dotnet ThermoRawFileParser/bin/Release/net8.0/ThermoRawFileParser.dll ...
+   123	DLL: ThermoRawFileParser/bin/Release/net8.0/ThermoRawFileParser.dll
+   124	Validator: ~/anaconda3/bin/mzpeak-validate  (supports --quick / --json / --log)
+   125	Corpus:
+   126	  ~1 GB Orbitrap (MEM-02 gate):  ~/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/raw/70JG_02.raw   (954 MB)
+   127	  bad-scan (ROB):                ~/Claude/mzML2mzPeak/data/raw-replacements/bruker-impact-sub__PXD076459/S4_5foldGHRP.raw  (fails on scan #25081)
+   128	  8.4 GB Astral (stretch):       ~/Claude/mzML2mzPeak/data/raw-examples/thermo-astral-MSV000100943/20240912_WFB_exp01_magnet_5_0.raw
+   129	</runtime>
+   130	</context>
+   131	
+   132	<tasks>
+   133	
+   134	<task type="auto" tdd="true">
+   135	  <name>Task 1: MzPeakParquet streaming API (open -> row groups -> final metadata -> close) + seekable-sink guard</name>
+   136	  <files>ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakParquetTests.cs</files>
+   137	  <behavior>
+   138	    - Test MultiRowGroupRoundTrip: write the point schema (ulong spectrum_index, double mz, float intensity) via OpenAsync -> two WriteRowGroupAsync calls (each a buffer slice) -> close, to a temp FileStream; reopen with ParquetReader; assert RowGroupCount > 1 AND the concatenated (spectrum_index, mz, intensity) read back across groups equals the same rows written as one single-row-group facet (identical multiset, same order).
+   139	    - Test FinalMetadataSetAfterRowGroups: OpenAsync with NO custom metadata (or empty), call WriteRowGroupAsync twice, THEN set the final footer KV (e.g. spectrum_count plus a representative point count and chromatogram_tic_source) on the handle, THEN close/dispose; reopen and assert ParquetReader.CustomMetadata contains exactly those keys/values. This proves the values can be supplied AFTER all row groups but still land in the footer.
+   140	    - Test NonSeekableSinkRejected: OpenAsync called with a stream whose CanSeek == false throws (guards the silent-buffer trap); a seekable FileStream is accepted.
+   141	  </behavior>
+   142	  <action>
+   143	Add an ADDITIVE multi-row-group streaming path to MzPeakParquet; leave WriteAsync untouched (metadata facets keep using it). Mirror the existing WriteAsync body (MzPeakParquet.cs:160-174): same Zstd codec, same CustomMetadata handling, same Column()/leaf logic.
+   144	
+   145	- OpenAsync(Stream seekableSink, ParquetSchema schema, IReadOnlyDictionary&lt;string,string&gt; customMetadata = null) returning a small streaming handle (your discretion: a nested type wrapping the ParquetWriter, or a thin class — but the handle MUST own the writer so Close can set metadata then dispose). FIRST assert seekableSink.CanSeek is true and throw ArgumentException if not (this is the structural guard against Parquet.Net silently buffering a non-seekable stream in RAM — RESEARCH Decision 3 / Pitfall 1); then ParquetWriter.CreateAsync, set CompressionMethod = CompressionMethod.Zstd, and set CustomMetadata once IF supplied at open (it is a writer-level footer field).
+   146	- WriteRowGroupAsync(handle, ParquetSchema schema, IDictionary&lt;DataField,(Array defined,int[] defLevels,int[] repLevels)&gt; columns): one CreateRowGroup(), iterate schema.GetDataFields(), WriteColumnAsync(Column(field, ...)) per leaf — the SAME inner loop WriteAsync runs once, now callable N times on buffer-sized slices.
+   147	- FINAL-METADATA CONTRACT (S1, BLOCKER): the handle MUST let the caller supply the footer CustomMetadata AFTER all row groups are written and BEFORE dispose, because spectrum_count / point counts / chromatogram_tic_source are only known at finalize. Implement as CloseAsync(IReadOnlyDictionary&lt;string,string&gt; finalMetadata = null): if finalMetadata is non-null, assign it to the underlying writer.CustomMetadata (overwriting any open-time value), THEN dispose the ParquetWriter so the footer is flushed with the final KV. (Parquet.Net writes writer.CustomMetadata into the footer on dispose, so assigning it just before dispose is valid — confirm in the test.) A settable handle.CustomMetadata property applied right before dispose is an acceptable equivalent; pick one and keep it consistent. Disposing the handle without calling Close must still flush (no leak), but the metadata-bearing path is CloseAsync.
+   148	
+   149	Do NOT inline implementation prose here beyond the contract; the RESEARCH "Streaming API Snippet" (RESEARCH.md:342-361) is the reference shape (extend it with the CloseAsync(finalMetadata) step). Compact code, explicit usings, BOM-free, no comments referencing harness/process/phases.
+   150	
+   151	Write the three NUnit tests in MzPeakParquetTests.cs first (RED), then implement until GREEN.
+   152	  </action>
+   153	  <verify>
+   154	    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 dotnet test ThermoRawFileParser/ThermoRawFileParser.sln --filter "FullyQualifiedName~MzPeakParquetTests" 2>&1 | tail -20</automated>
+   155	  </verify>
+   156	  <done>OpenAsync/WriteRowGroupAsync/CloseAsync(finalMetadata) exist; WriteAsync unchanged; the three new tests pass; a non-seekable sink is rejected; multi-row-group output (RowGroupCount > 1) reads back identical to single-row-group; footer KV supplied after the last row group reads back from ParquetReader.CustomMetadata.</done>
+   157	</task>
+   158	
+   159	<task type="auto" tdd="true">
+   160	  <name>Task 2: Stream the DATA facets in MzPeakSpectrumWriter (temp file -> STORED zip), shared chrom-data helper, metadata unchanged</name>
+   161	  <files>ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs</files>
+   162	  <behavior>
+   163	    - Test DataFacetMultiRowGroup: drive the REAL writer flush path with the row-group cap lowered (see injectable cap below) so a normal small.RAW conversion produces spectra_data with RowGroupCount > 1; assert the (spectrum_index, mz, intensity) multiset read back across groups is identical to the same conversion at the production cap (single row group). Do NOT rely on small.RAW exceeding 1,048,576 rows.
+   164	    - Test SmallRawIdenticalToV1: the test CREATES the archive it validates (in-process Write of small.RAW to a test-owned temp path, or CLI convert), then asserts mzpeak-validate-equivalent invariants in-test — spectrum_count == distinct spectrum_index in spectra_data == metadata spectrum rows; total data points and peak points match the v1 baseline counts; footer KV (spectrum_count, spectrum_data_point_count, spectrum_array_index) present and correct; cv_list in mzpeak_index.json covers every CURIE prefix the chrom-data + metadata facets register (assert the nine chrom-data CURIE prefixes are present).
+   165	  </behavior>
+   166	  <action>
+   167	Convert the three DATA facets (spectra_data, spectra_peaks, chromatograms_data) from full in-memory accumulation to bounded row-group streaming into seekable temp files, then stream-copy each into its STORED zip entry at finalize. Metadata facets (spectra_metadata, chromatograms_metadata) and BuildIndex/AddMetadataBlocks STAY exactly as today (buffered, bounded by spectrum count) — minimize regression surface.
+   168	
+   169	- ROW-GROUP CAP (S5): add an internal/injectable cap field instead of a hard const, so a test can force &gt;=2 row groups through the real flush path. Production default = 1_048_576 (matches ParquetSliceSize). Discretion on mechanism (e.g. an `internal int RowGroupRowCap = 1_048_576;` settable field plus InternalsVisibleTo for the test project if not already present), but the production default MUST stay 1,048,576 and the field MUST be the value the flush path actually reads. Row-count trigger only; no bytes trigger needed for ~20-byte point rows.
+   170	- Replace the growing List&lt;&gt; data accumulators (dataIndex/dataMz/dataIntensity at 126-128; peaksIndex/peaksMz/peaksIntensity + peakSpectra at 130-133; chromTime/chromIntensity/chromMsLevel at 243-245) with: a small row-group staging buffer per facet PLUS one streaming handle (Task 1 OpenAsync) over a temp FileStream per facet. Build a buffer-sized cols dict and call WriteRowGroupAsync when a buffer hits RowGroupRowCap, then clear the buffer. Points may span row groups (point layout: each row carries its own spectrum_index — verified safe).
+   171	- SHARED CHROM-DATA HELPER + PREFIX REGISTRATION (S4): factor the chrom-data StructField schema AND the CollectPrefix CURIE registration currently inside BuildChromatogramDataFacet (409-416) into small helpers used by BOTH the streaming path and the tests (e.g. a ChromDataSchema() returning the StructField/ParquetSchema, and a RegisterChromDataPrefixes() that CollectPrefix-es the nine CURIEs). The chrom-data path MUST call RegisterChromDataPrefixes() BEFORE BuildMetadataFacet runs (cv_list is finalized inside the metadata facet), so no CURIE prefix is dropped. Keep the exact nine CURIEs and the exact ChromatogramArrayIndex / chromatogram_tic_source footer values.
+   172	- Reuse the EXACT point schema from BuildPointFacet (640-643) and the same Leaf/Column logic.
+   173	- Keep per-spectrum counts/base-peak/TIC single-pass: every Record value is already computed inside the loop before any flush; metadata stays fully buffered, so no second pass and no re-accumulation.
+   174	- FINAL FOOTER KV (S1): footer KV (spectrum_count, spectrum_data_point_count, spectrum_array_index for data/peaks; chromatogram_* incl. chromatogram_tic_source for chrom-data) is computed ONCE at finalize and passed to each handle's CloseAsync(finalMetadata) — NOT at OpenAsync, because the counts are unknown at open. Values/strings identical to v1.
+   175	- FINALIZE ORDER (S3): the streaming handle owns the ParquetWriter AND the temp FileStream. For each data facet at finalize, in this EXACT order: flush the residual staging buffer as a final row group -&gt; CloseAsync(finalMetadata) which sets final CustomMetadata then disposes the ParquetWriter (footer -&gt; temp FileStream) -&gt; flush + dispose the temp FileStream so all bytes are on disk -&gt; ONLY THEN AddStoredFromFile(zip, name, tempPath) -&gt; delete temp in the finally. NEVER call File.OpenRead on the temp path before the writer AND the temp FileStream are both fully closed.
+   176	- AddStoredFromFile(ZipArchive zip, string name, string tempPath): zip.CreateEntry(name, CompressionLevel.NoCompression) -&gt; entry.Open() -&gt; using a File.OpenRead(tempPath), CopyTo(entryStream, 1 &lt;&lt; 16) (64 KB bounded buffer — NEVER read the whole temp file into a byte[]). Metadata/index/chrom-metadata facets still go through the existing AddStored(byte[]). Preserve leaveOpen:true on the ZipArchive and the final Writer.Flush()/Close().
+   177	- Wrap the streaming handles + temp paths in try/finally; delete every temp file in finally even on exception (Pitfall 4). Choose a temp dir/naming at your discretion (e.g. Path.GetTempFileName per facet).
+   178	- chromatograms_data is bounded by scan count; streaming it is for uniformity. Either streaming it or leaving it buffered is acceptable — but if left buffered, RegisterChromDataPrefixes() must STILL run before BuildMetadataFacet. State the chosen approach in the SUMMARY (RESEARCH A3).
+   179	
+   180	Compact code, explicit usings, BOM-free new files, no comments referencing harness/process/phases. Output MUST NOT regress v1: byte-semantically identical logical output, point layout unchanged.
+   181	
+   182	Write the two tests first (RED), then implement until GREEN. Both tests must create the archives they assert against (no pre-existing /tmp file).
+   183	  </action>
+   184	  <verify>
+   185	    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 dotnet test ThermoRawFileParser/ThermoRawFileParser.sln --filter "FullyQualifiedName~MzPeakWriterTests" 2>&1 | tail -20</automated>
+   186	  </verify>
+   187	  <done>Data facets stream to temp files then STORED-zip via 64 KB bounded CopyTo; final footer KV set via CloseAsync after all row groups (S1); finalize order = flush -> CloseAsync -> dispose temp stream -> AddStoredFromFile -> delete (S3); shared chrom-data schema/prefix helper registers the nine CURIEs before BuildMetadataFacet (S4); RowGroupRowCap injectable, production default 1,048,576 (S5); metadata facets unchanged; no whole-facet byte[] for data; temp files deleted in finally; both tests create their own archives (S6); small.RAW logical output identical to v1 (parity, identical point totals, cv_list complete); multi-row-group read-back via the real flush path passes.</done>
+   188	</task>
+   189	
+   190	<task type="auto">
+   191	  <name>Task 3: Per-scan all-or-nothing robustness (stage-then-commit, incl. precursor-map)</name>
+   192	  <files>ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakWriterTests.cs</files>
+   193	  <action>
+   194	Fix the ROB defect: make each scan all-or-nothing so a mid-scan throw consumes NO ordinal, leaves NO rows in any facet, and mutates NO shared resolution state. The existing try/catch (142-232) stays; the change is WHERE state mutates.
+   195	
+   196	- Restructure the per-scan body so ALL reads/builds for a scan land in PER-SCAN LOCAL staging FIRST: a local data point buffer (index/mz/intensity for this scan), a local peaks buffer, the local Record, the local filterKey, and the parent-derivation result — built BEFORE touching ANY shared/streaming state. Move the current early appends (data at 154-159, peaks at 168-176) into these locals using a placeholder; do not write the shared/streaming buffers yet.
+   197	- Keep the entire read+build (ReadMZData, OrderedPairs, the profile/centroid peak read, GetScanStatsForScanNumber, ScanTrailer, parent-derivation, BuildPrecursor) inside the try.
+   198	- S2 (HIGH — core correctness): the `_precursorScanNumbers[filterKey] = scanNumber` mutation currently at line 190 is SHARED state read by later children's parent lookup (BuildPrecursor -> GetParentFromScanString). It MUST move OUT of the pre-commit position and into the success-only commit block. A scan that throws after computing filterKey must NOT update _precursorScanNumbers, or a later child resolves its precursor through the skipped scan. Compute filterKey into a local during the try; apply `_precursorScanNumbers[filterKey] = scanNumber` ONLY in the success-commit block alongside the other staged state.
+   199	- ONLY after the scan fully succeeds (end of try body), in the commit block, apply EVERYTHING atomically: assign the current ordinal to the staged rows; append them to the data/peaks streaming staging buffers (flushing a row group if at RowGroupRowCap); add peakSpectra entry if peaks exist; add the Record; set scanNumberToOrdinal[scanNumber]=ordinal; set _precursorScanNumbers[filterKey]=scanNumber; then ordinal++. (Note: the per-scan TIC/chromatogram contribution is currently gathered post-loop by CaptureTic over `records`, so a skipped scan that produced no Record already contributes no chromatogram point — keep that property; if any chromatogram staging is moved inline, it too commits only on success.)
+   200	- On exception: catch -> Log.Error(scan # + message) + Log.Debug(stack) + ParseInput.NewError() (NOT NewWarn — a dropped scan is data loss, matching MzMlSpectrumWriter) -> continue. Because nothing was committed, ordinal is not consumed, no facet got rows, and _precursorScanNumbers is unchanged. Note: the `continue` for filtered scans (level/MsLevel at 146, empty mz at 152) must also commit nothing — preserve as today (those paths must not have touched _precursorScanNumbers either; verify the filterKey/precursor-map write is reached only on the commit path).
+   201	- This preserves dense ordinals and spectra_data/spectra_peaks/metadata parity even with skips, composes with row-group flushing (a partially-built scan never reaches a buffer), and guarantees a skipped scan never poisons a later child's parent resolution.
+   202	
+   203	Add an integration test (gate on file existence; Assert.Ignore with a clear message if the corpus file is absent so the suite stays green off-corpus): convert S4_5foldGHRP.raw (the corpus bad-scan file), assert conversion completes (no exception escapes), ParseInput.Errors >= 1, the archive is produced and valid, distinct spectrum_index in spectra_data == metadata spectrum rows (parity), ordinals dense (0..N-1 contiguous).
+   204	
+   205	Add a deterministic precursor-isolation unit test (NOT gated on corpus): drive the writer (or a small extracted helper around the per-scan commit) through a sequence where an MS1 parent scan FAILS after its filterKey/precursor-map point, followed by another MS1 parent and an MSn child whose filter prefix matches the failed parent. Assert the child does NOT resolve its precursor_index through the skipped scan (it resolves to the later valid parent, or precursor_index is null), AND ordinals stay dense AND facet/metadata parity holds. If forcing a failure at the exact precursor-map line requires a seam, extract the commit logic into a small testable method rather than depending on a real RAW failing at that line.
+   206	
+   207	Compact code; no comments referencing harness/process/phases.
+   208	  </action>
+   209	  <verify>
+   210	    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 dotnet test ThermoRawFileParser/ThermoRawFileParser.sln --filter "FullyQualifiedName~MzPeakWriterTests" 2>&1 | tail -20 && DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 dotnet build ThermoRawFileParser/ThermoRawFileParser.csproj -c Release 2>&1 | tail -3 && DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 arch -arm64 dotnet ThermoRawFileParser/bin/Release/net8.0/ThermoRawFileParser.dll -i ~/Claude/mzML2mzPeak/data/raw-replacements/bruker-impact-sub__PXD076459/S4_5foldGHRP.raw -b /tmp/s4.mzpeak -f mzpeak 2>&1 | grep -iE "skip|scan #25081|cannot|error|Wrote mzPeak" | tail -10 && ~/anaconda3/bin/mzpeak-validate /tmp/s4.mzpeak 2>&1 | tail -5</automated>
+   211	  </verify>
+   212	  <done>The precursor-isolation unit test proves a scan failing after the precursor-map point does NOT poison a later child's parent lookup and consumes no ordinal/rows/_precursorScanNumbers entry (S2); S4_5foldGHRP.raw converts to completion; scan #25081 is skipped + logged + error-counted; /tmp/s4.mzpeak validates 0/0; distinct spectrum_index == metadata rows; ordinals dense; the gated S4 NUnit test passes (or self-ignores off-corpus).</done>
+   213	</task>
+   214	
+   215	<task type="auto">
+   216	  <name>Task 4: Full suite green + MEM-02 peak-RSS measurement on the ~1 GB Orbitrap</name>
+   217	  <files>ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs</files>
+   218	  <action>
+   219	Confirm no regression and prove constant-memory behavior on a real large file.
+   220	
+   221	- Run the FULL NUnit suite native arm64; all pre-existing tests (52) plus the new ones must pass. Fix any regression before measuring.
+   222	- Convert small.RAW via the CLI and validate 0/0 (the v1 conformance bar) as an end-to-end sanity check beyond the in-test invariants.
+   223	- MEM-02: convert the 954 MB Orbitrap (70JG_02.raw) under /usr/bin/time -l (macOS prints "maximum resident set size" + "peak memory footprint" in bytes), native arm64; the output MUST validate (full pass — this is the conformance gate). Record peak RSS in the SUMMARY. The agreed budget is your discretion (document it); the qualitative gate is that peak RSS does NOT scale with point count the way v1 did (v1 accumulated the full facet; streaming should hold ~one row-group buffer per open facet ~= tens of MB plus the buffered metadata).
+   224	- Stretch (best-effort, do not block the phase): attempt the 8.4 GB Astral; if a full validate is infeasible in time, use mzpeak-validate --quick for structural confirmation and record the peak RSS + outcome. Note in SUMMARY if it OOMs or completes.
+   225	
+   226	No code change expected unless a regression or an over-large buffer (RESEARCH A2: lower RowGroupRowCap if three open buffers prove too large) is found; if RowGroupRowCap's production default is tuned, document the new value and why.
+   227	  </action>
+   228	  <verify>
+   229	    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 dotnet test ThermoRawFileParser/ThermoRawFileParser.sln 2>&1 | tail -8 && DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 /usr/bin/time -l arch -arm64 dotnet ThermoRawFileParser/bin/Release/net8.0/ThermoRawFileParser.dll -i ~/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/raw/70JG_02.raw -b /tmp/70JG_02.mzpeak -f mzpeak 2>&1 | grep -E "maximum resident set size|peak memory footprint|Wrote mzPeak" && ~/anaconda3/bin/mzpeak-validate /tmp/70JG_02.mzpeak 2>&1 | tail -5</automated>
+   230	  </verify>
+   231	  <done>Full suite green (all prior tests + new); small.RAW validates 0/0; 70JG_02.raw converts and validates 0/0 with peak RSS recorded in SUMMARY and not scaling with point count; Astral stretch attempted and outcome recorded.</done>
+   232	</task>
+   233	
+   234	</tasks>
+   235	
+   236	<threat_model>
+   237	## Trust Boundaries
+   238	
+   239	| Boundary | Description |
+   240	|----------|-------------|
+   241	| RAW file -> writer | Untrusted/imperfect vendor scan data crosses here; individual scans may be unreadable ("Cannot get scan event for N"). |
+   242	| temp file -> STORED zip entry | Internal bytes cross from a seekable temp FileStream into a non-seekable, write-only archive stream. |
+   243	
+   244	## STRIDE Threat Register
+   245	
+   246	| Threat ID | Category | Component | Disposition | Mitigation Plan |
+   247	|-----------|----------|-----------|-------------|-----------------|
+   248	| T-01-01 | Denial of Service | full-facet in-RAM accumulation on multi-GB RAW (v1 OOM) | mitigate | Bounded row-group streaming to seekable temp files (Task 2); peak RSS ~= one buffer per open facet, verified MEM-02 (Task 4). |
+   249	| T-01-02 | Tampering | non-seekable sink silently buffers whole facet (looks like streaming, isn't) | mitigate | OpenAsync asserts sink.CanSeek and throws otherwise (Task 1); NonSeekableSinkRejected test; data facets only ever target temp FileStreams. |
+   250	| T-01-03 | Tampering | mid-scan throw orphans points / reuses ordinal / poisons precursor-map -> facet-metadata parity break or wrong parent | mitigate | Per-scan all-or-nothing stage-then-commit incl. _precursorScanNumbers (Task 3); ordinal + precursor-map advance only on full success; parity asserted in S4 test; precursor-isolation proved in deterministic unit test. |
+   251	| T-01-04 | Denial of Service | multi-GB temp files leaked on a mid-conversion throw | mitigate | try/finally around streaming handles + temp paths; delete all temps in finally (Task 2). |
+   252	| T-01-05 | Information Disclosure | footer KV / cv_list lost when accumulators become streamed (regression) | mitigate | Final CustomMetadata set via CloseAsync after all row groups (Task 1/2); shared chrom-data prefix helper runs before BuildMetadataFacet (Task 2); footer KV + cv_list asserted (Tasks 1,2). |
+   253	| T-01-06 | Information Disclosure | logical output changes vs v1 (regression) | mitigate | Point layout, schemas, and footer KV unchanged; mzpeak-validate 0/0 + identical-multiset tests + full suite (Tasks 2,4). |
+   254	</threat_model>
+   255	
+   256	<verification>
+   257	- Full NUnit suite green native arm64 (pre-existing tests + new), DOTNET_ROLL_FORWARD prefix.
+   258	- Streaming handle round-trips multi-row-group identically to single-row-group AND footer KV set after the last row group reads back from ParquetReader.CustomMetadata (S1).
+   259	- Non-seekable sink rejected (guard test).
+   260	- small.RAW: mzpeak-validate 0/0; spectrum_count == distinct spectrum_index == metadata rows; identical point/peak totals to v1; cv_list covers the nine chrom-data CURIE prefixes (S4).
+   261	- Multi-row-group read-back identical to single-row-group through the REAL writer flush path via injectable cap (S5).
+   262	- Precursor-isolation unit test: a scan failing after the precursor-map point does not poison a later child's parent lookup and consumes no ordinal/rows/_precursorScanNumbers entry (S2).
+   263	- S4_5foldGHRP.raw converts to completion, scan #25081 skipped + counted, archive valid, parity + dense ordinals.
+   264	- 70JG_02.raw (954 MB) converts + validates 0/0 under bounded peak RSS (recorded); Astral 8.4 GB attempted (--quick acceptable), outcome recorded.
+   265	</verification>
+   266	
+   267	<success_criteria>
+   268	- MEM-01: writer flushes Parquet in bounded row groups (cap 1,048,576 rows, injectable for tests); peak memory independent of point count.
+   269	- MEM-02: 954 MB Orbitrap converts without OOM and validates 0/0; peak RSS recorded; Astral stretch attempted.
+   270	- MEM-03: STORED-zip assembly streams temp-file bytes via 64 KB bounded CopyTo — no whole-facet/whole-archive in memory.
+   271	- ROB-01: a single bad scan is logged + ParseInput.NewError()-counted + skipped; conversion continues; archive never aborted.
+   272	- ROB-02: skipped scans leave dense ordinals, facet/metadata parity, AND an un-poisoned precursor-map (skipped scan absent from all facets and from precursor resolution).
+   273	- No v1 regression: point layout unchanged, byte-semantically identical logical output, footer KV + cv_list preserved, validator 0/0, full suite green.
+   274	
+   275	## Definition of Done -> Requirement mapping
+   276	| Requirement | Satisfied by | Gate |
+   277	|-------------|--------------|------|
+   278	| MEM-01 | Task 1 (streaming API + final metadata) + Task 2 (bounded row-group data facets, injectable RowGroupRowCap) | multi-row-group + final-metadata tests; bounded buffers |
+   279	| MEM-02 | Task 4 (70JG_02.raw under /usr/bin/time -l, validates) | recorded peak RSS + validate 0/0 |
+   280	| MEM-03 | Task 2 (temp file -> 64 KB CopyTo -> STORED entry -> delete; S3 finalize order) | AddStoredFromFile; no whole-facet byte[] for data |
+   281	| ROB-01 | Task 3 (stage-then-commit; Log.Error + NewError + continue) | S4 conversion completes, error counted |
+   282	| ROB-02 | Task 3 (ordinal + precursor-map commit only on success) | S4 parity + precursor-isolation unit test |
+   283	</success_criteria>
+   284	
+   285	<risks>
+   286	- **Primary: streaming refactor regressing v1 conformance.** The move from full-facet accumulation to incremental row groups must preserve index/multiset/footer-KV/cv_list invariants. Mitigation: schemas, point layout, footer KV strings, and chrom-data CURIE registration are reused verbatim (shared helper, S4); final KV set via CloseAsync after all row groups (S1); identical-multiset + parity + cv_list + full-suite tests gate every change (Tasks 2,4).
+   287	- **Footer KV timing (S1).** spectrum_count / point counts / chromatogram_tic_source are unknown at open; if set at OpenAsync they would be wrong/zero. Mitigation: CloseAsync(finalMetadata) sets them after the last row group, before dispose; FinalMetadataSetAfterRowGroups test proves the footer round-trips.
+   288	- **Precursor-map poisoning (S2).** _precursorScanNumbers is shared parent-resolution state; a pre-commit mutation survives a failed scan. Mitigation: moved into the success-only commit block; deterministic precursor-isolation unit test.
+   289	- **The silent-buffer trap.** A non-seekable sink buffers the whole facet in RAM with no error. Mitigation: OpenAsync asserts CanSeek; data facets only ever target temp FileStreams; NonSeekableSinkRejected test (Task 1); warning sign = RSS scaling with file size despite "streaming" / zero temp files on disk (Task 4 RSS measurement catches it).
+   290	- **Buffer sizing with three open facets (RESEARCH A2).** 3 x 1M-row buffers ~= tens of MB; if too large, lower the RowGroupRowCap default (one field). Caught at Task 4 measurement.
+   291	- **Corpus availability.** MEM-02 / ROB gates depend on the large files being present; verified present today (954 MB, 418 MB, 8.4 GB). The robustness NUnit test self-ignores off-corpus so the suite stays green elsewhere.
+   292	- **Exact S4 throw line unconfirmed (RESEARCH A1).** The all-or-nothing staging is correct whether the throw is before or after the old append; the S2 fix (precursor-map in commit block) makes the skip safe regardless. Low risk.
+   293	</risks>
+   294	
+   295	<dependencies>
+   296	- None (first phase of v2). Builds on the certified v1 writer (archived under .planning/archive/v1-point-layout/). All required APIs (Parquet.Net 5.0.1 multi-row-group + writer-level CustomMetadata, ParseInput.NewError/Errors, ZipArchive STORED, /usr/bin/time -l, mzpeak-validate) and corpus files are verified present.
+   297	</dependencies>
+   298	
+   299	<output>
+   300	Create `.planning/phases/01-streaming-writer-per-scan-robustness/01-01-SUMMARY.md` when done. Record: chosen chromatograms_data approach (streamed vs buffered) and confirmation RegisterChromDataPrefixes runs before BuildMetadataFacet, final RowGroupRowCap production default value, the _precursorScanNumbers commit-placement (now in the success block per S2), the streaming-handle final-metadata mechanism (CloseAsync(finalMetadata) vs settable property), measured peak RSS (before/after / vs file size) for 70JG_02.raw, and the Astral stretch outcome.
+   301	</output>
+   302	</content>
+   303	</invoke>
+
+codex
+The revised plan now has explicit S1/S2 contracts in the must-haves, Task 1, Task 2, Task 3, verification, and risks. I’m checking whether those contracts are actually enforceable by the planned tests, not just restated.
+exec
+/bin/zsh -lc 'rg -n "S1|FinalMetadata|CustomMetadata|CloseAsync|footer|dispose" .planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md' in /Users/kohlbach/Claude/mzPeak4TRFR
+exec
+/bin/zsh -lc 'rg -n "S2|precursor|_precursorScanNumbers|atomic|success|commit|skipped scan|poison" .planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+21:    - "A scan that fails after the precursor-map bookkeeping point commits NOTHING: no data/peaks/metadata rows, no ordinal consumed, no scanNumber->ordinal entry, no TIC point, and no _precursorScanNumbers entry — a later child does not resolve its precursor through the skipped scan."
+29:      provides: "Streamed data facets to temp files + STORED-zip stream-copy; per-scan all-or-nothing staging incl. precursor-map; shared chrom-data schema/prefix helper"
+58:2. Robustness: make each scan all-or-nothing. The current ROB defect is two-fold: (a) points are appended (lines 154-176) BEFORE the metadata record + ordinal++ (223-225), so a mid-scan throw orphans points under an ordinal with no metadata row and reuses that ordinal; (b) `_precursorScanNumbers[filterKey] = scanNumber` (line 190) mutates SHARED precursor-resolution state PRE-commit, so a scan that fails afterward still poisons a later child's parent lookup even though it committed no rows. Fix: stage ALL of a scan's state (data/peaks/metadata rows, precursor/selected_ion, scanNumber->ordinal map, the precursor-map entry, the TIC/chromatogram contribution) locally and apply EVERYTHING only on full success; on failure log + ParseInput.NewError() and skip (nothing applied, ordinal NOT consumed), mirroring MzMlSpectrumWriter.
+94:  protected readonly Dictionary<string,int> _precursorScanNumbers         // SpectrumWriter base: filterKey -> last scan number (parent lookup), mutated at 190
+191:  <name>Task 3: Per-scan all-or-nothing robustness (stage-then-commit, incl. precursor-map)</name>
+198:- S2 (HIGH — core correctness): the `_precursorScanNumbers[filterKey] = scanNumber` mutation currently at line 190 is SHARED state read by later children's parent lookup (BuildPrecursor -> GetParentFromScanString). It MUST move OUT of the pre-commit position and into the success-only commit block. A scan that throws after computing filterKey must NOT update _precursorScanNumbers, or a later child resolves its precursor through the skipped scan. Compute filterKey into a local during the try; apply `_precursorScanNumbers[filterKey] = scanNumber` ONLY in the success-commit block alongside the other staged state.
+199:- ONLY after the scan fully succeeds (end of try body), in the commit block, apply EVERYTHING atomically: assign the current ordinal to the staged rows; append them to the data/peaks streaming staging buffers (flushing a row group if at RowGroupRowCap); add peakSpectra entry if peaks exist; add the Record; set scanNumberToOrdinal[scanNumber]=ordinal; set _precursorScanNumbers[filterKey]=scanNumber; then ordinal++. (Note: the per-scan TIC/chromatogram contribution is currently gathered post-loop by CaptureTic over `records`, so a skipped scan that produced no Record already contributes no chromatogram point — keep that property; if any chromatogram staging is moved inline, it too commits only on success.)
+200:- On exception: catch -> Log.Error(scan # + message) + Log.Debug(stack) + ParseInput.NewError() (NOT NewWarn — a dropped scan is data loss, matching MzMlSpectrumWriter) -> continue. Because nothing was committed, ordinal is not consumed, no facet got rows, and _precursorScanNumbers is unchanged. Note: the `continue` for filtered scans (level/MsLevel at 146, empty mz at 152) must also commit nothing — preserve as today (those paths must not have touched _precursorScanNumbers either; verify the filterKey/precursor-map write is reached only on the commit path).
+201:- This preserves dense ordinals and spectra_data/spectra_peaks/metadata parity even with skips, composes with row-group flushing (a partially-built scan never reaches a buffer), and guarantees a skipped scan never poisons a later child's parent resolution.
+205:Add a deterministic precursor-isolation unit test (NOT gated on corpus): drive the writer (or a small extracted helper around the per-scan commit) through a sequence where an MS1 parent scan FAILS after its filterKey/precursor-map point, followed by another MS1 parent and an MSn child whose filter prefix matches the failed parent. Assert the child does NOT resolve its precursor_index through the skipped scan (it resolves to the later valid parent, or precursor_index is null), AND ordinals stay dense AND facet/metadata parity holds. If forcing a failure at the exact precursor-map line requires a seam, extract the commit logic into a small testable method rather than depending on a real RAW failing at that line.
+212:  <done>The precursor-isolation unit test proves a scan failing after the precursor-map point does NOT poison a later child's parent lookup and consumes no ordinal/rows/_precursorScanNumbers entry (S2); S4_5foldGHRP.raw converts to completion; scan #25081 is skipped + logged + error-counted; /tmp/s4.mzpeak validates 0/0; distinct spectrum_index == metadata rows; ordinals dense; the gated S4 NUnit test passes (or self-ignores off-corpus).</done>
+250:| T-01-03 | Tampering | mid-scan throw orphans points / reuses ordinal / poisons precursor-map -> facet-metadata parity break or wrong parent | mitigate | Per-scan all-or-nothing stage-then-commit incl. _precursorScanNumbers (Task 3); ordinal + precursor-map advance only on full success; parity asserted in S4 test; precursor-isolation proved in deterministic unit test. |
+262:- Precursor-isolation unit test: a scan failing after the precursor-map point does not poison a later child's parent lookup and consumes no ordinal/rows/_precursorScanNumbers entry (S2).
+267:<success_criteria>
+272:- ROB-02: skipped scans leave dense ordinals, facet/metadata parity, AND an un-poisoned precursor-map (skipped scan absent from all facets and from precursor resolution).
+281:| ROB-01 | Task 3 (stage-then-commit; Log.Error + NewError + continue) | S4 conversion completes, error counted |
+282:| ROB-02 | Task 3 (ordinal + precursor-map commit only on success) | S4 parity + precursor-isolation unit test |
+283:</success_criteria>
+288:- **Precursor-map poisoning (S2).** _precursorScanNumbers is shared parent-resolution state; a pre-commit mutation survives a failed scan. Mitigation: moved into the success-only commit block; deterministic precursor-isolation unit test.
+292:- **Exact S4 throw line unconfirmed (RESEARCH A1).** The all-or-nothing staging is correct whether the throw is before or after the old append; the S2 fix (precursor-map in commit block) makes the skip safe regardless. Low risk.
+300:Create `.planning/phases/01-streaming-writer-per-scan-robustness/01-01-SUMMARY.md` when done. Record: chosen chromatograms_data approach (streamed vs buffered) and confirmation RegisterChromDataPrefixes runs before BuildMetadataFacet, final RowGroupRowCap production default value, the _precursorScanNumbers commit-placement (now in the success block per S2), the streaming-handle final-metadata mechanism (CloseAsync(finalMetadata) vs settable property), measured peak RSS (before/after / vs file size) for 70JG_02.raw, and the Astral stretch outcome.
+
+ succeeded in 0ms:
+18:    - "Footer CustomMetadata set AFTER all row groups are written but BEFORE dispose lands in the file footer and reads back via ParquetReader.CustomMetadata."
+26:      provides: "Multi-row-group streaming handle (Open -> WriteRowGroup* -> set final CustomMetadata -> Close/Dispose) over a seekable sink; existing WriteAsync untouched"
+44:      to: "facet footer KV (spectrum_count / point counts / chromatogram_tic_source)"
+45:      via: "final CustomMetadata set after all row groups, before dispose"
+46:      pattern: "CloseAsync"
+57:1. Streaming: extend MzPeakParquet with a multi-row-group Open->WriteRowGroup*->(set final metadata)->Close path (verified: one ParquetWriter + N CreateRowGroup() reads back as one logical table). Stream the unbounded DATA facets (spectra_data, spectra_peaks, chromatograms_data) to seekable temp files in bounded row groups (cap 1,048,576 rows), then bounded CopyTo each temp file into its STORED zip entry and delete it. Metadata facets stay buffered (bounded by spectrum count). The seekable temp file is mandatory: a ParquetWriter on a non-seekable stream SILENTLY buffers the whole facet in RAM (no throw) — the trap this plan must structurally prevent. The footer KV (spectrum_count / point counts / chromatogram_tic_source) is only KNOWN at finalize, so the streaming handle must accept final CustomMetadata AFTER the last row group and BEFORE the writer is disposed.
+87:  // CustomMetadata is a writer-level footer field: Parquet.Net writes writer.CustomMetadata into
+88:  // the single footer on dispose, so it may be ASSIGNED at any point before dispose — including
+112:Facet footer KV that MUST be preserved byte-for-byte (computed at finalize, attached before Close):
+139:    - Test FinalMetadataSetAfterRowGroups: OpenAsync with NO custom metadata (or empty), call WriteRowGroupAsync twice, THEN set the final footer KV (e.g. spectrum_count plus a representative point count and chromatogram_tic_source) on the handle, THEN close/dispose; reopen and assert ParquetReader.CustomMetadata contains exactly those keys/values. This proves the values can be supplied AFTER all row groups but still land in the footer.
+143:Add an ADDITIVE multi-row-group streaming path to MzPeakParquet; leave WriteAsync untouched (metadata facets keep using it). Mirror the existing WriteAsync body (MzPeakParquet.cs:160-174): same Zstd codec, same CustomMetadata handling, same Column()/leaf logic.
+145:- OpenAsync(Stream seekableSink, ParquetSchema schema, IReadOnlyDictionary&lt;string,string&gt; customMetadata = null) returning a small streaming handle (your discretion: a nested type wrapping the ParquetWriter, or a thin class — but the handle MUST own the writer so Close can set metadata then dispose). FIRST assert seekableSink.CanSeek is true and throw ArgumentException if not (this is the structural guard against Parquet.Net silently buffering a non-seekable stream in RAM — RESEARCH Decision 3 / Pitfall 1); then ParquetWriter.CreateAsync, set CompressionMethod = CompressionMethod.Zstd, and set CustomMetadata once IF supplied at open (it is a writer-level footer field).
+147:- FINAL-METADATA CONTRACT (S1, BLOCKER): the handle MUST let the caller supply the footer CustomMetadata AFTER all row groups are written and BEFORE dispose, because spectrum_count / point counts / chromatogram_tic_source are only known at finalize. Implement as CloseAsync(IReadOnlyDictionary&lt;string,string&gt; finalMetadata = null): if finalMetadata is non-null, assign it to the underlying writer.CustomMetadata (overwriting any open-time value), THEN dispose the ParquetWriter so the footer is flushed with the final KV. (Parquet.Net writes writer.CustomMetadata into the footer on dispose, so assigning it just before dispose is valid — confirm in the test.) A settable handle.CustomMetadata property applied right before dispose is an acceptable equivalent; pick one and keep it consistent. Disposing the handle without calling Close must still flush (no leak), but the metadata-bearing path is CloseAsync.
+149:Do NOT inline implementation prose here beyond the contract; the RESEARCH "Streaming API Snippet" (RESEARCH.md:342-361) is the reference shape (extend it with the CloseAsync(finalMetadata) step). Compact code, explicit usings, BOM-free, no comments referencing harness/process/phases.
+156:  <done>OpenAsync/WriteRowGroupAsync/CloseAsync(finalMetadata) exist; WriteAsync unchanged; the three new tests pass; a non-seekable sink is rejected; multi-row-group output (RowGroupCount > 1) reads back identical to single-row-group; footer KV supplied after the last row group reads back from ParquetReader.CustomMetadata.</done>
+164:    - Test SmallRawIdenticalToV1: the test CREATES the archive it validates (in-process Write of small.RAW to a test-owned temp path, or CLI convert), then asserts mzpeak-validate-equivalent invariants in-test — spectrum_count == distinct spectrum_index in spectra_data == metadata spectrum rows; total data points and peak points match the v1 baseline counts; footer KV (spectrum_count, spectrum_data_point_count, spectrum_array_index) present and correct; cv_list in mzpeak_index.json covers every CURIE prefix the chrom-data + metadata facets register (assert the nine chrom-data CURIE prefixes are present).
+171:- SHARED CHROM-DATA HELPER + PREFIX REGISTRATION (S4): factor the chrom-data StructField schema AND the CollectPrefix CURIE registration currently inside BuildChromatogramDataFacet (409-416) into small helpers used by BOTH the streaming path and the tests (e.g. a ChromDataSchema() returning the StructField/ParquetSchema, and a RegisterChromDataPrefixes() that CollectPrefix-es the nine CURIEs). The chrom-data path MUST call RegisterChromDataPrefixes() BEFORE BuildMetadataFacet runs (cv_list is finalized inside the metadata facet), so no CURIE prefix is dropped. Keep the exact nine CURIEs and the exact ChromatogramArrayIndex / chromatogram_tic_source footer values.
+174:- FINAL FOOTER KV (S1): footer KV (spectrum_count, spectrum_data_point_count, spectrum_array_index for data/peaks; chromatogram_* incl. chromatogram_tic_source for chrom-data) is computed ONCE at finalize and passed to each handle's CloseAsync(finalMetadata) — NOT at OpenAsync, because the counts are unknown at open. Values/strings identical to v1.
+175:- FINALIZE ORDER (S3): the streaming handle owns the ParquetWriter AND the temp FileStream. For each data facet at finalize, in this EXACT order: flush the residual staging buffer as a final row group -&gt; CloseAsync(finalMetadata) which sets final CustomMetadata then disposes the ParquetWriter (footer -&gt; temp FileStream) -&gt; flush + dispose the temp FileStream so all bytes are on disk -&gt; ONLY THEN AddStoredFromFile(zip, name, tempPath) -&gt; delete temp in the finally. NEVER call File.OpenRead on the temp path before the writer AND the temp FileStream are both fully closed.
+187:  <done>Data facets stream to temp files then STORED-zip via 64 KB bounded CopyTo; final footer KV set via CloseAsync after all row groups (S1); finalize order = flush -> CloseAsync -> dispose temp stream -> AddStoredFromFile -> delete (S3); shared chrom-data schema/prefix helper registers the nine CURIEs before BuildMetadataFacet (S4); RowGroupRowCap injectable, production default 1,048,576 (S5); metadata facets unchanged; no whole-facet byte[] for data; temp files deleted in finally; both tests create their own archives (S6); small.RAW logical output identical to v1 (parity, identical point totals, cv_list complete); multi-row-group read-back via the real flush path passes.</done>
+205:Add a deterministic precursor-isolation unit test (NOT gated on corpus): drive the writer (or a small extracted helper around the per-scan commit) through a sequence where an MS1 parent scan FAILS after its filterKey/precursor-map point, followed by another MS1 parent and an MSn child whose filter prefix matches the failed parent. Assert the child does NOT resolve its precursor_index through the skipped scan (it resolves to the later valid parent, or precursor_index is null), AND ordinals stay dense AND facet/metadata parity holds. If forcing a failure at the exact precursor-map line requires a seam, extract the commit logic into a small testable method rather than depending on a real RAW failing at that line.
+252:| T-01-05 | Information Disclosure | footer KV / cv_list lost when accumulators become streamed (regression) | mitigate | Final CustomMetadata set via CloseAsync after all row groups (Task 1/2); shared chrom-data prefix helper runs before BuildMetadataFacet (Task 2); footer KV + cv_list asserted (Tasks 1,2). |
+253:| T-01-06 | Information Disclosure | logical output changes vs v1 (regression) | mitigate | Point layout, schemas, and footer KV unchanged; mzpeak-validate 0/0 + identical-multiset tests + full suite (Tasks 2,4). |
+258:- Streaming handle round-trips multi-row-group identically to single-row-group AND footer KV set after the last row group reads back from ParquetReader.CustomMetadata (S1).
+273:- No v1 regression: point layout unchanged, byte-semantically identical logical output, footer KV + cv_list preserved, validator 0/0, full suite green.
+286:- **Primary: streaming refactor regressing v1 conformance.** The move from full-facet accumulation to incremental row groups must preserve index/multiset/footer-KV/cv_list invariants. Mitigation: schemas, point layout, footer KV strings, and chrom-data CURIE registration are reused verbatim (shared helper, S4); final KV set via CloseAsync after all row groups (S1); identical-multiset + parity + cv_list + full-suite tests gate every change (Tasks 2,4).
+287:- **Footer KV timing (S1).** spectrum_count / point counts / chromatogram_tic_source are unknown at open; if set at OpenAsync they would be wrong/zero. Mitigation: CloseAsync(finalMetadata) sets them after the last row group, before dispose; FinalMetadataSetAfterRowGroups test proves the footer round-trips.
+296:- None (first phase of v2). Builds on the certified v1 writer (archived under .planning/archive/v1-point-layout/). All required APIs (Parquet.Net 5.0.1 multi-row-group + writer-level CustomMetadata, ParseInput.NewError/Errors, ZipArchive STORED, /usr/bin/time -l, mzpeak-validate) and corpus files are verified present.
+300:Create `.planning/phases/01-streaming-writer-per-scan-robustness/01-01-SUMMARY.md` when done. Record: chosen chromatograms_data approach (streamed vs buffered) and confirmation RegisterChromDataPrefixes runs before BuildMetadataFacet, final RowGroupRowCap production default value, the _precursorScanNumbers commit-placement (now in the success block per S2), the streaming-handle final-metadata mechanism (CloseAsync(finalMetadata) vs settable property), measured peak RSS (before/after / vs file size) for 70JG_02.raw, and the Astral stretch outcome.
+
+exec
+/bin/zsh -lc 'rg -n "S3|S4|S5|S6|finalize order|prefix|RowGroupRowCap|creates the archive|pre-existing /tmp|self-contained|AddStoredFromFile" .planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+20:    - "small.RAW converts to logical output identical to v1: mzpeak-validate 0/0; spectrum_count == distinct spectrum_index == metadata rows; identical point totals; cv_list covers every CURIE prefix the archive uses."
+29:      provides: "Streamed data facets to temp files + STORED-zip stream-copy; per-scan all-or-nothing staging incl. precursor-map; shared chrom-data schema/prefix helper"
+30:      contains: "AddStoredFromFile"
+37:      via: "row-group buffer flush at RowGroupRowCap"
+41:      via: "AddStoredFromFile bounded CopyTo from temp file"
+42:      pattern: "AddStoredFromFile"
+100:  void CollectPrefix(string curie)                                         // 841-846 — registers a CURIE prefix into _cvPrefixes for cv_list
+120:<!-- Native arm64, AnyCPU (RawFileReader 8.0.37, no native dylib). Put this prefix on EVERY build/test/run command. -->
+127:  bad-scan (ROB):                ~/Claude/mzML2mzPeak/data/raw-replacements/bruker-impact-sub__PXD076459/S4_5foldGHRP.raw  (fails on scan #25081)
+164:    - Test SmallRawIdenticalToV1: the test CREATES the archive it validates (in-process Write of small.RAW to a test-owned temp path, or CLI convert), then asserts mzpeak-validate-equivalent invariants in-test — spectrum_count == distinct spectrum_index in spectra_data == metadata spectrum rows; total data points and peak points match the v1 baseline counts; footer KV (spectrum_count, spectrum_data_point_count, spectrum_array_index) present and correct; cv_list in mzpeak_index.json covers every CURIE prefix the chrom-data + metadata facets register (assert the nine chrom-data CURIE prefixes are present).
+169:- ROW-GROUP CAP (S5): add an internal/injectable cap field instead of a hard const, so a test can force &gt;=2 row groups through the real flush path. Production default = 1_048_576 (matches ParquetSliceSize). Discretion on mechanism (e.g. an `internal int RowGroupRowCap = 1_048_576;` settable field plus InternalsVisibleTo for the test project if not already present), but the production default MUST stay 1,048,576 and the field MUST be the value the flush path actually reads. Row-count trigger only; no bytes trigger needed for ~20-byte point rows.
+170:- Replace the growing List&lt;&gt; data accumulators (dataIndex/dataMz/dataIntensity at 126-128; peaksIndex/peaksMz/peaksIntensity + peakSpectra at 130-133; chromTime/chromIntensity/chromMsLevel at 243-245) with: a small row-group staging buffer per facet PLUS one streaming handle (Task 1 OpenAsync) over a temp FileStream per facet. Build a buffer-sized cols dict and call WriteRowGroupAsync when a buffer hits RowGroupRowCap, then clear the buffer. Points may span row groups (point layout: each row carries its own spectrum_index — verified safe).
+171:- SHARED CHROM-DATA HELPER + PREFIX REGISTRATION (S4): factor the chrom-data StructField schema AND the CollectPrefix CURIE registration currently inside BuildChromatogramDataFacet (409-416) into small helpers used by BOTH the streaming path and the tests (e.g. a ChromDataSchema() returning the StructField/ParquetSchema, and a RegisterChromDataPrefixes() that CollectPrefix-es the nine CURIEs). The chrom-data path MUST call RegisterChromDataPrefixes() BEFORE BuildMetadataFacet runs (cv_list is finalized inside the metadata facet), so no CURIE prefix is dropped. Keep the exact nine CURIEs and the exact ChromatogramArrayIndex / chromatogram_tic_source footer values.
+175:- FINALIZE ORDER (S3): the streaming handle owns the ParquetWriter AND the temp FileStream. For each data facet at finalize, in this EXACT order: flush the residual staging buffer as a final row group -&gt; CloseAsync(finalMetadata) which sets final CustomMetadata then disposes the ParquetWriter (footer -&gt; temp FileStream) -&gt; flush + dispose the temp FileStream so all bytes are on disk -&gt; ONLY THEN AddStoredFromFile(zip, name, tempPath) -&gt; delete temp in the finally. NEVER call File.OpenRead on the temp path before the writer AND the temp FileStream are both fully closed.
+176:- AddStoredFromFile(ZipArchive zip, string name, string tempPath): zip.CreateEntry(name, CompressionLevel.NoCompression) -&gt; entry.Open() -&gt; using a File.OpenRead(tempPath), CopyTo(entryStream, 1 &lt;&lt; 16) (64 KB bounded buffer — NEVER read the whole temp file into a byte[]). Metadata/index/chrom-metadata facets still go through the existing AddStored(byte[]). Preserve leaveOpen:true on the ZipArchive and the final Writer.Flush()/Close().
+182:Write the two tests first (RED), then implement until GREEN. Both tests must create the archives they assert against (no pre-existing /tmp file).
+187:  <done>Data facets stream to temp files then STORED-zip via 64 KB bounded CopyTo; final footer KV set via CloseAsync after all row groups (S1); finalize order = flush -> CloseAsync -> dispose temp stream -> AddStoredFromFile -> delete (S3); shared chrom-data schema/prefix helper registers the nine CURIEs before BuildMetadataFacet (S4); RowGroupRowCap injectable, production default 1,048,576 (S5); metadata facets unchanged; no whole-facet byte[] for data; temp files deleted in finally; both tests create their own archives (S6); small.RAW logical output identical to v1 (parity, identical point totals, cv_list complete); multi-row-group read-back via the real flush path passes.</done>
+199:- ONLY after the scan fully succeeds (end of try body), in the commit block, apply EVERYTHING atomically: assign the current ordinal to the staged rows; append them to the data/peaks streaming staging buffers (flushing a row group if at RowGroupRowCap); add peakSpectra entry if peaks exist; add the Record; set scanNumberToOrdinal[scanNumber]=ordinal; set _precursorScanNumbers[filterKey]=scanNumber; then ordinal++. (Note: the per-scan TIC/chromatogram contribution is currently gathered post-loop by CaptureTic over `records`, so a skipped scan that produced no Record already contributes no chromatogram point — keep that property; if any chromatogram staging is moved inline, it too commits only on success.)
+203:Add an integration test (gate on file existence; Assert.Ignore with a clear message if the corpus file is absent so the suite stays green off-corpus): convert S4_5foldGHRP.raw (the corpus bad-scan file), assert conversion completes (no exception escapes), ParseInput.Errors >= 1, the archive is produced and valid, distinct spectrum_index in spectra_data == metadata spectrum rows (parity), ordinals dense (0..N-1 contiguous).
+205:Add a deterministic precursor-isolation unit test (NOT gated on corpus): drive the writer (or a small extracted helper around the per-scan commit) through a sequence where an MS1 parent scan FAILS after its filterKey/precursor-map point, followed by another MS1 parent and an MSn child whose filter prefix matches the failed parent. Assert the child does NOT resolve its precursor_index through the skipped scan (it resolves to the later valid parent, or precursor_index is null), AND ordinals stay dense AND facet/metadata parity holds. If forcing a failure at the exact precursor-map line requires a seam, extract the commit logic into a small testable method rather than depending on a real RAW failing at that line.
+210:    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 dotnet test ThermoRawFileParser/ThermoRawFileParser.sln --filter "FullyQualifiedName~MzPeakWriterTests" 2>&1 | tail -20 && DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 dotnet build ThermoRawFileParser/ThermoRawFileParser.csproj -c Release 2>&1 | tail -3 && DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 arch -arm64 dotnet ThermoRawFileParser/bin/Release/net8.0/ThermoRawFileParser.dll -i ~/Claude/mzML2mzPeak/data/raw-replacements/bruker-impact-sub__PXD076459/S4_5foldGHRP.raw -b /tmp/s4.mzpeak -f mzpeak 2>&1 | grep -iE "skip|scan #25081|cannot|error|Wrote mzPeak" | tail -10 && ~/anaconda3/bin/mzpeak-validate /tmp/s4.mzpeak 2>&1 | tail -5</automated>
+212:  <done>The precursor-isolation unit test proves a scan failing after the precursor-map point does NOT poison a later child's parent lookup and consumes no ordinal/rows/_precursorScanNumbers entry (S2); S4_5foldGHRP.raw converts to completion; scan #25081 is skipped + logged + error-counted; /tmp/s4.mzpeak validates 0/0; distinct spectrum_index == metadata rows; ordinals dense; the gated S4 NUnit test passes (or self-ignores off-corpus).</done>
+226:No code change expected unless a regression or an over-large buffer (RESEARCH A2: lower RowGroupRowCap if three open buffers prove too large) is found; if RowGroupRowCap's production default is tuned, document the new value and why.
+250:| T-01-03 | Tampering | mid-scan throw orphans points / reuses ordinal / poisons precursor-map -> facet-metadata parity break or wrong parent | mitigate | Per-scan all-or-nothing stage-then-commit incl. _precursorScanNumbers (Task 3); ordinal + precursor-map advance only on full success; parity asserted in S4 test; precursor-isolation proved in deterministic unit test. |
+252:| T-01-05 | Information Disclosure | footer KV / cv_list lost when accumulators become streamed (regression) | mitigate | Final CustomMetadata set via CloseAsync after all row groups (Task 1/2); shared chrom-data prefix helper runs before BuildMetadataFacet (Task 2); footer KV + cv_list asserted (Tasks 1,2). |
+257:- Full NUnit suite green native arm64 (pre-existing tests + new), DOTNET_ROLL_FORWARD prefix.
+260:- small.RAW: mzpeak-validate 0/0; spectrum_count == distinct spectrum_index == metadata rows; identical point/peak totals to v1; cv_list covers the nine chrom-data CURIE prefixes (S4).
+261:- Multi-row-group read-back identical to single-row-group through the REAL writer flush path via injectable cap (S5).
+263:- S4_5foldGHRP.raw converts to completion, scan #25081 skipped + counted, archive valid, parity + dense ordinals.
+278:| MEM-01 | Task 1 (streaming API + final metadata) + Task 2 (bounded row-group data facets, injectable RowGroupRowCap) | multi-row-group + final-metadata tests; bounded buffers |
+280:| MEM-03 | Task 2 (temp file -> 64 KB CopyTo -> STORED entry -> delete; S3 finalize order) | AddStoredFromFile; no whole-facet byte[] for data |
+281:| ROB-01 | Task 3 (stage-then-commit; Log.Error + NewError + continue) | S4 conversion completes, error counted |
+282:| ROB-02 | Task 3 (ordinal + precursor-map commit only on success) | S4 parity + precursor-isolation unit test |
+286:- **Primary: streaming refactor regressing v1 conformance.** The move from full-facet accumulation to incremental row groups must preserve index/multiset/footer-KV/cv_list invariants. Mitigation: schemas, point layout, footer KV strings, and chrom-data CURIE registration are reused verbatim (shared helper, S4); final KV set via CloseAsync after all row groups (S1); identical-multiset + parity + cv_list + full-suite tests gate every change (Tasks 2,4).
+290:- **Buffer sizing with three open facets (RESEARCH A2).** 3 x 1M-row buffers ~= tens of MB; if too large, lower the RowGroupRowCap default (one field). Caught at Task 4 measurement.
+292:- **Exact S4 throw line unconfirmed (RESEARCH A1).** The all-or-nothing staging is correct whether the throw is before or after the old append; the S2 fix (precursor-map in commit block) makes the skip safe regardless. Low risk.
+300:Create `.planning/phases/01-streaming-writer-per-scan-robustness/01-01-SUMMARY.md` when done. Record: chosen chromatograms_data approach (streamed vs buffered) and confirmation RegisterChromDataPrefixes runs before BuildMetadataFacet, final RowGroupRowCap production default value, the _precursorScanNumbers commit-placement (now in the success block per S2), the streaming-handle final-metadata mechanism (CloseAsync(finalMetadata) vs settable property), measured peak RSS (before/after / vs file size) for 70JG_02.raw, and the Astral stretch outcome.
+
+codex
+I’m doing one targeted code-context pass now, only around the APIs and mutation points the plan cites. That helps catch plan-level gaps like an impossible test seam or a cited helper behaving differently than assumed.
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs | sed -n '130,200p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs | sed -n '112,285p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+   130	        public static LeafRow EmptyList(int level) => new LeafRow(true, new[] { level }, new[] { false });
+   131	
+   132	        // The definition level reached by a present-but-empty list: one below the enclosing
+   133	        // ListField's MaxDefinitionLevel (the list value is defined but holds no repeated entry;
+   134	        // the deepest level of the ListField counts the presence of at least one element).
+   135	        public static LeafRow EmptyList(ListField list) =>
+   136	            new LeafRow(true, new[] { list.MaxDefinitionLevel - 1 }, new[] { false });
+   137	
+   138	        // A null list whose entire ancestor chain is absent at the root — genuine top-level absence,
+   139	        // def-level 0. Reserve this ONLY for a list whose outermost owning struct is itself null.
+   140	        public static LeafRow NullList() => new LeafRow(true, new[] { 0 }, new[] { false });
+   141	
+   142	        // A null list whose parent struct(s) ARE present but the list field itself is null. The
+   143	        // definition level is the "parent present, list null" level read from the list's own ancestor
+   144	        // chain: list.MaxDefinitionLevel counts list-defined(+1) and element-present(+1) above the
+   145	        // parent-present level, so the parent-present-list-null level is MaxDefinitionLevel - 2. This
+   146	        // is distinct from EmptyList (list defined, no elements = MaxDefinitionLevel - 1) and from
+   147	        // NullList() (root absent = 0); it lets a reader tell "activation present, parameters null"
+   148	        // apart from "activation absent".
+   149	        public static LeafRow NullList(ListField list) =>
+   150	            new LeafRow(true, new[] { list.MaxDefinitionLevel - 2 }, new[] { false });
+   151	
+   152	        // A null list at an explicit definition level, for cases where an ancestor above the list's
+   153	        // immediate parent is the one that is null (e.g. grandparent present, parent null).
+   154	        public static LeafRow NullListAt(int level) => new LeafRow(true, new[] { level }, new[] { false });
+   155	
+   156	        public static async Task WriteAsync(Stream output, ParquetSchema schema,
+   157	            IReadOnlyDictionary<string, string> customMetadata,
+   158	            IDictionary<DataField, (Array defined, int[] defLevels, int[] repLevels)> columns)
+   159	        {
+   160	            using (var writer = await ParquetWriter.CreateAsync(schema, output).ConfigureAwait(false))
+   161	            {
+   162	                writer.CompressionMethod = CompressionMethod.Zstd;
+   163	                if (customMetadata != null) writer.CustomMetadata = customMetadata;
+   164	
+   165	                using (var rg = writer.CreateRowGroup())
+   166	                {
+   167	                    foreach (var field in schema.GetDataFields())
+   168	                    {
+   169	                        var triple = columns[field];
+   170	                        await rg.WriteColumnAsync(Column(field, triple.defined, triple.defLevels, triple.repLevels))
+   171	                            .ConfigureAwait(false);
+   172	                    }
+   173	                }
+   174	            }
+   175	        }
+   176	    }
+   177	}
+
+ succeeded in 0ms:
+   112	        public override void Write(IRawDataPlus raw, int firstScanNumber, int lastScanNumber)
+   113	        {
+   114	            if (!raw.HasMsData)
+   115	            {
+   116	                throw new RawFileParserException("No MS data in RAW file, no output will be produced");
+   117	            }
+   118	
+   119	            var instData = raw.GetInstrumentData();
+   120	            _instrumentModel = instData.Model;
+   121	            _instrumentSerial = instData.SerialNumber;
+   122	            _creationDate = raw.CreationDate;
+   123	            _sourceName = Path.GetFileName(ParseInput.RawFilePath);
+   124	            _sourceLocation = "file://" + (Path.GetDirectoryName(Path.GetFullPath(ParseInput.RawFilePath)) ?? "");
+   125	
+   126	            var dataIndex = new List<ulong>();
+   127	            var dataMz = new List<double>();
+   128	            var dataIntensity = new List<float>();
+   129	
+   130	            var peaksIndex = new List<ulong>();
+   131	            var peaksMz = new List<double>();
+   132	            var peaksIntensity = new List<float>();
+   133	            var peakSpectra = new HashSet<ulong>();
+   134	
+   135	            var records = new List<Record>();
+   136	            var scanNumberToOrdinal = new Dictionary<int, ulong>();
+   137	
+   138	            ulong ordinal = 0;
+   139	
+   140	            for (var scanNumber = firstScanNumber; scanNumber <= lastScanNumber; scanNumber++)
+   141	            {
+   142	                try
+   143	                {
+   144	                    var scanFilter = raw.GetFilterForScanNumber(scanNumber);
+   145	                    int level = (int)scanFilter.MSOrder;
+   146	                    if (level > ParseInput.MaxLevel || !ParseInput.MsLevel.Contains(level)) continue;
+   147	
+   148	                    var scanEvent = raw.GetScanEventForScanNumber(scanNumber);
+   149	                    var mzData = ReadMZData(raw, scanEvent, scanNumber, false, false, false);
+   150	
+   151	                    var (mz, inten) = OrderedPairs(mzData.masses, mzData.intensities);
+   152	                    if (mz.Length == 0) continue;
+   153	
+   154	                    for (int i = 0; i < mz.Length; i++)
+   155	                    {
+   156	                        dataIndex.Add(ordinal);
+   157	                        dataMz.Add(mz[i]);
+   158	                        dataIntensity.Add(inten[i]);
+   159	                    }
+   160	
+   161	                    ulong? peakCount = null;
+   162	                    if (scanEvent.ScanData == ScanDataType.Profile && Scan.FromFile(raw, scanNumber).HasCentroidStream)
+   163	                    {
+   164	                        var peakData = ReadMZData(raw, scanEvent, scanNumber, true, false, false);
+   165	                        var (pMz, pInten) = OrderedPairs(peakData.masses, peakData.intensities);
+   166	                        if (pMz.Length > 0)
+   167	                        {
+   168	                            for (int i = 0; i < pMz.Length; i++)
+   169	                            {
+   170	                                peaksIndex.Add(ordinal);
+   171	                                peaksMz.Add(pMz[i]);
+   172	                                peaksIntensity.Add(pInten[i]);
+   173	                            }
+   174	                            peakSpectra.Add(ordinal);
+   175	                            peakCount = (ulong)pMz.Length;
+   176	                        }
+   177	                    }
+   178	
+   179	                    var scanStats = raw.GetScanStatsForScanNumber(scanNumber);
+   180	                    var trailer = new ScanTrailer(raw.GetTrailerExtraInformation(scanNumber));
+   181	
+   182	                    // Mirror the mzML parent-derivation bookkeeping: map each scan's filter prefix to
+   183	                    // its scan number so an MSn child can resolve its parent via the scan string.
+   184	                    var filterMatch = level == 1
+   185	                        ? null
+   186	                        : (level == 2
+   187	                            ? _filterStringIsolationMzPattern.Match(scanEvent.ToString())
+   188	                            : _filterStringParentMzPattern.Match(scanEvent.ToString()));
+   189	                    var filterKey = level == 1 ? "" : (filterMatch != null && filterMatch.Success ? filterMatch.Groups[1].Value : "");
+   190	                    _precursorScanNumbers[filterKey] = scanNumber;
+   191	
+   192	                    var rec = new Record
+   193	                    {
+   194	                        Ordinal = ordinal,
+   195	                        ScanNumber = scanNumber,
+   196	                        MsLevel = level,
+   197	                        Id = ConstructSpectrumTitle((int)Device.MS, 1, scanNumber),
+   198	                        Time = raw.RetentionTimeFromScanNumber(scanNumber),
+   199	                        Polarity = scanFilter.Polarity == PolarityType.Negative ? (sbyte)-1 : (sbyte)1,
+   200	                        Representation = mzData.isCentroided ? "MS:1000127" : "MS:1000128",
+   201	                        SpectrumType = level == 1 ? "MS:1000579" : "MS:1000580",
+   202	                        LowestMz = mz[0],
+   203	                        HighestMz = mz[mz.Length - 1],
+   204	                        BasePeakMz = mzData.basePeakMass ?? 0.0,
+   205	                        BasePeakIntensity = (float)(mzData.basePeakIntensity ?? 0.0),
+   206	                        TotalIonCurrent = (float)scanStats.TIC,
+   207	                        DataPointCount = (ulong)mz.Length,
+   208	                        PeakCount = peakCount,
+   209	                        ScanStartTime = (float)raw.RetentionTimeFromScanNumber(scanNumber),
+   210	                        FilterString = scanEvent.ToString(),
+   211	                        IonInjectionTime = (float)(trailer.AsDouble("Ion Injection Time (ms):") ?? 0.0),
+   212	                        InstrumentConfigRef = AnalyzerIndex(scanFilter.MassAnalyzer, scanFilter.IonizationMode),
+   213	                        WindowLower = (float)scanStats.LowMass,
+   214	                        WindowUpper = (float)scanStats.HighMass
+   215	                    };
+   216	
+   217	                    if (level >= 2)
+   218	                    {
+   219	                        BuildPrecursor(raw, scanNumber, scanEvent, scanFilter, trailer, scanNumberToOrdinal,
+   220	                            filterKey, rec);
+   221	                    }
+   222	
+   223	                    records.Add(rec);
+   224	                    scanNumberToOrdinal[scanNumber] = ordinal;
+   225	                    ordinal++;
+   226	                }
+   227	                catch (Exception ex)
+   228	                {
+   229	                    Log.Error($"Scan #{scanNumber} cannot be processed because of the following exception: {ex.Message}");
+   230	                    Log.Debug($"{ex.StackTrace}\n{ex.InnerException}");
+   231	                    ParseInput.NewError();
+   232	                }
+   233	            }
+   234	
+   235	            if (ordinal == 0)
+   236	            {
+   237	                throw new RawFileParserException("No in-range spectrum to write");
+   238	            }
+   239	
+   240	            // Device TIC over the whole run (minutes, one value per scan in scan order), paired with
+   241	            // the per-scan (RT, ms_level) records. The device-trace value is the reference TIC; the
+   242	            // summed ScanStatistics.TIC differs for MS1 and is used only when the trace is unavailable.
+   243	            var chromTime = new List<double>();
+   244	            var chromIntensity = new List<float>();
+   245	            var chromMsLevel = new List<long>();
+   246	            CaptureTic(raw, records, chromTime, chromIntensity, chromMsLevel);
+   247	
+   248	            var hasPeaks = peaksIndex.Count > 0;
+   249	            var dataBytes = BuildPointFacet(dataIndex, dataMz, dataIntensity, (int)ordinal);
+   250	            var peaksBytes = hasPeaks
+   251	                ? BuildPointFacet(peaksIndex, peaksMz, peaksIntensity, peakSpectra.Count)
+   252	                : null;
+   253	
+   254	            // Chromatogram facets contribute their own CURIE prefixes (e.g. the chromatogram type and
+   255	            // array-index terms); build them before the metadata facet so the generated cv_list — which
+   256	            // is finalized inside the metadata facet — covers every prefix the archive actually uses.
+   257	            var chromDataBytes = BuildChromatogramDataFacet(chromTime, chromIntensity, chromMsLevel);
+   258	            var chromMetaBytes = BuildChromatogramMetadataFacet(records.Count);
+   259	
+   260	            var metaBytes = BuildMetadataFacet(records);
+   261	            var indexBytes = BuildIndex(hasPeaks, true);
+   262	
+   263	            ConfigureWriter(".mzpeak");
+   264	            try
+   265	            {
+   266	                using (var zip = new ZipArchive(Writer.BaseStream, ZipArchiveMode.Create, true))
+   267	                {
+   268	                    AddStored(zip, "mzpeak_index.json", indexBytes);
+   269	                    AddStored(zip, "spectra_data.parquet", dataBytes);
+   270	                    AddStored(zip, "spectra_metadata.parquet", metaBytes);
+   271	                    if (hasPeaks) AddStored(zip, "spectra_peaks.parquet", peaksBytes);
+   272	                    AddStored(zip, "chromatograms_metadata.parquet", chromMetaBytes);
+   273	                    AddStored(zip, "chromatograms_data.parquet", chromDataBytes);
+   274	                }
+   275	
+   276	                Writer.Flush();
+   277	            }
+   278	            finally
+   279	            {
+   280	                Writer.Close();
+   281	            }
+   282	
+   283	            Log.Info($"Wrote mzPeak archive with {ordinal} spectra ({dataIndex.Count} data points, " +
+   284	                     $"{peaksIndex.Count} peak points, {chromTime.Count} TIC points)");
+   285	        }
+
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs | sed -n '390,430p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+   390	        private byte[] BuildChromatogramDataFacet(List<double> time, List<float> intensity, List<long> msLevel)
+   391	        {
+   392	            int n = time.Count;
+   393	            var point = new StructField("point",
+   394	                new DataField<ulong>("chromatogram_index"),
+   395	                new DataField<double>("time"),
+   396	                new DataField<float>("intensity"),
+   397	                new DataField<long>("ms_level"));
+   398	            var schema = new ParquetSchema(point);
+   399	
+   400	            var index = new ulong[n];
+   401	            var cols = new Dictionary<DataField, (Array, int[], int[])>
+   402	            {
+   403	                [Leaf(schema, "point/chromatogram_index")] = (index, null, null),
+   404	                [Leaf(schema, "point/time")] = (time.ToArray(), null, null),
+   405	                [Leaf(schema, "point/intensity")] = (intensity.ToArray(), null, null),
+   406	                [Leaf(schema, "point/ms_level")] = (msLevel.ToArray(), null, null)
+   407	            };
+   408	
+   409	            foreach (var curie in new[]
+   410	            {
+   411	                "MS:1000523", "MS:1000595", "UO:0000031", "MS:1000521", "MS:1000515",
+   412	                "MS:1000131", "MS:1000522", "MS:1000786", "UO:0000186"
+   413	            })
+   414	            {
+   415	                CollectPrefix(curie);
+   416	            }
+   417	
+   418	            var meta = new Dictionary<string, string>
+   419	            {
+   420	                ["chromatogram_data_point_count"] = "0",
+   421	                ["chromatogram_array_index"] = ChromatogramArrayIndex,
+   422	                ["chromatogram_tic_source"] = _chromFromDeviceTrace ? "device" : "summed"
+   423	            };
+   424	
+   425	            return WriteFacet(schema, meta, cols);
+   426	        }
+   427	
+   428	        private byte[] BuildChromatogramMetadataFacet(int n)
+   429	        {
+   430	            var chromatogram = BuildChromatogramField();
+
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs | sed -n '629,666p;835,850p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+   629	        private static void AddStored(ZipArchive zip, string name, byte[] bytes)
+   630	        {
+   631	            var entry = zip.CreateEntry(name, CompressionLevel.NoCompression);
+   632	            using (var s = entry.Open())
+   633	            {
+   634	                s.Write(bytes, 0, bytes.Length);
+   635	            }
+   636	        }
+   637	
+   638	        private static byte[] BuildPointFacet(List<ulong> index, List<double> mz, List<float> intensity, int spectrumCount)
+   639	        {
+   640	            var point = new StructField("point",
+   641	                new DataField<ulong>("spectrum_index"),
+   642	                new DataField<double>("mz"),
+   643	                new DataField<float>("intensity"));
+   644	            var schema = new ParquetSchema(point);
+   645	
+   646	            var cols = new Dictionary<DataField, (Array, int[], int[])>
+   647	            {
+   648	                [Leaf(schema, "point/spectrum_index")] = (index.ToArray(), null, null),
+   649	                [Leaf(schema, "point/mz")] = (mz.ToArray(), null, null),
+   650	                [Leaf(schema, "point/intensity")] = (intensity.ToArray(), null, null)
+   651	            };
+   652	
+   653	            var meta = new Dictionary<string, string>
+   654	            {
+   655	                ["spectrum_count"] = spectrumCount.ToString(),
+   656	                ["spectrum_data_point_count"] = index.Count.ToString(),
+   657	                ["spectrum_array_index"] = SpectrumArrayIndex
+   658	            };
+   659	
+   660	            return WriteFacet(schema, meta, cols);
+   661	        }
+   662	
+   663	        private byte[] BuildMetadataFacet(List<Record> records)
+   664	        {
+   665	            int n = records.Count;
+   666	
+   835	        {
+   836	            CollectPrefix(accession);
+   837	            if (unit != null) CollectPrefix(unit);
+   838	            return MzPeakParquet.CvColumn(accession, label, unit);
+   839	        }
+   840	
+   841	        private void CollectPrefix(string curie)
+   842	        {
+   843	            if (string.IsNullOrEmpty(curie)) return;
+   844	            var i = curie.IndexOf(':');
+   845	            if (i > 0) _cvPrefixes.Add(curie.Substring(0, i));
+   846	        }
+   847	
+   848	        private static void AddScalar(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
+   849	            string path, Array values, bool[] present)
+   850	        {
+
+codex
+One potential plan issue is emerging outside S1/S2: the revised text sometimes says “nine CURIE prefixes,” but the current code’s `CollectPrefix` records only namespace prefixes like `MS` and `UO`. I’m checking whether that is just wording or an actual test instruction problem.
+exec
+/bin/zsh -lc "rg -n \"cv_list|_cvPrefixes|CollectPrefix\\(|BuildIndex|controlled vocabulary|prefix\" ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs ThermoRawFileParser/Writer/MzPeak -g '*.cs'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:31:            "{\"prefix\":\"point\",\"entries\":[" +
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:39:            "{\"prefix\":\"point\",\"entries\":[" +
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:48:        // One PARAM value, used to collect CV prefixes for the generated cv_list.
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:98:        private readonly HashSet<string> _cvPrefixes = new HashSet<string>();
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:182:                    // Mirror the mzML parent-derivation bookkeeping: map each scan's filter prefix to
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:254:            // Chromatogram facets contribute their own CURIE prefixes (e.g. the chromatogram type and
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:255:            // array-index terms); build them before the metadata facet so the generated cv_list — which
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:256:            // is finalized inside the metadata facet — covers every prefix the archive actually uses.
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:261:            var indexBytes = BuildIndex(hasPeaks, true);
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:415:                CollectPrefix(curie);
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:442:            CollectPrefix("MS:1000235");
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:836:            CollectPrefix(accession);
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:837:            if (unit != null) CollectPrefix(unit);
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:841:        private void CollectPrefix(string curie)
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:845:            if (i > 0) _cvPrefixes.Add(curie.Substring(0, i));
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1016:                foreach (var it in items) { CollectPrefix(it.Accession); CollectPrefix(it.Unit); }
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1116:        // cv_list covers exactly the collected CV-prefix set.
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1127:            // cv_list is generated LAST: every accession/unit routed through Cv() or a param helper
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1128:            // has been recorded in _cvPrefixes by this point.
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1134:                ["cv_list"] = cvList,
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1144:            custom["cv_list"] = Compact(cvList);
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1161:                ["MS"] = (MsCvVersion, "PSI-MS controlled vocabulary",
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1167:            foreach (var prefix in _cvPrefixes.OrderBy(p => p))
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1169:                defs.TryGetValue(prefix, out var d);
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1172:                    ["id"] = prefix,
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1174:                    ["full_name"] = d.fullName ?? prefix,
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1308:        // A controlled-value PARAM (accession + name, no value). Records the CV prefix so the
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1309:        // generated cv_list stays exhaustive.
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1312:            CollectPrefix(accession);
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1319:            CollectPrefix(unit);
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1329:        private byte[] BuildIndex(bool hasPeaks, bool hasChromatograms)
+
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs | sed -n '600,628p;820,846p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+   600	            if (OntologyMapping.DissociationTypes.TryGetValue(reaction.ActivationType, out var diss))
+   601	            {
+   602	                rec.ActivationParams.Add(new Param { Accession = diss.accession, Name = diss.name });
+   603	            }
+   604	
+   605	            if (reaction.CollisionEnergyValid)
+   606	            {
+   607	                rec.ActivationParams.Add(new Param
+   608	                {
+   609	                    Accession = "MS:1000045",
+   610	                    Name = "collision energy",
+   611	                    Float = reaction.CollisionEnergy,
+   612	                    Unit = "UO:0000266"
+   613	                });
+   614	            }
+   615	
+   616	            int? charge = trailer.AsPositiveInt("Charge State:");
+   617	            double? monoisotopicMz = trailer.AsDouble("Monoisotopic M/Z:");
+   618	            rec.SelectedIonMz = CalculateSelectedIonMz(reaction, monoisotopicMz, isolationWidth);
+   619	            rec.ChargeState = charge;
+   620	
+   621	            if (rec.SelectedIonMz > ZeroDelta && parentScan > 0)
+   622	            {
+   623	                rec.SelectedIonIntensity = (float)CalculatePrecursorPeakIntensity(raw, parentScan,
+   624	                    reaction.PrecursorMass, isolationWidth,
+   625	                    ParseInput.NoPeakPicking.Contains(rec.MsLevel - 1));
+   626	            }
+   627	        }
+   628	
+   820	
+   821	        private StructField BuildSelectedIonField()
+   822	        {
+   823	            return new StructField("selected_ion",
+   824	                new DataField<ulong>("source_index", true),
+   825	                new DataField<ulong>("precursor_index", true),
+   826	                new DataField<double>(Cv("MS:1000744", "selected_ion_mz", "MS:1000040"), true),
+   827	                new DataField<int>(Cv("MS:1000041", "charge_state"), true),
+   828	                new DataField<float>(Cv("MS:1000042", "intensity", "MS:1000131"), true),
+   829	                new DataField<double>("ion_mobility_value", true),
+   830	                new DataField<string>("ion_mobility_type", true),
+   831	                new ListField("parameters", MzPeakParquet.BuildParamField("item")));
+   832	        }
+   833	
+   834	        private string Cv(string accession, string label, string unit = null)
+   835	        {
+   836	            CollectPrefix(accession);
+   837	            if (unit != null) CollectPrefix(unit);
+   838	            return MzPeakParquet.CvColumn(accession, label, unit);
+   839	        }
+   840	
+   841	        private void CollectPrefix(string curie)
+   842	        {
+   843	            if (string.IsNullOrEmpty(curie)) return;
+   844	            var i = curie.IndexOf(':');
+   845	            if (i > 0) _cvPrefixes.Add(curie.Substring(0, i));
+   846	        }
+
+codex
+The S1 and S2 revisions look substantively addressed. I found one wording-level test hazard in S4 around CURIEs versus prefixes, and I’m checking if there are any comparable plan defects before assigning the verdict.
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs | sed -n '1110,1180p;1320,1345p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+  1110	                return ms.ToArray();
+  1111	            }
+  1112	        }
+  1113	
+  1114	        // File-level metadata blocks shared verbatim between the parquet footer KV and the index
+  1115	        // metadata{}. Built once after all CV-named columns/params are emitted so the generated
+  1116	        // cv_list covers exactly the collected CV-prefix set.
+  1117	        private JObject _metadataBlocks;
+  1118	
+  1119	        private void AddMetadataBlocks(IDictionary<string, string> custom, List<Record> records)
+  1120	        {
+  1121	            var instruments = BuildInstrumentConfigurations();
+  1122	            var software = BuildSoftwareList();
+  1123	            var dataProcessing = BuildDataProcessingList();
+  1124	            var fileDescription = BuildFileDescription(records);
+  1125	            var run = BuildRun();
+  1126	
+  1127	            // cv_list is generated LAST: every accession/unit routed through Cv() or a param helper
+  1128	            // has been recorded in _cvPrefixes by this point.
+  1129	            var cvList = BuildCvList();
+  1130	
+  1131	            _metadataBlocks = new JObject
+  1132	            {
+  1133	                ["version"] = MzPeakVersion,
+  1134	                ["cv_list"] = cvList,
+  1135	                ["file_description"] = fileDescription,
+  1136	                ["instrument_configuration_list"] = instruments,
+  1137	                ["software_list"] = software,
+  1138	                ["data_processing_method_list"] = dataProcessing,
+  1139	                ["run"] = run,
+  1140	                ["sample_list"] = new JArray(),
+  1141	                ["scan_settings_list"] = new JArray()
+  1142	            };
+  1143	
+  1144	            custom["cv_list"] = Compact(cvList);
+  1145	            custom["file_description"] = Compact(fileDescription);
+  1146	            custom["instrument_configuration_list"] = Compact(instruments);
+  1147	            custom["software_list"] = Compact(software);
+  1148	            custom["data_processing_method_list"] = Compact(dataProcessing);
+  1149	            custom["run"] = Compact(run);
+  1150	            custom["sample_list"] = "[]";
+  1151	            custom["scan_settings_list"] = "[]";
+  1152	        }
+  1153	
+  1154	        private static string Compact(JToken token) =>
+  1155	            token.ToString(Newtonsoft.Json.Formatting.None);
+  1156	
+  1157	        private JArray BuildCvList()
+  1158	        {
+  1159	            var defs = new Dictionary<string, (string version, string fullName, string uri)>
+  1160	            {
+  1161	                ["MS"] = (MsCvVersion, "PSI-MS controlled vocabulary",
+  1162	                    "https://raw.githubusercontent.com/HUPO-PSI/psi-ms-CV/master/psi-ms.obo"),
+  1163	                ["UO"] = (UoCvVersion, "Unit Ontology", "http://purl.obolibrary.org/obo/uo.obo")
+  1164	            };
+  1165	
+  1166	            var list = new JArray();
+  1167	            foreach (var prefix in _cvPrefixes.OrderBy(p => p))
+  1168	            {
+  1169	                defs.TryGetValue(prefix, out var d);
+  1170	                list.Add(new JObject
+  1171	                {
+  1172	                    ["id"] = prefix,
+  1173	                    ["version"] = d.version ?? "unknown",
+  1174	                    ["full_name"] = d.fullName ?? prefix,
+  1175	                    ["uri"] = d.uri ?? ""
+  1176	                });
+  1177	            }
+  1178	            return list;
+  1179	        }
+  1180	
+  1320	            return new JObject
+  1321	            {
+  1322	                ["name"] = name,
+  1323	                ["accession"] = accession == null ? JValue.CreateNull() : new JValue(accession),
+  1324	                ["value"] = value == null ? JValue.CreateNull() : JToken.FromObject(value),
+  1325	                ["unit"] = unit == null ? JValue.CreateNull() : new JValue(unit)
+  1326	            };
+  1327	        }
+  1328	
+  1329	        private byte[] BuildIndex(bool hasPeaks, bool hasChromatograms)
+  1330	        {
+  1331	            var files = new JArray
+  1332	            {
+  1333	                new JObject
+  1334	                {
+  1335	                    ["name"] = "spectra_data.parquet",
+  1336	                    ["entity_type"] = "spectrum",
+  1337	                    ["data_kind"] = "data arrays"
+  1338	                },
+  1339	                new JObject
+  1340	                {
+  1341	                    ["name"] = "spectra_metadata.parquet",
+  1342	                    ["entity_type"] = "spectrum",
+  1343	                    ["data_kind"] = "metadata"
+  1344	                }
+  1345	            };
+
+exec
+/bin/zsh -lc "rg -n \"WriteFacet\\(|GetAwaiter|Wait\\(|WriteAsync\\(\" ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+ThermoRawFileParser/Writer/MzPeak/MzPeakParquet.cs:156:        public static async Task WriteAsync(Stream output, ParquetSchema schema,
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:425:            return WriteFacet(schema, meta, cols);
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:467:            return WriteFacet(schema, custom, cols);
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:660:            return WriteFacet(schema, meta, cols);
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:766:            return WriteFacet(schema, custom, cols);
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1104:        private static byte[] WriteFacet(ParquetSchema schema, IReadOnlyDictionary<string, string> meta,
+ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs:1109:                MzPeakParquet.WriteAsync(ms, schema, meta, cols).GetAwaiter().GetResult();
+
+codex
+I’m also checking one implementation-shape risk: the writer is synchronous today while the proposed Parquet streaming API is async. That matters only if the plan leaves row-group flush exceptions inside the per-scan skip path.
+exec
+/bin/zsh -lc "nl -ba ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs | sed -n '1098,1112p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+  1098	            {
+  1099	                current = ((StructField)current).Fields.First(f => f.Name == parts[i]);
+  1100	            }
+  1101	            return current;
+  1102	        }
+  1103	
+  1104	        private static byte[] WriteFacet(ParquetSchema schema, IReadOnlyDictionary<string, string> meta,
+  1105	            IDictionary<DataField, (Array, int[], int[])> cols)
+  1106	        {
+  1107	            using (var ms = new MemoryStream())
+  1108	            {
+  1109	                MzPeakParquet.WriteAsync(ms, schema, meta, cols).GetAwaiter().GetResult();
+  1110	                return ms.ToArray();
+  1111	            }
+  1112	        }
+
+codex
+The remaining concerns are plan hygiene, not the core S1/S2 mechanics. I’m ready to close this as a confirmation review with explicit resolution calls and any new issues separated.
+codex
+**S1-S6**
+- S1: RESOLVED - `FinalMetadataSetAfterRowGroups` proves footer round-trip after row groups, and `CloseAsync(finalMetadata)` sets `CustomMetadata` before dispose. [01-01-PLAN.md](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md:139), [01-01-PLAN.md](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md:147)
+- S2: RESOLVED - `_precursorScanNumbers` is explicitly local-staged and committed only in the success block, with a deterministic skipped-scan precursor-isolation test. [01-01-PLAN.md](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md:198), [01-01-PLAN.md](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md:205)
+- S3: RESOLVED - Finalize order is now explicit: residual flush, `CloseAsync`, dispose temp stream, then `AddStoredFromFile`, then delete. [01-01-PLAN.md](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md:175)
+- S4: RESOLVED - Plan factors chrom-data schema and prefix registration, and requires registration before `BuildMetadataFacet`. [01-01-PLAN.md](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md:171)
+- S5: RESOLVED - Real writer flush path is forced via injectable `RowGroupRowCap`, not by assuming `small.RAW` exceeds production cap. [01-01-PLAN.md](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md:163), [01-01-PLAN.md](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md:169)
+- S6: RESOLVED - Task 2 tests must create their own archives; no stale `/tmp` artifact dependency remains. [01-01-PLAN.md](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md:182)
+
+**NEW Issues**
+- NEW-1: Commit block includes possible row-group flushes while the existing per-scan catch continues after any exception; plan should state commit/flush failures are fatal or rollback-safe, otherwise a flush failure can corrupt output while being treated as a skipped scan. [01-01-PLAN.md](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md:199), [01-01-PLAN.md](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md:200)
+- NEW-2: S4 test wording says “nine chrom-data CURIE prefixes,” but `cv_list` stores unique prefixes like `MS`/`UO`, not all nine CURIEs; revise to assert prefixes derived from the nine CURIEs, or separately assert the helper registers all nine. [01-01-PLAN.md](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/01-streaming-writer-per-scan-robustness/01-01-PLAN.md:164)
+
+VERDICT: SHIP-WITH-FIXES
+tokens used
+55.987
