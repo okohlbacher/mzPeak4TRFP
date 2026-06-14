@@ -166,6 +166,16 @@ namespace ThermoRawFileParser.Writer
                     var scanStats = raw.GetScanStatsForScanNumber(scanNumber);
                     var trailer = new ScanTrailer(raw.GetTrailerExtraInformation(scanNumber));
 
+                    // Mirror the mzML parent-derivation bookkeeping: map each scan's filter prefix to
+                    // its scan number so an MSn child can resolve its parent via the scan string.
+                    var filterMatch = level == 1
+                        ? null
+                        : (level == 2
+                            ? _filterStringIsolationMzPattern.Match(scanEvent.ToString())
+                            : _filterStringParentMzPattern.Match(scanEvent.ToString()));
+                    var filterKey = level == 1 ? "" : (filterMatch != null && filterMatch.Success ? filterMatch.Groups[1].Value : "");
+                    _precursorScanNumbers[filterKey] = scanNumber;
+
                     var rec = new Record
                     {
                         Ordinal = ordinal,
@@ -193,7 +203,8 @@ namespace ThermoRawFileParser.Writer
 
                     if (level >= 2)
                     {
-                        BuildPrecursor(raw, scanNumber, scanEvent, scanFilter, trailer, scanNumberToOrdinal, rec);
+                        BuildPrecursor(raw, scanNumber, scanEvent, scanFilter, trailer, scanNumberToOrdinal,
+                            filterKey, rec);
                     }
 
                     records.Add(rec);
@@ -290,11 +301,19 @@ namespace ThermoRawFileParser.Writer
         }
 
         private void BuildPrecursor(IRawDataPlus raw, int scanNumber, IScanEvent scanEvent,
-            IScanFilter scanFilter, ScanTrailer trailer, IDictionary<int, ulong> scanNumberToOrdinal, Record rec)
+            IScanFilter scanFilter, ScanTrailer trailer, IDictionary<int, ulong> scanNumberToOrdinal,
+            string filterKey, Record rec)
         {
             rec.IsMsn = true;
 
-            int parentScan = ResolveParentScan(scanNumber, scanEvent, trailer);
+            // Parent scan via Master Scan Number trailer, falling back to the scan-string parent the
+            // mzML path derives. Map the parent scan number to its emitted ordinal; if the parent was
+            // filtered out / not emitted, keep the precursor entry but leave precursor_index null.
+            int parentScan;
+            var master = trailer.AsPositiveInt("Master Scan Number:");
+            if (master.HasValue) parentScan = master.Value;
+            else parentScan = GetParentFromScanString(filterKey);
+
             if (parentScan > 0 && scanNumberToOrdinal.TryGetValue(parentScan, out var p))
             {
                 rec.PrecursorIndex = p;
@@ -315,6 +334,11 @@ namespace ThermoRawFileParser.Writer
                 rec.IsolationUpperOffset = (float)offset;
             }
 
+            if (OntologyMapping.DissociationTypes.TryGetValue(reaction.ActivationType, out var diss))
+            {
+                rec.ActivationParams.Add(new Param { Accession = diss.accession, Name = diss.name });
+            }
+
             if (reaction.CollisionEnergyValid)
             {
                 rec.ActivationParams.Add(new Param
@@ -324,11 +348,6 @@ namespace ThermoRawFileParser.Writer
                     Float = reaction.CollisionEnergy,
                     Unit = "UO:0000266"
                 });
-            }
-
-            if (OntologyMapping.DissociationTypes.TryGetValue(reaction.ActivationType, out var diss))
-            {
-                rec.ActivationParams.Add(new Param { Accession = diss.accession, Name = diss.name });
             }
 
             int? charge = trailer.AsPositiveInt("Charge State:");
@@ -342,18 +361,6 @@ namespace ThermoRawFileParser.Writer
                     reaction.PrecursorMass, isolationWidth,
                     ParseInput.NoPeakPicking.Contains(rec.MsLevel - 1));
             }
-        }
-
-        private static int ResolveParentScan(int scanNumber, IScanEvent scanEvent, ScanTrailer trailer)
-        {
-            var master = trailer.AsPositiveInt("Master Scan Number:");
-            if (master.HasValue) return master.Value;
-
-            var s = scanEvent.ToString();
-            var open = s.LastIndexOf('@');
-            if (open < 0) return -1;
-
-            return -1;
         }
 
         private static void AddStored(ZipArchive zip, string name, byte[] bytes)
@@ -397,10 +404,17 @@ namespace ThermoRawFileParser.Writer
 
             var spectrum = BuildSpectrumField();
             var scan = BuildScanField();
-            var schema = new ParquetSchema(spectrum, scan);
+            var precursor = BuildPrecursorField();
+            var selectedIon = BuildSelectedIonField();
+            var schema = new ParquetSchema(spectrum, scan, precursor, selectedIon);
 
             var cols = new Dictionary<DataField, (Array, int[], int[])>();
             var presentAll = records.Select(_ => true).ToArray();
+
+            // precursor / selected_ion are independent tables: the k-th MSn (ascending ordinal) sits
+            // at row k, null-padded on rows M..N-1. msnAtRow[row] is true exactly on rows 0..M-1.
+            var msnRecords = records.Where(r => r.IsMsn).OrderBy(r => r.Ordinal).ToList();
+            var msnAtRow = Enumerable.Range(0, n).Select(i => i < m).ToArray();
 
             // spectrum facet (present on all N rows)
             AddScalar(cols, schema, "spectrum/index", records.Select(r => r.Ordinal).ToArray(), presentAll, null);
@@ -451,6 +465,29 @@ namespace ThermoRawFileParser.Writer
                 records.Select(r => r.InstrumentConfigRef).ToArray(), presentAll, null);
             AddScanWindows(cols, schema, records, presentAll);
 
+            // precursor facet (present on rows 0..M-1, null on M..N-1)
+            AddMsnScalar(cols, schema, "precursor/source_index", n, msnRecords.Select(r => r.Ordinal).ToArray());
+            AddMsnPrecursorIndex(cols, schema, "precursor/precursor_index", n, msnRecords);
+            AddMsnString(cols, schema, "precursor/precursor_id", n, msnRecords.Select(r => r.PrecursorId).ToArray());
+            AddMsnScalar(cols, schema, "precursor/isolation_window/" + Cv("MS:1000827", "isolation_window_target_mz"),
+                n, msnRecords.Select(r => r.IsolationTarget).ToArray());
+            AddMsnNullableFloat(cols, schema, "precursor/isolation_window/" + Cv("MS:1000828", "isolation_window_lower_offset", "MS:1000040"),
+                n, msnRecords.Select(r => r.IsolationLowerOffset).ToArray());
+            AddMsnNullableFloat(cols, schema, "precursor/isolation_window/" + Cv("MS:1000829", "isolation_window_upper_offset", "MS:1000040"),
+                n, msnRecords.Select(r => r.IsolationUpperOffset).ToArray());
+            AddMsnParamList(cols, schema, "precursor/isolation_window/parameters", n, msnRecords.Select(_ => new List<Param>()).ToList());
+            AddMsnParamList(cols, schema, "precursor/activation/parameters", n, msnRecords.Select(r => r.ActivationParams).ToList());
+
+            // selected_ion facet (present on rows 0..M-1, null on M..N-1)
+            AddMsnScalar(cols, schema, "selected_ion/source_index", n, msnRecords.Select(r => r.Ordinal).ToArray());
+            AddMsnPrecursorIndex(cols, schema, "selected_ion/precursor_index", n, msnRecords);
+            AddMsnScalar(cols, schema, "selected_ion/" + Cv("MS:1000744", "selected_ion_mz", "MS:1000040"),
+                n, msnRecords.Select(r => r.SelectedIonMz).ToArray());
+            AddMsnNullableInt(cols, schema, "selected_ion/" + Cv("MS:1000041", "charge_state"),
+                n, msnRecords.Select(r => r.ChargeState).ToArray());
+            AddMsnNullableFloat(cols, schema, "selected_ion/" + Cv("MS:1000042", "intensity", "MS:1000131"),
+                n, msnRecords.Select(r => r.SelectedIonIntensity).ToArray());
+
             var custom = new Dictionary<string, string>
             {
                 ["spectrum_count"] = n.ToString(),
@@ -497,6 +534,33 @@ namespace ThermoRawFileParser.Writer
                 new ListField("scan_windows", window));
         }
 
+        private StructField BuildPrecursorField()
+        {
+            var isolationWindow = new StructField("isolation_window",
+                new DataField<float>(Cv("MS:1000827", "isolation_window_target_mz"), true),
+                new DataField<float>(Cv("MS:1000828", "isolation_window_lower_offset", "MS:1000040"), true),
+                new DataField<float>(Cv("MS:1000829", "isolation_window_upper_offset", "MS:1000040"), true),
+                new ListField("parameters", MzPeakParquet.BuildParamField("item")));
+            var activation = new StructField("activation",
+                new ListField("parameters", MzPeakParquet.BuildParamField("item")));
+            return new StructField("precursor",
+                new DataField<ulong>("source_index", true),
+                new DataField<ulong>("precursor_index", true),
+                new DataField<string>("precursor_id", true),
+                isolationWindow,
+                activation);
+        }
+
+        private StructField BuildSelectedIonField()
+        {
+            return new StructField("selected_ion",
+                new DataField<ulong>("source_index", true),
+                new DataField<ulong>("precursor_index", true),
+                new DataField<double>(Cv("MS:1000744", "selected_ion_mz", "MS:1000040"), true),
+                new DataField<int>(Cv("MS:1000041", "charge_state"), true),
+                new DataField<float>(Cv("MS:1000042", "intensity", "MS:1000131"), true));
+        }
+
         private string Cv(string accession, string label, string unit = null)
         {
             CollectPrefix(accession);
@@ -518,6 +582,99 @@ namespace ThermoRawFileParser.Writer
             var rows = present.Select(p => p ? MzPeakParquet.Present(leaf) : MzPeakParquet.Absent()).ToArray();
             var (def, _r) = MzPeakParquet.NestedLevels(leaf, rows);
             cols[leaf] = (values, def, null);
+        }
+
+        // A scalar leaf inside a top-level struct present only on the first M rows (the MSn count),
+        // null on rows M..N-1. values has length M (one per MSn).
+        private static void AddMsnScalar(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
+            string path, int n, Array values)
+        {
+            var leaf = Leaf(schema, path);
+            int m = values.Length;
+            var rows = Enumerable.Range(0, n)
+                .Select(i => i < m ? MzPeakParquet.Present(leaf) : MzPeakParquet.Absent()).ToArray();
+            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
+            cols[leaf] = (values, def, null);
+        }
+
+        private static void AddMsnString(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
+            string path, int n, string[] values)
+        {
+            var leaf = Leaf(schema, path);
+            int m = values.Length;
+            var rows = new List<MzPeakParquet.LeafRow>();
+            var present = new List<string>();
+            for (int i = 0; i < n; i++)
+            {
+                if (i >= m) rows.Add(MzPeakParquet.Absent());
+                else if (values[i] != null) { rows.Add(MzPeakParquet.Present(leaf)); present.Add(values[i]); }
+                else rows.Add(MzPeakParquet.AtLevel(leaf.MaxDefinitionLevel - 1, false));
+            }
+            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
+            cols[leaf] = (present.ToArray(), def, null);
+        }
+
+        private static void AddMsnPrecursorIndex(IDictionary<DataField, (Array, int[], int[])> cols,
+            ParquetSchema schema, string path, int n, List<Record> msn)
+        {
+            var leaf = Leaf(schema, path);
+            int m = msn.Count;
+            var rows = new List<MzPeakParquet.LeafRow>();
+            var present = new List<ulong>();
+            for (int i = 0; i < n; i++)
+            {
+                if (i >= m) rows.Add(MzPeakParquet.Absent());
+                else if (msn[i].PrecursorIndex.HasValue)
+                { rows.Add(MzPeakParquet.Present(leaf)); present.Add(msn[i].PrecursorIndex.Value); }
+                else rows.Add(MzPeakParquet.AtLevel(leaf.MaxDefinitionLevel - 1, false));
+            }
+            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
+            cols[leaf] = (present.ToArray(), def, null);
+        }
+
+        private static void AddMsnNullableFloat(IDictionary<DataField, (Array, int[], int[])> cols,
+            ParquetSchema schema, string path, int n, float?[] values)
+        {
+            var leaf = Leaf(schema, path);
+            int m = values.Length;
+            var rows = new List<MzPeakParquet.LeafRow>();
+            var present = new List<float>();
+            for (int i = 0; i < n; i++)
+            {
+                if (i >= m) rows.Add(MzPeakParquet.Absent());
+                else if (values[i].HasValue) { rows.Add(MzPeakParquet.Present(leaf)); present.Add(values[i].Value); }
+                else rows.Add(MzPeakParquet.AtLevel(leaf.MaxDefinitionLevel - 1, false));
+            }
+            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
+            cols[leaf] = (present.ToArray(), def, null);
+        }
+
+        private static void AddMsnNullableInt(IDictionary<DataField, (Array, int[], int[])> cols,
+            ParquetSchema schema, string path, int n, int?[] values)
+        {
+            var leaf = Leaf(schema, path);
+            int m = values.Length;
+            var rows = new List<MzPeakParquet.LeafRow>();
+            var present = new List<int>();
+            for (int i = 0; i < n; i++)
+            {
+                if (i >= m) rows.Add(MzPeakParquet.Absent());
+                else if (values[i].HasValue) { rows.Add(MzPeakParquet.Present(leaf)); present.Add(values[i].Value); }
+                else rows.Add(MzPeakParquet.AtLevel(leaf.MaxDefinitionLevel - 1, false));
+            }
+            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
+            cols[leaf] = (present.ToArray(), def, null);
+        }
+
+        // PARAM list inside a top-level struct present only on the first M rows. perRow has length M.
+        private void AddMsnParamList(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
+            string listPath, int n, List<List<Param>> perRow)
+        {
+            int m = perRow.Count;
+            var structPresent = Enumerable.Range(0, n).Select(i => i < m).ToArray();
+            var padded = new List<List<Param>>();
+            for (int i = 0; i < n; i++) padded.Add(i < m ? perRow[i] : new List<Param>());
+            AddParamList(cols, schema, listPath, padded, structPresent);
         }
 
         private void AddParamList(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
@@ -569,6 +726,7 @@ namespace ThermoRawFileParser.Writer
                     continue;
                 }
 
+                foreach (var it in items) { CollectPrefix(it.Accession); CollectPrefix(it.Unit); }
                 AddListLeaf(accRows, accVals, accLeaf, items, p => p.Accession);
                 AddListLeaf(nameRows, nameVals, nameLeaf, items, p => p.Name);
                 AddListLeaf(unitRows, unitVals, unitLeaf, items, p => p.Unit);

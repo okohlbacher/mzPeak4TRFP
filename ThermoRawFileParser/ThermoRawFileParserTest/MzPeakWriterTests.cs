@@ -413,6 +413,101 @@ namespace ThermoRawFileParserTest
         }
 
         [Test]
+        public void Metadata_Precursor_And_SelectedIon_NullPadded_And_Linked()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+            try
+            {
+                var snippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "t = pq.read_table(r'{PARQUET}')\n" +
+                    "d = t.to_pylist()\n" +
+                    "N = len(d)\n" +
+                    "pp = [d[i]['precursor'] is not None and d[i]['precursor']['source_index'] is not None for i in range(N)]\n" +
+                    "M = sum(pp)\n" +
+                    "out = {}\n" +
+                    "out['N'] = N\nout['M'] = M\n" +
+                    "out['msn_count'] = sum(1 for i in range(N) if d[i]['spectrum']['MS_1000511_ms_level'] >= 2)\n" +
+                    "out['prec_pattern'] = ''.join('1' if x else '0' for x in pp)\n" +
+                    "out['srcs'] = [d[i]['precursor']['source_index'] for i in range(M)]\n" +
+                    "out['pidx'] = [d[i]['precursor']['precursor_index'] for i in range(M)]\n" +
+                    "out['no_swap'] = all(d[i]['precursor']['source_index']!=d[i]['precursor']['precursor_index'] for i in range(M) if d[i]['precursor']['precursor_index'] is not None)\n" +
+                    "out['sel_mirror'] = all(d[i]['selected_ion']['source_index']==d[i]['precursor']['source_index'] for i in range(M))\n" +
+                    "out['sel_null_tail'] = all(d[i]['selected_ion'] is None or d[i]['selected_ion']['source_index'] is None for i in range(M, N))\n" +
+                    "out['prec_null_tail'] = all(d[i]['precursor'] is None or d[i]['precursor']['source_index'] is None for i in range(M, N))\n" +
+                    "ap = d[0]['precursor']['activation']['parameters']\n" +
+                    "out['row0_act_acc'] = [e['accession'] for e in ap]\n" +
+                    "out['row0_ce_unit'] = [e['unit'] for e in ap if e['accession']=='MS:1000045']\n" +
+                    "out['ms1_ordinals'] = sorted(set(i for i in range(N) if d[i]['spectrum']['MS_1000511_ms_level']==1))\n" +
+                    "print(json.dumps(out))\n";
+                var o = PyArrowMetadata(archive, snippet);
+
+                int n = (int)o["N"], m = (int)o["M"];
+                Assert.That(m, Is.EqualTo((int)o["msn_count"]), "precursor count == MSn spectrum count");
+                Assert.That((string)o["prec_pattern"], Is.EqualTo(new string('1', m) + new string('0', n - m)),
+                    "precursor present on rows 0..M-1, null on M..N-1");
+                Assert.That((bool)o["prec_null_tail"], Is.True);
+                Assert.That((bool)o["sel_null_tail"], Is.True);
+
+                var srcs = o["srcs"].Select(x => (ulong)x).ToArray();
+                Assert.That(srcs, Is.EqualTo(srcs.OrderBy(x => x).ToArray()), "MSn ordinals ascending");
+                Assert.That((bool)o["no_swap"], Is.True, "precursor_index != source_index");
+                Assert.That((bool)o["sel_mirror"], Is.True, "selected_ion.source_index == precursor.source_index");
+
+                var ms1 = o["ms1_ordinals"].Select(x => (ulong)x).ToHashSet();
+                foreach (var pi in o["pidx"])
+                {
+                    if (pi.Type == JTokenType.Null) continue;
+                    Assert.That(ms1, Does.Contain((ulong)pi), "precursor_index must be an MS1 ordinal");
+                }
+
+                Assert.That(o["row0_act_acc"].Select(x => (string)x).ToArray(), Does.Contain("MS:1000133"),
+                    "small.RAW activation is CID MS:1000133");
+                Assert.That(o["row0_ce_unit"].Select(x => (string)x).ToArray(), Does.Contain("UO:0000266"),
+                    "collision energy carries unit UO:0000266");
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
+        public void Metadata_MS2Only_KeepsPrecursor_NullParent_NoSwap()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak)
+            {
+                MsLevel = new HashSet<int> { 2 }
+            };
+            var dir = Convert(input, out var archive);
+            try
+            {
+                var snippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "t = pq.read_table(r'{PARQUET}')\n" +
+                    "d = t.to_pylist()\n" +
+                    "N = len(d)\n" +
+                    "pp = [d[i]['precursor'] is not None and d[i]['precursor']['source_index'] is not None for i in range(N)]\n" +
+                    "M = sum(pp)\n" +
+                    "out = {}\nout['N']=N\nout['M']=M\n" +
+                    "out['all_pidx_null'] = all(d[i]['precursor']['precursor_index'] is None for i in range(M))\n" +
+                    "out['all_present'] = M==N\n" +
+                    "print(json.dumps(out))\n";
+                var o = PyArrowMetadata(archive, snippet);
+
+                Assert.That((int)o["M"], Is.GreaterThan(0), "MS2-only run still emits precursor entries");
+                Assert.That((bool)o["all_present"], Is.True, "every emitted spectrum is an MSn -> precursor on all rows");
+                Assert.That((bool)o["all_pidx_null"], Is.True,
+                    "parent MS1 filtered out -> precursor_index null, entry kept, no swap");
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
         public void OrderedPairs_Preserves_Duplicate_Mz_In_Input_Order()
         {
             var masses = new[] { 100.0, 100.0, 100.0, 200.0 };
