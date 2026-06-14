@@ -27,16 +27,10 @@ namespace ThermoRawFileParserTest
             return null;
         }
 
-        private static string ResolveX64Dotnet()
-        {
-            var path = Path.Combine(Home, ".dotnet-x64", "dotnet");
-            return File.Exists(path) ? path : null;
-        }
-
         private static string ResolveDll(string repoRoot)
         {
             if (repoRoot == null) return null;
-            var path = Path.Combine(repoRoot, "bin", "x64", "Release", "net8.0", "ThermoRawFileParser.dll");
+            var path = Path.Combine(repoRoot, "bin", "Release", "net8.0", "ThermoRawFileParser.dll");
             return File.Exists(path) ? path : null;
         }
 
@@ -77,6 +71,8 @@ namespace ThermoRawFileParserTest
                 RedirectStandardError = true,
                 UseShellExecute = false
             };
+            psi.EnvironmentVariables["DOTNET_ROLL_FORWARD"] = "LatestMajor";
+            psi.EnvironmentVariables["DOTNET_ROLL_FORWARD_TO_PRERELEASE"] = "1";
             using (var p = Process.Start(psi))
             {
                 var so = p.StandardOutput.ReadToEnd();
@@ -159,13 +155,11 @@ namespace ThermoRawFileParserTest
         public void Differential_Semantic_Equivalence_Vs_MzML2MzPeak()
         {
             var repoRoot = ResolveRepoRoot();
-            var x64 = ResolveX64Dotnet();
             var dll = ResolveDll(repoRoot);
             var m2m = ResolveMzml2Mzpeak();
             var python = ResolvePython();
 
-            if (x64 == null) Assert.Ignore("x64 dotnet runtime not available");
-            if (dll == null) Assert.Ignore("x64 Release ThermoRawFileParser.dll not built");
+            if (dll == null) Assert.Ignore("Release ThermoRawFileParser.dll not built");
             if (m2m == null) Assert.Ignore("prebuilt mzml2mzpeak not available");
             if (python == null) Assert.Ignore("python3.11/pyarrow not available");
 
@@ -178,7 +172,7 @@ namespace ThermoRawFileParserTest
 
             try
             {
-                var s1 = Run("arch", $"-x86_64 \"{x64}\" \"{dll}\" -i \"{TestRawFile}\" -b \"{mzml}\" -f 1 -p");
+                var s1 = Run("dotnet", $"\"{dll}\" -i \"{TestRawFile}\" -b \"{mzml}\" -f 1 -p");
                 Assert.That(s1.code, Is.EqualTo(0), $"RAW->profile mzML failed: {s1.stderr}");
                 Assert.That(File.Exists(mzml), "profile mzML must exist");
 
@@ -186,7 +180,7 @@ namespace ThermoRawFileParserTest
                 Assert.That(s2.code, Is.EqualTo(0), $"mzML->ref mzpeak failed: {s2.stderr}");
                 Assert.That(File.Exists(refMzpeak), "reference mzpeak must exist");
 
-                var s3 = Run("arch", $"-x86_64 \"{x64}\" \"{dll}\" -i \"{TestRawFile}\" -b \"{trfpMzpeak}\" -f 4");
+                var s3 = Run("dotnet", $"\"{dll}\" -i \"{TestRawFile}\" -b \"{trfpMzpeak}\" -f 4");
                 Assert.That(s3.code, Is.EqualTo(0), $"RAW->trfp mzpeak failed: {s3.stderr}");
                 Assert.That(File.Exists(trfpMzpeak), "trfp mzpeak must exist");
 

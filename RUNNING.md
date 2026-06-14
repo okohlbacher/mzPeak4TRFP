@@ -11,9 +11,10 @@ DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 \
 # output DLL: ThermoRawFileParser/bin/x64/Release/net8.0/ThermoRawFileParser.dll
 ```
 
-The project targets `net8.0` and pins `PlatformTarget=x64` because the vendor library
-`ThermoFisher.CommonCore.RawFileReader.dll` is x64-only. `DOTNET_ROLL_FORWARD` lets the x64
-**.NET 8** build/run resolve against a newer installed x64 runtime when 8.0 isn't present.
+The project targets `net8.0` and builds **AnyCPU** against `ThermoFisher.CommonCore.RawFileReader`
+**8.0.37** (the AnyCPU build — vendored under `vendor/thermo-nuget/`, see `nuget.config`).
+`DOTNET_ROLL_FORWARD` lets the **.NET 8** build/run resolve against a newer installed runtime when
+8.0 isn't present.
 
 ## Run
 
@@ -26,35 +27,23 @@ dotnet ThermoRawFileParser/bin/x64/Release/net8.0/ThermoRawFileParser.dll \
 `spectra_data`/`spectra_peaks`/`spectra_metadata` + `chromatograms_data`/`chromatograms_metadata`
 Parquet facets and `mzpeak_index.json`.
 
-## Apple Silicon (arm64) — requires Rosetta
+## Apple Silicon (arm64) — runs natively
 
-Thermo's `RawFileReader.dll` is **x64-only**, so on Apple-Silicon Macs TRFP (every output format,
-not just mzPeak) must run as an x64 process under Rosetta 2. Native arm64 fails with
-*"The assembly architecture is not compatible with the current process architecture."*
+With RawFileReader **8.0.37** (AnyCPU) the writer runs **natively on arm64** — no Rosetta needed.
+The build/run commands above work as-is on Apple Silicon (the `DOTNET_ROLL_FORWARD` env lets the
+net8 build run on an installed net9/net10 arm64 runtime).
 
-One-time setup of an x64 .NET 8 runtime:
+The only x64-only piece left is a **test-only** dependency: the MGF round-trip tests use mzLib's
+`MassSpectrometry.dll`, which is x64-only, so `TestMgf`/`TestFolderMgfs` self-`Ignore` on arm64
+(the writer's own tests, the differential, and `mzpeak-validate` all run natively). To exercise the
+MGF tests too, run the suite under Rosetta with an x64 .NET 8 runtime:
 
 ```bash
 curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 --runtime dotnet --install-dir "$HOME/.dotnet-x64" --architecture x64
-curl -sSL https://dot.net/v1/dotnet-install.sh | bash -s -- --channel 8.0 --runtime aspnetcore --install-dir "$HOME/.dotnet-x64" --architecture x64
+DOTNET_ROOT_X64=$HOME/.dotnet-x64 arch -x86_64 "$HOME/.dotnet-x64/dotnet" test ...
 ```
 
-Then build and run x64 via Rosetta:
-
-```bash
-# build (arm64 SDK can emit the x64 build with roll-forward)
-DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 \
-  dotnet build -c Release ThermoRawFileParser/ThermoRawFileParser.sln
-
-# run under Rosetta against the x64 net8 runtime
-arch -x86_64 "$HOME/.dotnet-x64/dotnet" \
-  ThermoRawFileParser/bin/x64/Release/net8.0/ThermoRawFileParser.dll \
-  -i input.raw -b output.mzpeak -f mzpeak
-```
-
-For `dotnet test` on Apple Silicon: `DOTNET_ROOT_X64=$HOME/.dotnet-x64 dotnet test ...`.
-
-Intel macOS, Linux, and Windows (all x64) run natively with the plain `dotnet ...` command above.
+Intel macOS, Linux, and Windows run natively as well.
 
 ## Validate the output
 

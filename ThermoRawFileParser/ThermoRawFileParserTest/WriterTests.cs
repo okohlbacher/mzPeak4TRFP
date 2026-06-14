@@ -108,6 +108,8 @@ namespace ThermoRawFileParserTest
         [Test]
         public void TestMgf()
         {
+            if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture != System.Runtime.InteropServices.Architecture.X64)
+                Assert.Ignore("mzLib MassSpectrometry.dll is x64-only; MGF round-trip validation runs under x64.");
             // Get temp path for writing the test MGF
             var tempFilePath = Path.GetTempPath();
 
@@ -120,8 +122,7 @@ namespace ThermoRawFileParserTest
             Assert.That(parseInput.Warnings, Is.EqualTo(0));
 
             Assert.That(File.Exists(Path.Combine(tempFilePath, "small.mgf")));
-            var mgfData = Mgf.LoadAllStaticData(Path.Combine(tempFilePath, "small.mgf"));
-            Assert.That(mgfData.NumSpectra, Is.EqualTo(34));
+            AssertMgfSpectra(Path.Combine(tempFilePath, "small.mgf"), 34);
 
             File.Delete(Path.Combine(tempFilePath, "small.mgf"));
         }
@@ -129,6 +130,8 @@ namespace ThermoRawFileParserTest
         [Test]
         public void TestFolderMgfs()
         {
+            if (System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture != System.Runtime.InteropServices.Architecture.X64)
+                Assert.Ignore("mzLib MassSpectrometry.dll is x64-only; MGF round-trip validation runs under x64.");
             // Get temp path for writing the test MGF
             var tempInPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
             var tempOutPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
@@ -150,14 +153,20 @@ namespace ThermoRawFileParserTest
             var numFiles = Directory.GetFiles(tempOutPath, "*.mgf");
             Assert.That(numFiles.Length, Is.EqualTo(2));
 
-            var mgfData = Mgf.LoadAllStaticData(Path.Combine(tempOutPath, "small.mgf"));
-            Assert.That(mgfData.NumSpectra, Is.EqualTo(34));
-
-            var mgfData2 = Mgf.LoadAllStaticData(Path.Combine(tempOutPath, "small2.mgf"));
-            Assert.That(mgfData2.NumSpectra, Is.EqualTo(49));
+            AssertMgfSpectra(Path.Combine(tempOutPath, "small.mgf"), 34);
+            AssertMgfSpectra(Path.Combine(tempOutPath, "small2.mgf"), 49);
 
             Directory.Delete(tempInPath, true);
             Directory.Delete(tempOutPath, true);
+        }
+
+        // Kept out of the test method bodies so the x64-only mzLib MassSpectrometry assembly is
+        // only loaded (at JIT time) on x64; the tests Assert.Ignore on other architectures first.
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void AssertMgfSpectra(string mgfPath, int expected)
+        {
+            var mgfData = Mgf.LoadAllStaticData(mgfPath);
+            Assert.That(mgfData.NumSpectra, Is.EqualTo(expected));
         }
 
         [Test]

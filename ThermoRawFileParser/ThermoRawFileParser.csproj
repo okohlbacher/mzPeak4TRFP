@@ -6,8 +6,8 @@
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>annotations</Nullable>
     <StartupObject>ThermoRawFileParser.MainClass</StartupObject>
-    <PlatformTarget>x64</PlatformTarget>
-    <Platforms>x64</Platforms>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <Platforms>AnyCPU;x64</Platforms>
     <Version>2.0.0-dev</Version>
     <Title>$(AssemblyName)</Title>
     <Company>Compomics</Company>
@@ -42,7 +42,7 @@
     <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
     <PackageReference Include="NJsonSchema" Version="11.0.2" />
     <PackageReference Include="Parquet.Net" Version="5.0.1" />
-    <PackageReference Include="ThermoFisher.CommonCore.RawFileReader" Version="8.0.6" />
+    <PackageReference Include="ThermoFisher.CommonCore.RawFileReader" Version="8.0.37" />
     <PackageReference Include="zlib.net-mutliplatform" Version="1.0.8" />
   </ItemGroup>
 

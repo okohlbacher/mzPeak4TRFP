@@ -16,12 +16,11 @@ REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 PAIRS = os.path.join(HERE, "corpus_pairs.json")
 OUTDIR = os.path.join(HERE, "out")
 RESULTS = os.path.join(OUTDIR, "results.json")
-DLL = os.path.join(REPO, "ThermoRawFileParser/bin/x64/Release/net8.0/ThermoRawFileParser.dll")
-X64 = os.path.expanduser("~/.dotnet-x64/dotnet")
+DLL = os.path.join(REPO, "ThermoRawFileParser/bin/Release/net8.0/ThermoRawFileParser.dll")
 ENV = {**os.environ, "DOTNET_ROLL_FORWARD": "LatestMajor", "DOTNET_ROLL_FORWARD_TO_PRERELEASE": "1"}
 
 def convert(raw, out, timeout):
-    cmd = ["arch", "-x86_64", X64, DLL, "-i", raw, "-b", out, "-f", "mzpeak"]
+    cmd = ["dotnet", DLL, "-i", raw, "-b", out, "-f", "mzpeak"]   # native (AnyCPU 8.0.37)
     t = time.time()
     p = subprocess.run(cmd, env=ENV, capture_output=True, text=True, timeout=timeout)
     return p.returncode == 0 and os.path.exists(out), round(time.time() - t, 1), p.stdout + p.stderr
