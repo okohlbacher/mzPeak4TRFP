@@ -35,6 +35,16 @@ namespace ThermoRawFileParser.Writer
             "\"array_name\":\"intensity array\",\"unit\":\"MS:1000131\",\"buffer_format\":\"point\",\"buffer_priority\":\"primary\"}" +
             "]}";
 
+        private const string ChromatogramArrayIndex =
+            "{\"prefix\":\"point\",\"entries\":[" +
+            "{\"context\":\"chromatogram\",\"path\":\"point.time\",\"data_type\":\"MS:1000523\",\"array_type\":\"MS:1000595\"," +
+            "\"array_name\":\"time array\",\"unit\":\"UO:0000031\",\"buffer_format\":\"point\",\"buffer_priority\":\"primary\",\"sorting_rank\":0}," +
+            "{\"context\":\"chromatogram\",\"path\":\"point.intensity\",\"data_type\":\"MS:1000521\",\"array_type\":\"MS:1000515\"," +
+            "\"array_name\":\"intensity array\",\"unit\":\"MS:1000131\",\"buffer_format\":\"point\",\"buffer_priority\":\"primary\"}," +
+            "{\"context\":\"chromatogram\",\"path\":\"point.ms_level\",\"data_type\":\"MS:1000522\",\"array_type\":\"MS:1000786\"," +
+            "\"array_name\":\"ms level\",\"unit\":\"UO:0000186\",\"buffer_format\":\"point\",\"buffer_priority\":\"primary\"}" +
+            "]}";
+
         // One PARAM value, used to collect CV prefixes for the generated cv_list.
         private sealed class Param
         {
@@ -86,6 +96,7 @@ namespace ThermoRawFileParser.Writer
         }
 
         private readonly HashSet<string> _cvPrefixes = new HashSet<string>();
+        private bool _chromFromDeviceTrace;
         private readonly List<MassAnalyzerType> _analyzerOrder = new List<MassAnalyzerType>();
         private readonly List<IonizationModeType> _ionizationOrder = new List<IonizationModeType>();
         private string _instrumentModel;
@@ -226,13 +237,23 @@ namespace ThermoRawFileParser.Writer
                 throw new RawFileParserException("No in-range spectrum to write");
             }
 
+            // Device TIC over the whole run (minutes, one value per scan in scan order), paired with
+            // the per-scan (RT, ms_level) records. The device-trace value is the reference TIC; the
+            // summed ScanStatistics.TIC differs for MS1 and is used only when the trace is unavailable.
+            var chromTime = new List<double>();
+            var chromIntensity = new List<float>();
+            var chromMsLevel = new List<long>();
+            CaptureTic(raw, records, chromTime, chromIntensity, chromMsLevel);
+
             var hasPeaks = peaksIndex.Count > 0;
             var dataBytes = BuildPointFacet(dataIndex, dataMz, dataIntensity, (int)ordinal);
             var metaBytes = BuildMetadataFacet(records);
             var peaksBytes = hasPeaks
                 ? BuildPointFacet(peaksIndex, peaksMz, peaksIntensity, peakSpectra.Count)
                 : null;
-            var indexBytes = BuildIndex(hasPeaks);
+            var chromDataBytes = BuildChromatogramDataFacet(chromTime, chromIntensity, chromMsLevel);
+            var chromMetaBytes = BuildChromatogramMetadataFacet(records.Count);
+            var indexBytes = BuildIndex(hasPeaks, true);
 
             ConfigureWriter(".mzpeak");
             try
@@ -243,6 +264,8 @@ namespace ThermoRawFileParser.Writer
                     AddStored(zip, "spectra_data.parquet", dataBytes);
                     AddStored(zip, "spectra_metadata.parquet", metaBytes);
                     if (hasPeaks) AddStored(zip, "spectra_peaks.parquet", peaksBytes);
+                    AddStored(zip, "chromatograms_metadata.parquet", chromMetaBytes);
+                    AddStored(zip, "chromatograms_data.parquet", chromDataBytes);
                 }
 
                 Writer.Flush();
@@ -252,7 +275,8 @@ namespace ThermoRawFileParser.Writer
                 Writer.Close();
             }
 
-            Log.Info($"Wrote mzPeak archive with {ordinal} spectra ({dataIndex.Count} data points, {peaksIndex.Count} peak points)");
+            Log.Info($"Wrote mzPeak archive with {ordinal} spectra ({dataIndex.Count} data points, " +
+                     $"{peaksIndex.Count} peak points, {chromTime.Count} TIC points)");
         }
 
         // Returns the (mz,intensity) pairs in non-decreasing m/z order with the full multiset
@@ -290,6 +314,237 @@ namespace ThermoRawFileParser.Writer
             }
             return (sortedMz, sortedInten);
         }
+
+        private void CaptureTic(IRawDataPlus raw, List<Record> records, List<double> time,
+            List<float> intensity, List<long> msLevel)
+        {
+            ChromatogramSignal[] trace;
+            try
+            {
+                raw.SelectInstrument(Device.MS, 1);
+                var settings = new ChromatogramTraceSettings(TraceType.TIC);
+                var data = raw.GetChromatogramData(new IChromatogramSettings[] { settings }, -1, -1);
+                trace = ChromatogramSignal.FromChromatogramData(data);
+            }
+            catch (Exception ex)
+            {
+                Log.Warn($"Device TIC trace unavailable, falling back to summed TIC: {ex.Message}");
+                trace = Array.Empty<ChromatogramSignal>();
+            }
+
+            if (trace.Length == 0)
+            {
+                foreach (var r in records)
+                {
+                    time.Add(r.Time);
+                    intensity.Add(r.TotalIonCurrent);
+                    msLevel.Add(r.MsLevel);
+                }
+                _chromFromDeviceTrace = false;
+                return;
+            }
+
+            var signal = trace[0];
+            if (signal.Times.Count == records.Count)
+            {
+                for (int i = 0; i < records.Count; i++)
+                {
+                    time.Add(signal.Times[i]);
+                    intensity.Add((float)signal.Intensities[i]);
+                    msLevel.Add(records[i].MsLevel);
+                }
+                _chromFromDeviceTrace = true;
+                return;
+            }
+
+            var byScan = new Dictionary<int, (double time, double intensity)>();
+            for (int k = 0; k < signal.Scans.Count; k++)
+            {
+                byScan[signal.Scans[k]] = (signal.Times[k], signal.Intensities[k]);
+            }
+
+            bool allDevice = true;
+            foreach (var r in records)
+            {
+                if (byScan.TryGetValue(r.ScanNumber, out var sample))
+                {
+                    time.Add(sample.time);
+                    intensity.Add((float)sample.intensity);
+                }
+                else
+                {
+                    time.Add(r.Time);
+                    intensity.Add(r.TotalIonCurrent);
+                    allDevice = false;
+                }
+                msLevel.Add(r.MsLevel);
+            }
+            _chromFromDeviceTrace = allDevice;
+        }
+
+        private byte[] BuildChromatogramDataFacet(List<double> time, List<float> intensity, List<long> msLevel)
+        {
+            int n = time.Count;
+            var point = new StructField("point",
+                new DataField<ulong>("chromatogram_index"),
+                new DataField<double>("time"),
+                new DataField<float>("intensity"),
+                new DataField<long>("ms_level"));
+            var schema = new ParquetSchema(point);
+
+            var index = new ulong[n];
+            var cols = new Dictionary<DataField, (Array, int[], int[])>
+            {
+                [Leaf(schema, "point/chromatogram_index")] = (index, null, null),
+                [Leaf(schema, "point/time")] = (time.ToArray(), null, null),
+                [Leaf(schema, "point/intensity")] = (intensity.ToArray(), null, null),
+                [Leaf(schema, "point/ms_level")] = (msLevel.ToArray(), null, null)
+            };
+
+            foreach (var curie in new[]
+            {
+                "MS:1000523", "MS:1000595", "UO:0000031", "MS:1000521", "MS:1000515",
+                "MS:1000131", "MS:1000522", "MS:1000786", "UO:0000186"
+            })
+            {
+                CollectPrefix(curie);
+            }
+
+            var meta = new Dictionary<string, string>
+            {
+                ["chromatogram_data_point_count"] = "0",
+                ["chromatogram_array_index"] = ChromatogramArrayIndex,
+                ["chromatogram_tic_source"] = _chromFromDeviceTrace ? "device" : "summed"
+            };
+
+            return WriteFacet(schema, meta, cols);
+        }
+
+        private byte[] BuildChromatogramMetadataFacet(int n)
+        {
+            var chromatogram = BuildChromatogramField();
+            var precursor = BuildPrecursorField();
+            var selectedIon = BuildSelectedIonField();
+            var schema = new ParquetSchema(chromatogram, precursor, selectedIon);
+
+            var cols = new Dictionary<DataField, (Array, int[], int[])>();
+            var present = new[] { true };
+
+            AddScalar(cols, schema, "chromatogram/index", new ulong[] { 0UL }, present);
+            AddScalar(cols, schema, "chromatogram/id", new[] { "TIC" }, present);
+            AddScalar(cols, schema, "chromatogram/" + Cv("MS:1000465", "scan_polarity"),
+                new sbyte[] { 0 }, present);
+            CollectPrefix("MS:1000235");
+            AddScalar(cols, schema, "chromatogram/" + Cv("MS:1000626", "chromatogram_type"),
+                new[] { "MS:1000235" }, present);
+
+            var dprLeaf = Leaf(schema, "chromatogram/data_processing_ref");
+            var dprRows = new[] { MzPeakParquet.AtLevel(dprLeaf.MaxDefinitionLevel - 1, false) };
+            var (dprDef, _) = MzPeakParquet.NestedLevels(dprLeaf, dprRows);
+            cols[dprLeaf] = (new string[0], dprDef, null);
+
+            AddScalar(cols, schema, "chromatogram/" + Cv("MS:1003060", "number_of_data_points"),
+                new ulong[] { (ulong)n }, present);
+
+            AddEmptyList(cols, schema, "chromatogram/parameters");
+            AddEmptyAuxList(cols, schema, "chromatogram/auxiliary_arrays");
+            AddScalar(cols, schema, "chromatogram/number_of_auxiliary_arrays", new uint[] { 0u }, present);
+
+            AddNullPrecursor(cols, schema);
+            AddNullSelectedIon(cols, schema);
+
+            var custom = new Dictionary<string, string>
+            {
+                ["chromatogram_count"] = "1",
+                ["chromatogram_data_point_count"] = "0"
+            };
+
+            return WriteFacet(schema, custom, cols);
+        }
+
+        private StructField BuildChromatogramField()
+        {
+            return new StructField("chromatogram",
+                new DataField<ulong>("index", true),
+                new DataField<string>("id", true),
+                new DataField<sbyte>(Cv("MS:1000465", "scan_polarity"), true),
+                new DataField<string>(Cv("MS:1000626", "chromatogram_type"), true),
+                new DataField<string>("data_processing_ref", true),
+                new DataField<ulong>(Cv("MS:1003060", "number_of_data_points"), true),
+                new ListField("parameters", MzPeakParquet.BuildParamField("item")),
+                new ListField("auxiliary_arrays", BuildAuxArrayField("item")),
+                new DataField<uint>("number_of_auxiliary_arrays", true));
+        }
+
+        private StructField BuildAuxArrayField(string name)
+        {
+            return new StructField(name,
+                new ListField("data", new DataField<byte>("item")),
+                MzPeakParquet.BuildParamField("name"),
+                new DataField<string>("data_type", true),
+                new DataField<string>("compression", true),
+                new DataField<string>("unit", true),
+                new ListField("parameters", MzPeakParquet.BuildParamField("item")),
+                new DataField<string>("data_processing_ref", true));
+        }
+
+        // A present-but-empty list on a single-row facet (the list value is defined, no elements).
+        private void AddEmptyList(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
+            string listPath)
+        {
+            var list = (ListField)FindField(schema, listPath);
+            foreach (var leaf in schema.GetDataFields())
+            {
+                if (!leaf.Path.ToString().StartsWith(listPath + "/")) continue;
+                var rows = new[] { MzPeakParquet.EmptyList(list) };
+                var (def, rep) = MzPeakParquet.NestedLevels(leaf, rows);
+                cols[leaf] = (EmptyArray(leaf.ClrType), def, rep);
+            }
+        }
+
+        // The auxiliary_arrays list is empty, but its element struct carries a non-nullable data leaf
+        // (data/list/item: uint8 not null); emit the same empty-list level for every descendant leaf.
+        private void AddEmptyAuxList(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
+            string listPath)
+        {
+            var list = (ListField)FindField(schema, listPath);
+            foreach (var leaf in schema.GetDataFields())
+            {
+                if (!leaf.Path.ToString().StartsWith(listPath + "/")) continue;
+                var rows = new[] { MzPeakParquet.EmptyList(list) };
+                var (def, rep) = MzPeakParquet.NestedLevels(leaf, rows);
+                cols[leaf] = (EmptyArray(leaf.ClrType), def, rep);
+            }
+        }
+
+        private void AddNullPrecursor(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema)
+        {
+            foreach (var leaf in schema.GetDataFields())
+            {
+                if (!leaf.Path.ToString().StartsWith("precursor/")) continue;
+                AddNullLeaf(cols, leaf);
+            }
+        }
+
+        private void AddNullSelectedIon(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema)
+        {
+            foreach (var leaf in schema.GetDataFields())
+            {
+                if (!leaf.Path.ToString().StartsWith("selected_ion/")) continue;
+                AddNullLeaf(cols, leaf);
+            }
+        }
+
+        // A single all-null row for a leaf in a present-but-null top-level struct: definition level
+        // sits one below the leaf's own present level (the owning struct is null), no value slot.
+        private static void AddNullLeaf(IDictionary<DataField, (Array, int[], int[])> cols, DataField leaf)
+        {
+            var rows = new[] { MzPeakParquet.AtLevel(0, false) };
+            var (def, rep) = MzPeakParquet.NestedLevels(leaf, rows);
+            cols[leaf] = (EmptyArray(leaf.ClrType), def, rep);
+        }
+
+        private static Array EmptyArray(Type clr) => Array.CreateInstance(clr, 0);
 
         private uint AnalyzerIndex(MassAnalyzerType analyzer, IonizationModeType ionization)
         {
@@ -1040,7 +1295,7 @@ namespace ThermoRawFileParser.Writer
             };
         }
 
-        private byte[] BuildIndex(bool hasPeaks)
+        private byte[] BuildIndex(bool hasPeaks, bool hasChromatograms)
         {
             var files = new JArray
             {
@@ -1065,6 +1320,22 @@ namespace ThermoRawFileParser.Writer
                     ["name"] = "spectra_peaks.parquet",
                     ["entity_type"] = "spectrum",
                     ["data_kind"] = "peaks"
+                });
+            }
+
+            if (hasChromatograms)
+            {
+                files.Add(new JObject
+                {
+                    ["name"] = "chromatograms_metadata.parquet",
+                    ["entity_type"] = "chromatogram",
+                    ["data_kind"] = "metadata"
+                });
+                files.Add(new JObject
+                {
+                    ["name"] = "chromatograms_data.parquet",
+                    ["entity_type"] = "chromatogram",
+                    ["data_kind"] = "data arrays"
                 });
             }
 
