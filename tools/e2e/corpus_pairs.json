@@ -1,0 +1,584 @@
+[
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-examples/thermo-astral-MSV000100943/20240912_WFB_exp01_magnet_5_0.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/mzML-examples/thermo-orbitrap-astral/20240912_WFB_exp01_magnet_5_0.mzpeak",
+    "match": "stem",
+    "raw_mb": 9057.32
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-examples/thermo-fusion-lumos-PXD008952/01_CPTAC_TMTS1-NCI7_P_JHUZ_20170509_LUMOS.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/mzML-examples/thermo-fusion-lumos/01_CPTAC_TMTS1-NCI7_P_JHUZ_20170509_LUMOS.mzpeak",
+    "match": "stem",
+    "raw_mb": 691.43
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-examples/thermo-ltq-ft-ultra-MTBLS3512/mtab_BIOS_CRAM1620_1_072617_34.RAW",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/mzML-examples/thermo-ltq-ft-ultra-fticr/mtab_BIOS_CRAM1620_1_072617_34.mzpeak",
+    "match": "stem",
+    "raw_mb": 231.88
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-examples/thermo-ltq-xl-PXD059878/2013_30_Amrutha_050713_1.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/mzML-examples/thermo-ltq-xl-iontrap/2013_30_Amrutha_050713_1.mzpeak",
+    "match": "stem",
+    "raw_mb": 73.05
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/bruker-impact-sub__PXD076459/S4_5foldGHRP.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/bruker-impact-sub__PXD076459/local.mzpeak",
+    "match": "sibling",
+    "raw_mb": 437.86
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/bruker-timstof-sub__PXD049028/2024_LRS_Ascend_WT_C_03.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/bruker-timstof-sub__PXD049028/local.mzpeak",
+    "match": "sibling",
+    "raw_mb": 2108.93
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/sciex-qtrap-sub__PXD000320/QC_Shew_12_02_Run-02_6Sep12_Eagle_12-06-13.RAW",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/sciex-qtrap-sub__PXD000320/local.mzpeak",
+    "match": "sibling",
+    "raw_mb": 49.54
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/sciex-tripletof-sub__PXD000561/Adult_NKcells_Gel_Elite_78_f13.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/sciex-tripletof-sub__PXD000561/local.mzpeak",
+    "match": "sibling",
+    "raw_mb": 747.34
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/sciex-zenotof-sub__PXD000320/QC_Shew_12_02_Run-11_8Dec12_Lion_12-10-03.RAW",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/sciex-zenotof-sub__PXD000320/local.mzpeak",
+    "match": "sibling",
+    "raw_mb": 69.94
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/waters-synapt-sub__PXD000320/QC_Shew_12_02_Run-07_5Dec12_Lion_12-10-03.RAW",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/waters-synapt-sub__PXD000320/local.mzpeak",
+    "match": "sibling",
+    "raw_mb": 26.89
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/CTR-1.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/CTR-1.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.31
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/CTR-2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/CTR-2.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.32
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/CTR-3.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/CTR-3.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.29
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/CTR-4.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/CTR-4.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.31
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/CTR-5.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/CTR-5.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.08
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/G-1.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/G-1.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.26
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/G-2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/G-2.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.34
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/G-3.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/G-3.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.33
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/G-4.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/G-4.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.32
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/G-5.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/G-5.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.32
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/G-Era-1.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/G-Era-1.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.32
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/G-Era-2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/G-Era-2.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.28
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/G-Era-3.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/G-Era-3.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.21
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/G-Era-4.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/G-Era-4.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.33
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/G-Era-5.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/G-Era-5.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.29
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/QC-1.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/QC-1.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.29
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/QC-2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/QC-2.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.28
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/QC-3.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/QC-3.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.31
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/raw/QC-4.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/MTBLS5358/mzpeak/QC-4.mzpeak",
+    "match": "stem",
+    "raw_mb": 34.3
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/raw/t04175_EH_Malaria_WT_PK7_KO_Phos_SCX1.RAW",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/mzpeak/t04175_EH_Malaria_WT_PK7_KO_Phos_SCX1.mzpeak",
+    "match": "stem",
+    "raw_mb": 131.12
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/raw/t04176_EH_Malaria_WT_PK7_KO_Phos_SCX2.RAW",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/mzpeak/t04176_EH_Malaria_WT_PK7_KO_Phos_SCX2.mzpeak",
+    "match": "stem",
+    "raw_mb": 139.24
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/raw/t04177_EH_Malaria_WT_PK7_KO_Phos_SCX3.RAW",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/mzpeak/t04177_EH_Malaria_WT_PK7_KO_Phos_SCX3.mzpeak",
+    "match": "stem",
+    "raw_mb": 131.67
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/raw/t04178_EH_Malaria_WT_PK7_KO_Phos_SCX4.RAW",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/mzpeak/t04178_EH_Malaria_WT_PK7_KO_Phos_SCX4.mzpeak",
+    "match": "stem",
+    "raw_mb": 141.51
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/raw/t04179_EH_Malaria_WT_PK7_KO_Phos_SCX5.RAW",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/mzpeak/t04179_EH_Malaria_WT_PK7_KO_Phos_SCX5.mzpeak",
+    "match": "stem",
+    "raw_mb": 147.99
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/raw/t04181_EH_Malaria_WT_PK7_KO_Phos_SCX6.RAW",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/mzpeak/t04181_EH_Malaria_WT_PK7_KO_Phos_SCX6.mzpeak",
+    "match": "stem",
+    "raw_mb": 164.63
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/raw/t04182_EH_Malaria_WT_PK7_KO_Phos_SCX7.RAW",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/mzpeak/t04182_EH_Malaria_WT_PK7_KO_Phos_SCX7.mzpeak",
+    "match": "stem",
+    "raw_mb": 159.28
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/raw/t04183_EH_Malaria_WT_PK7_KO_Phos_SCX8.RAW",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/mzpeak/t04183_EH_Malaria_WT_PK7_KO_Phos_SCX8.mzpeak",
+    "match": "stem",
+    "raw_mb": 160.15
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/raw/t04184_EH_Malaria_WT_PK7_KO_Phos_SCX9.RAW",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/mzpeak/t04184_EH_Malaria_WT_PK7_KO_Phos_SCX9.mzpeak",
+    "match": "stem",
+    "raw_mb": 147.03
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/raw/t04185_EH_Malaria_WT_PK7_KO_Phos_SCX10.RAW",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009465/mzpeak/t04185_EH_Malaria_WT_PK7_KO_Phos_SCX10.mzpeak",
+    "match": "stem",
+    "raw_mb": 227.77
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/raw/70JG_01.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/mzpeak/70JG_01.mzpeak",
+    "match": "stem",
+    "raw_mb": 872.58
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/raw/70JG_02.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/mzpeak/70JG_02.mzpeak",
+    "match": "stem",
+    "raw_mb": 1000.15
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/raw/70JG_03.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/mzpeak/70JG_03.mzpeak",
+    "match": "stem",
+    "raw_mb": 963.64
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/raw/70JG_04.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/mzpeak/70JG_04.mzpeak",
+    "match": "stem",
+    "raw_mb": 919.72
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/raw/70JG_05.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/mzpeak/70JG_05.mzpeak",
+    "match": "stem",
+    "raw_mb": 912.49
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/raw/70JG_06.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/mzpeak/70JG_06.mzpeak",
+    "match": "stem",
+    "raw_mb": 880.31
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/raw/70JG_07.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/mzpeak/70JG_07.mzpeak",
+    "match": "stem",
+    "raw_mb": 862.34
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/raw/70JG_08.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/mzpeak/70JG_08.mzpeak",
+    "match": "stem",
+    "raw_mb": 806.44
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/raw/70JG_09.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/mzpeak/70JG_09.mzpeak",
+    "match": "stem",
+    "raw_mb": 752.77
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/raw/70JG_10.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/mzpeak/70JG_10.mzpeak",
+    "match": "stem",
+    "raw_mb": 843.04
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/raw/70JG_11.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/mzpeak/70JG_11.mzpeak",
+    "match": "stem",
+    "raw_mb": 782.91
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/raw/70JG_12.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD009909/mzpeak/70JG_12.mzpeak",
+    "match": "stem",
+    "raw_mb": 711.98
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr10_MS2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr10_MS2.mzpeak",
+    "match": "stem",
+    "raw_mb": 758.03
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr11_MS2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr11_MS2.mzpeak",
+    "match": "stem",
+    "raw_mb": 753.13
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr1_MS2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr1_MS2.mzpeak",
+    "match": "stem",
+    "raw_mb": 654.57
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr2_MS2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr2_MS2.mzpeak",
+    "match": "stem",
+    "raw_mb": 750.96
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr3_MS2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr3_MS2.mzpeak",
+    "match": "stem",
+    "raw_mb": 763.65
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr4_Ms2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr4_Ms2.mzpeak",
+    "match": "stem",
+    "raw_mb": 753.15
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr5_MS2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr5_MS2.mzpeak",
+    "match": "stem",
+    "raw_mb": 754.46
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr6_MS2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr6_MS2.mzpeak",
+    "match": "stem",
+    "raw_mb": 758.48
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr7_MS2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr7_MS2.mzpeak",
+    "match": "stem",
+    "raw_mb": 750.09
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr9_MS2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_Global_TMT_fr9_MS2.mzpeak",
+    "match": "stem",
+    "raw_mb": 758.0
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_TiO2_TMT_fr1.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_TiO2_TMT_fr1.mzpeak",
+    "match": "stem",
+    "raw_mb": 597.26
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_TiO2_TMT_fr11.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_TiO2_TMT_fr11.mzpeak",
+    "match": "stem",
+    "raw_mb": 723.78
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_TiO2_TMT_fr8.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_TiO2_TMT_fr8.mzpeak",
+    "match": "stem",
+    "raw_mb": 645.86
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_TiO2_TMT_fr9.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170131_Lumos_RSLC4_Maurer_Hartl_UW_MFPL_TiO2_TMT_fr9.mzpeak",
+    "match": "stem",
+    "raw_mb": 714.35
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_TiO2_Fr12.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_TiO2_Fr12.mzpeak",
+    "match": "stem",
+    "raw_mb": 638.43
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_TiO2_Fr2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_TiO2_Fr2.mzpeak",
+    "match": "stem",
+    "raw_mb": 483.17
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_TiO2_Fr7.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_TiO2_Fr7.mzpeak",
+    "match": "stem",
+    "raw_mb": 533.13
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_TiO2_Fr9.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_TiO2_Fr9.mzpeak",
+    "match": "stem",
+    "raw_mb": 516.02
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_global_Fr1.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_global_Fr1.mzpeak",
+    "match": "stem",
+    "raw_mb": 632.79
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_global_Fr10.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_global_Fr10.mzpeak",
+    "match": "stem",
+    "raw_mb": 632.64
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_global_Fr2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_global_Fr2.mzpeak",
+    "match": "stem",
+    "raw_mb": 655.02
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_global_Fr7.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_global_Fr7.mzpeak",
+    "match": "stem",
+    "raw_mb": 624.13
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_global_Fr8.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_global_Fr8.mzpeak",
+    "match": "stem",
+    "raw_mb": 630.79
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_global_Fr9.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/mzpeak/20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_global_Fr9.mzpeak",
+    "match": "stem",
+    "raw_mb": 631.93
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/raw/MFA380.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/mzpeak/MFA380.mzpeak",
+    "match": "stem",
+    "raw_mb": 548.91
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/raw/MFA381.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/mzpeak/MFA381.mzpeak",
+    "match": "stem",
+    "raw_mb": 543.03
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/raw/MFA382.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/mzpeak/MFA382.mzpeak",
+    "match": "stem",
+    "raw_mb": 551.98
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/raw/MFA383.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/mzpeak/MFA383.mzpeak",
+    "match": "stem",
+    "raw_mb": 569.45
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/raw/MFA384.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/mzpeak/MFA384.mzpeak",
+    "match": "stem",
+    "raw_mb": 581.23
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/raw/MFA385.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/mzpeak/MFA385.mzpeak",
+    "match": "stem",
+    "raw_mb": 581.46
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/raw/MFA386.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/mzpeak/MFA386.mzpeak",
+    "match": "stem",
+    "raw_mb": 579.88
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/raw/MFA387.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/mzpeak/MFA387.mzpeak",
+    "match": "stem",
+    "raw_mb": 594.54
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/raw/MFA388.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/mzpeak/MFA388.mzpeak",
+    "match": "stem",
+    "raw_mb": 586.59
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/raw/MFA389.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/mzpeak/MFA389.mzpeak",
+    "match": "stem",
+    "raw_mb": 577.69
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/raw/MFA390.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/mzpeak/MFA390.mzpeak",
+    "match": "stem",
+    "raw_mb": 568.26
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/raw/MFA391.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD014145/mzpeak/MFA391.mzpeak",
+    "match": "stem",
+    "raw_mb": 580.7
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/raw/D1_Nat_1.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/mzpeak/D1_Nat_1.mzpeak",
+    "match": "stem",
+    "raw_mb": 609.75
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/raw/D2_Nat_2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/mzpeak/D2_Nat_2.mzpeak",
+    "match": "stem",
+    "raw_mb": 606.06
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/raw/D3_Nat_3.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/mzpeak/D3_Nat_3.mzpeak",
+    "match": "stem",
+    "raw_mb": 610.47
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/raw/D4_Nat_4.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/mzpeak/D4_Nat_4.mzpeak",
+    "match": "stem",
+    "raw_mb": 638.17
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/raw/D5_Nat_5.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/mzpeak/D5_Nat_5.mzpeak",
+    "match": "stem",
+    "raw_mb": 615.69
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/raw/E1_Dec_1.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/mzpeak/E1_Dec_1.mzpeak",
+    "match": "stem",
+    "raw_mb": 603.9
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/raw/E2_Dec_2.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/mzpeak/E2_Dec_2.mzpeak",
+    "match": "stem",
+    "raw_mb": 636.28
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/raw/E3_Dec_3.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/mzpeak/E3_Dec_3.mzpeak",
+    "match": "stem",
+    "raw_mb": 645.53
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/raw/E4_Dec_4.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/mzpeak/E4_Dec_4.mzpeak",
+    "match": "stem",
+    "raw_mb": 612.44
+  },
+  {
+    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/raw/E5_Dec_5.raw",
+    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD020187/mzpeak/E5_Dec_5.mzpeak",
+    "match": "stem",
+    "raw_mb": 649.25
+  }
+]
