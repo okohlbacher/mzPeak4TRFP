@@ -88,6 +88,77 @@ namespace ThermoRawFileParserTest
             return schema.GetDataFields().First(d => d.Path.ToString() == path);
         }
 
+        private sealed class ChromFacet
+        {
+            public ulong[] ChromatogramIndex;
+            public double[] Time;
+            public float[] Intensity;
+            public long[] MsLevel;
+            public string TicSource;
+            public int PointCount;
+        }
+
+        private static ChromFacet ReadChromFacet(byte[] bytes)
+        {
+            using (var ms = new MemoryStream(bytes))
+            using (var reader = ParquetReader.CreateAsync(ms).Result)
+            {
+                var schema = reader.Schema;
+                var rg = reader.OpenRowGroupReader(0);
+                var idx = rg.ReadColumnAsync(Leaf(schema, "point/chromatogram_index")).Result.Data
+                    .Cast<ulong>().ToArray();
+                var time = rg.ReadColumnAsync(Leaf(schema, "point/time")).Result.Data
+                    .Cast<double>().ToArray();
+                var inten = rg.ReadColumnAsync(Leaf(schema, "point/intensity")).Result.Data
+                    .Cast<float>().ToArray();
+                var lvl = rg.ReadColumnAsync(Leaf(schema, "point/ms_level")).Result.Data
+                    .Cast<long>().ToArray();
+                var meta = reader.CustomMetadata;
+                return new ChromFacet
+                {
+                    ChromatogramIndex = idx,
+                    Time = time,
+                    Intensity = inten,
+                    MsLevel = lvl,
+                    TicSource = meta["chromatogram_tic_source"],
+                    PointCount = int.Parse(meta["chromatogram_data_point_count"])
+                };
+            }
+        }
+
+        // Runs a pyarrow snippet against an arbitrary parquet entry of the archive (the {PARQUET}
+        // token is replaced with the temp file path), returning the printed JSON object.
+        private static JObject PyArrowEntry(string archive, string entry, string snippet)
+        {
+            var python = ResolvePython();
+            if (python == null) Assert.Ignore("python3/pyarrow not available");
+
+            var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".parquet");
+            File.WriteAllBytes(path, ReadEntry(archive, entry));
+            try
+            {
+                var code = snippet.Replace("{PARQUET}", path.Replace("\\", "\\\\"));
+                var psi = new ProcessStartInfo(python, "-c \"" + code.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false
+                };
+                using (var proc = Process.Start(psi))
+                {
+                    var stdout = proc.StandardOutput.ReadToEnd();
+                    var stderr = proc.StandardError.ReadToEnd();
+                    proc.WaitForExit();
+                    Assert.That(proc.ExitCode, Is.EqualTo(0), $"pyarrow failed: {stderr}");
+                    return JObject.Parse(stdout.Trim());
+                }
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
         [Test]
         public void SpectraData_Ascending_And_MultisetPreserved()
         {
@@ -850,6 +921,326 @@ namespace ThermoRawFileParserTest
                 var newErrors = errorIds.Except(allowlist).ToArray();
                 Assert.That(newErrors, Is.Empty,
                     $"no new ERROR id beyond the pre-existing allowlist: {string.Join(",", newErrors)}");
+            }
+            finally
+            {
+                if (File.Exists(jsonPath)) File.Delete(jsonPath);
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
+        public void Chromatogram_Data_Facet_Shape_And_PerScan_Alignment()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+            try
+            {
+                using (var ms = new MemoryStream(ReadEntry(archive, "chromatograms_data.parquet")))
+                using (var reader = ParquetReader.CreateAsync(ms).Result)
+                {
+                    var schema = reader.Schema;
+                    Assert.That(Leaf(schema, "point/chromatogram_index").ClrType, Is.EqualTo(typeof(ulong)));
+                    Assert.That(Leaf(schema, "point/time").ClrType, Is.EqualTo(typeof(double)));
+                    Assert.That(Leaf(schema, "point/intensity").ClrType, Is.EqualTo(typeof(float)));
+                    Assert.That(Leaf(schema, "point/ms_level").ClrType, Is.EqualTo(typeof(long)));
+                }
+
+                var chrom = ReadChromFacet(ReadEntry(archive, "chromatograms_data.parquet"));
+                var data = ReadPointFacet(ReadEntry(archive, "spectra_data.parquet"));
+                int n = data.SpectrumCount;
+
+                Assert.That(chrom.Time.Length, Is.EqualTo(n), "one TIC point per emitted scan");
+                Assert.That(chrom.TicSource, Is.EqualTo("device"),
+                    "default conversion must take the device-trace path, not the summed fallback");
+                Assert.That(chrom.ChromatogramIndex.All(x => x == 0UL), Is.True, "single chromatogram, index all 0");
+                var levels = chrom.MsLevel.Distinct().OrderBy(x => x).ToArray();
+                Assert.That(levels, Is.EqualTo(new long[] { 1, 2 }), "ms_level multiset {1,2}, never 0");
+
+                // Per-scan spectrum (time, ms_level) read from spectra_metadata, aligned by ordinal.
+                var snippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "t = pq.read_table(r'{PARQUET}')\n" +
+                    "d = t.to_pylist()\n" +
+                    "out = {'time':[d[i]['spectrum']['time'] for i in range(len(d))],\n" +
+                    "       'lvl':[int(d[i]['spectrum']['MS_1000511_ms_level']) for i in range(len(d))]}\n" +
+                    "print(json.dumps(out))\n";
+                var o = PyArrowEntry(archive, "spectra_metadata.parquet", snippet);
+                var sTime = o["time"].Select(x => (double)x).ToArray();
+                var sLvl = o["lvl"].Select(x => (long)x).ToArray();
+
+                Assert.That(sTime.Length, Is.EqualTo(n));
+                for (int i = 0; i < n; i++)
+                {
+                    Assert.That(chrom.Time[i], Is.EqualTo(sTime[i]).Within(1e-6),
+                        $"TIC time[{i}] must equal spectrum time");
+                    Assert.That(chrom.MsLevel[i], Is.EqualTo(sLvl[i]),
+                        $"TIC ms_level[{i}] must equal spectrum ms_level");
+                }
+                for (int i = 1; i < n; i++)
+                    Assert.That(chrom.Time[i], Is.GreaterThanOrEqualTo(chrom.Time[i - 1]), "time non-decreasing");
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
+        public void Chromatogram_Metadata_Facet_Shape_And_Values()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+            try
+            {
+                var data = ReadPointFacet(ReadEntry(archive, "spectra_data.parquet"));
+                int n = data.SpectrumCount;
+
+                var snippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "t = pq.read_table(r'{PARQUET}')\n" +
+                    "d = t.to_pylist()\n" +
+                    "c = d[0]['chromatogram']\n" +
+                    "ct = t.schema.field('chromatogram').type\n" +
+                    "aux = ct.field('auxiliary_arrays').type.value_type\n" +
+                    "out = {}\n" +
+                    "out['rows'] = len(d)\n" +
+                    "out['id'] = c['id']\n" +
+                    "out['type'] = c['MS_1000626_chromatogram_type']\n" +
+                    "out['pol'] = int(c['MS_1000465_scan_polarity'])\n" +
+                    "out['pol_type'] = str(ct.field('MS_1000465_scan_polarity').type)\n" +
+                    "out['ndp'] = c['MS_1003060_number_of_data_points']\n" +
+                    "out['dpr_null'] = c['data_processing_ref'] is None\n" +
+                    "out['params_empty'] = c['parameters'] == []\n" +
+                    "out['aux_empty'] = c['auxiliary_arrays'] == []\n" +
+                    "out['naux'] = int(c['number_of_auxiliary_arrays'])\n" +
+                    "out['aux_fields'] = [f.name for f in aux]\n" +
+                    "out['prec_in_schema'] = 'precursor' in [f.name for f in t.schema]\n" +
+                    "out['seli_in_schema'] = 'selected_ion' in [f.name for f in t.schema]\n" +
+                    "out['prec_null'] = d[0]['precursor'] is None or d[0]['precursor']['source_index'] is None\n" +
+                    "out['seli_null'] = d[0]['selected_ion'] is None or d[0]['selected_ion']['source_index'] is None\n" +
+                    "print(json.dumps(out))\n";
+                var o = PyArrowEntry(archive, "chromatograms_metadata.parquet", snippet);
+
+                Assert.That((int)o["rows"], Is.EqualTo(1), "exactly one chromatogram row");
+                Assert.That((string)o["id"], Is.EqualTo("TIC"));
+                Assert.That((string)o["type"], Is.EqualTo("MS:1000235"));
+                Assert.That((int)o["pol"], Is.EqualTo(0));
+                Assert.That((string)o["pol_type"], Is.EqualTo("int8"));
+                Assert.That((long)o["ndp"], Is.EqualTo((long)n));
+                Assert.That((bool)o["dpr_null"], Is.True);
+                Assert.That((bool)o["params_empty"], Is.True);
+                Assert.That((bool)o["aux_empty"], Is.True);
+                Assert.That((int)o["naux"], Is.EqualTo(0));
+
+                var auxFields = o["aux_fields"].Select(x => (string)x).ToArray();
+                foreach (var f in new[] { "data", "name", "data_type", "compression", "unit", "parameters", "data_processing_ref" })
+                    Assert.That(auxFields, Does.Contain(f), $"AUX_ARRAY element exposes {f}");
+
+                Assert.That((bool)o["prec_in_schema"], Is.True);
+                Assert.That((bool)o["seli_in_schema"], Is.True);
+                Assert.That((bool)o["prec_null"], Is.True, "precursor present-but-null on the row");
+                Assert.That((bool)o["seli_null"], Is.True, "selected_ion present-but-null on the row");
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
+        public void Index_Lists_Chromatogram_Facets()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+            try
+            {
+                var index = JObject.Parse(
+                    System.Text.Encoding.UTF8.GetString(ReadEntry(archive, "mzpeak_index.json")));
+                var files = (JArray)index["files"];
+
+                var cdata = files.FirstOrDefault(f => (string)f["name"] == "chromatograms_data.parquet");
+                Assert.That(cdata, Is.Not.Null);
+                Assert.That((string)cdata["entity_type"], Is.EqualTo("chromatogram"));
+                Assert.That((string)cdata["data_kind"], Is.EqualTo("data arrays"));
+
+                var cmeta = files.FirstOrDefault(f => (string)f["name"] == "chromatograms_metadata.parquet");
+                Assert.That(cmeta, Is.Not.Null);
+                Assert.That((string)cmeta["entity_type"], Is.EqualTo("chromatogram"));
+                Assert.That((string)cmeta["data_kind"], Is.EqualTo("metadata"));
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
+        public void Chromatograms_Add_No_New_CvPrefix()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+            try
+            {
+                var index = JObject.Parse(
+                    System.Text.Encoding.UTF8.GetString(ReadEntry(archive, "mzpeak_index.json")));
+                var ids = ((JArray)index["metadata"]["cv_list"]).Select(e => (string)e["id"]).ToHashSet();
+                Assert.That(ids, Is.EquivalentTo(new[] { "MS", "UO" }),
+                    "chromatograms introduce no new CV prefix and no version bump");
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        // L1 is an independent value check: our spectra_data m/z (f64) is compared bit-exact, per
+        // spectrum, against the m/z array re-read directly from small.RAW (Scan.FromFile().SegmentedScan
+        // .Positions) -- the source is NOT derived from our archive. The Thermo SegmentedScan returns
+        // Positions sorted but Intensities in acquisition order (the two arrays are not index-paired and
+        // their nonzero counts differ from the writer's realigned output), so re-deriving the exact
+        // per-point intensity pairing here would require re-implementing the reader's internal
+        // realignment. L2 value-equality is therefore certified by VER-02 against the independent mzdata
+        // reference (MzPeakDifferentialTests); here L2 is the honest structural invariant: intensity is
+        // f32, finite, and the per-spectrum point count equals number_of_data_points.
+        [Test]
+        public void RoundTrip_L1_Mz_BitExact_Vs_IndependentRawRead_L2_Intensity_F32_Structural()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+            try
+            {
+                using (var ms = new MemoryStream(ReadEntry(archive, "spectra_data.parquet")))
+                using (var reader = ParquetReader.CreateAsync(ms).Result)
+                {
+                    Assert.That(Leaf(reader.Schema, "point/mz").ClrType, Is.EqualTo(typeof(double)), "m/z f64");
+                    Assert.That(Leaf(reader.Schema, "point/intensity").ClrType, Is.EqualTo(typeof(float)), "intensity f32");
+                }
+
+                var data = ReadPointFacet(ReadEntry(archive, "spectra_data.parquet"));
+                var ourMz = new Dictionary<ulong, List<double>>();
+                var ourInt = new Dictionary<ulong, List<float>>();
+                for (int i = 0; i < data.SpectrumIndex.Length; i++)
+                {
+                    var o = data.SpectrumIndex[i];
+                    if (!ourMz.ContainsKey(o)) { ourMz[o] = new List<double>(); ourInt[o] = new List<float>(); }
+                    ourMz[o].Add(data.Mz[i]);
+                    ourInt[o].Add(data.Intensity[i]);
+                }
+
+                var meta = PyArrowEntry(archive, "spectra_metadata.parquet",
+                    "import pyarrow.parquet as pq, json\n" +
+                    "t = pq.read_table(r'{PARQUET}')\n" +
+                    "d = t.to_pylist()\n" +
+                    "out = {'ndp':[int(d[i]['spectrum']['MS_1003060_number_of_data_points']) for i in range(len(d))]}\n" +
+                    "print(json.dumps(out))\n");
+                var ndp = meta["ndp"].Select(x => (int)x).ToArray();
+                int n = ndp.Length;
+
+                using (var raw = RawFileReaderFactory.ReadFile(TestRawFile))
+                {
+                    raw.SelectInstrument(Device.MS, 1);
+                    int first = raw.RunHeaderEx.FirstSpectrum;
+                    int last = raw.RunHeaderEx.LastSpectrum;
+                    var ordinalScan = new List<int>();
+                    for (int scan = first; scan <= last; scan++)
+                    {
+                        var sf = raw.GetFilterForScanNumber(scan);
+                        int lvl = (int)sf.MSOrder;
+                        if (lvl > input.MaxLevel || !input.MsLevel.Contains(lvl)) continue;
+                        var seg = Scan.FromFile(raw, scan).SegmentedScan;
+                        if (seg.Positions == null || seg.Positions.Length == 0) continue;
+                        ordinalScan.Add(scan);
+                    }
+
+                    Assert.That(ordinalScan.Count, Is.EqualTo(n),
+                        "ordinal->scan mapping must cover every emitted spectrum");
+
+                    for (ulong ord = 0; ord < (ulong)n; ord++)
+                    {
+                        int scan = ordinalScan[(int)ord];
+                        var seg = Scan.FromFile(raw, scan).SegmentedScan;
+                        // Source m/z, ascending (positions are returned sorted); independent of our archive.
+                        var srcMz = (double[])seg.Positions.Clone();
+                        Array.Sort(srcMz);
+
+                        var aMz = ourMz[ord].ToArray();
+                        var aInt = ourInt[ord].ToArray();
+
+                        Assert.That(aMz.Length, Is.EqualTo(srcMz.Length),
+                            $"ordinal {ord}: our m/z count must equal independent source count");
+                        Assert.That(aMz.Length, Is.EqualTo(ndp[(int)ord]),
+                            $"ordinal {ord}: count must equal number_of_data_points");
+
+                        for (int k = 0; k < aMz.Length; k++)
+                        {
+                            // L1: m/z bit-exact f64 vs the independently re-read source array.
+                            Assert.That(aMz[k], Is.EqualTo(srcMz[k]),
+                                $"ordinal {ord} m/z[{k}] not bit-exact vs independent source");
+                            if (k > 0)
+                                Assert.That(aMz[k], Is.GreaterThanOrEqualTo(aMz[k - 1]),
+                                    $"ordinal {ord} m/z non-decreasing at {k}");
+                            // L2 structural: intensity is finite f32 (value-equality via VER-02).
+                            Assert.That(float.IsFinite(aInt[k]), Is.True, $"ordinal {ord} intensity[{k}] finite");
+                        }
+                    }
+                }
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
+        public void Validator_Gate_Stays_Zero_Errors_With_Chromatograms()
+        {
+            var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
+            var dir = Convert(input, out var archive);
+
+            // Structural assertions run even when the validator is absent (VER-03).
+            Assert.That(ReadEntry(archive, "chromatograms_data.parquet"), Is.Not.Null);
+            Assert.That(ReadEntry(archive, "chromatograms_metadata.parquet"), Is.Not.Null);
+
+            var validator = ResolveValidator();
+            if (validator == null)
+            {
+                Directory.Delete(dir, true);
+                Assert.Ignore("mzpeak-validate not available");
+            }
+
+            var jsonPath = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".json");
+            try
+            {
+                var psi = new ProcessStartInfo(validator, $"\"{archive}\" --json \"{jsonPath}\"")
+                {
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    UseShellExecute = false
+                };
+                using (var p = Process.Start(psi))
+                {
+                    p.StandardOutput.ReadToEnd();
+                    p.StandardError.ReadToEnd();
+                    p.WaitForExit();
+                }
+
+                Assert.That(File.Exists(jsonPath), "validator must emit a JSON report");
+                var report = JObject.Parse(File.ReadAllText(jsonPath));
+                var findings = (JArray)report["findings"];
+
+                var errors = findings.Where(f => (string)f["level"] == "error")
+                    .Select(f => (string)f["ruleId"]).ToArray();
+                var warnings = findings.Where(f => (string)f["level"] == "warning")
+                    .Select(f => (string)f["ruleId"]).ToArray();
+
+                Assert.That(errors, Is.Empty, $"0 errors required; got {string.Join(",", errors)}");
+                Assert.That(warnings, Is.Empty, $"0 warnings required; got {string.Join(",", warnings)}");
+
+                var chromRules = findings.Select(f => (string)f["ruleId"])
+                    .Where(r => r != null && r.Contains("chromatogram")).ToArray();
+                Assert.That(chromRules, Is.Empty,
+                    $"no chromatogram-related finding: {string.Join(",", chromRules)}");
             }
             finally
             {
