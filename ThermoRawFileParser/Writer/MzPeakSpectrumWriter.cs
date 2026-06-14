@@ -18,6 +18,8 @@ namespace ThermoRawFileParser.Writer
         private static readonly ILog Log =
             LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
 
+        private const string MzPeakVersion = "0.9";
+
         private const string SpectrumArrayIndex =
             "{\"prefix\":\"point\",\"entries\":[" +
             "{\"context\":\"spectrum\",\"path\":\"point.mz\",\"data_type\":\"MS:1000523\",\"array_type\":\"MS:1000514\"," +
@@ -36,8 +38,6 @@ namespace ThermoRawFileParser.Writer
             {
                 throw new RawFileParserException("No MS data in RAW file, no output will be produced");
             }
-
-            ConfigureWriter(".mzpeak");
 
             double[] masses = null;
             double[] intensities = null;
@@ -79,15 +79,22 @@ namespace ThermoRawFileParser.Writer
             var metaBytes = BuildMetadataFacet(rt);
             var indexBytes = BuildIndex();
 
-            using (var zip = new ZipArchive(Writer.BaseStream, ZipArchiveMode.Create, true))
+            ConfigureWriter(".mzpeak");
+            try
             {
-                AddStored(zip, "mzpeak_index.json", indexBytes);
-                AddStored(zip, "spectra_data.parquet", dataBytes);
-                AddStored(zip, "spectra_metadata.parquet", metaBytes);
-            }
+                using (var zip = new ZipArchive(Writer.BaseStream, ZipArchiveMode.Create, true))
+                {
+                    AddStored(zip, "mzpeak_index.json", indexBytes);
+                    AddStored(zip, "spectra_data.parquet", dataBytes);
+                    AddStored(zip, "spectra_metadata.parquet", metaBytes);
+                }
 
-            Writer.Flush();
-            Writer.Close();
+                Writer.Flush();
+            }
+            finally
+            {
+                Writer.Close();
+            }
 
             Log.Info($"Wrote mzPeak archive with 1 spectrum ({masses.Length} points)");
         }
@@ -141,15 +148,15 @@ namespace ThermoRawFileParser.Writer
         {
             var spectrum = new StructField("spectrum",
                 new DataField<ulong>("index"),
-                new DataField<string>("id", true),
-                new DataField<double>("time", true));
+                new DataField<string>("id", false),
+                new DataField<double>("time", false));
             var schema = new ParquetSchema(spectrum);
 
             var cols = new Dictionary<DataField, (Array, int[], int[])>
             {
                 [Leaf(schema, "spectrum/index")] = (new ulong[] { 0 }, new[] { 1 }, null),
-                [Leaf(schema, "spectrum/id")] = (new[] { "index=0" }, new[] { 2 }, null),
-                [Leaf(schema, "spectrum/time")] = (new[] { rt }, new[] { 2 }, null)
+                [Leaf(schema, "spectrum/id")] = (new[] { "index=0" }, new[] { 1 }, null),
+                [Leaf(schema, "spectrum/time")] = (new[] { rt }, new[] { 1 }, null)
             };
 
             var meta = new Dictionary<string, string>
@@ -175,6 +182,7 @@ namespace ThermoRawFileParser.Writer
         {
             var index = new JObject
             {
+                ["version"] = MzPeakVersion,
                 ["files"] = new JArray
                 {
                     new JObject
@@ -190,7 +198,10 @@ namespace ThermoRawFileParser.Writer
                         ["data_kind"] = "metadata"
                     }
                 },
-                ["metadata"] = new JObject()
+                ["metadata"] = new JObject
+                {
+                    ["version"] = MzPeakVersion
+                }
             };
 
             return new UTF8Encoding(false).GetBytes(index.ToString());

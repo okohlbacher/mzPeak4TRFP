@@ -140,14 +140,14 @@ namespace ThermoRawFileParserTest
             var spectrum = new StructField("spectrum", MzPeakParquet.BuildParamField("p"));
             var schema = new ParquetSchema(spectrum);
 
-            // Two rows, each a single PARAM with the struct present (p present, value present).
-            // Row0 fully populated; row1 has null Accession, Unit, and String (value/string).
+            // Union-as-struct discipline: each PARAM row populates EXACTLY ONE of the four value
+            // leaves; the other three are null. Row0 populates integer; row1 populates string.
             // value/* leaves: maxDef=4 (4=non-null, 3=null). accession/name/unit: maxDef=3 (3=non-null, 2=null).
             var cols = new Dictionary<DataField, (Array, int[], int[])>
             {
-                [Leaf(schema, "spectrum/p/value/integer")] = (new long[] { 7, 9 }, new[] { 4, 4 }, null),
+                [Leaf(schema, "spectrum/p/value/integer")] = (new long[] { 7 }, new[] { 4, 3 }, null),
                 [Leaf(schema, "spectrum/p/value/float")] = (new double[0], new[] { 3, 3 }, null),
-                [Leaf(schema, "spectrum/p/value/string")] = (new[] { "hello" }, new[] { 4, 3 }, null),
+                [Leaf(schema, "spectrum/p/value/string")] = (new[] { "hello" }, new[] { 3, 4 }, null),
                 [Leaf(schema, "spectrum/p/value/boolean")] = (new bool[0], new[] { 3, 3 }, null),
                 [Leaf(schema, "spectrum/p/accession")] = (new[] { "MS:1000511" }, new[] { 3, 2 }, null),
                 [Leaf(schema, "spectrum/p/name")] = (new[] { "ms level", "intensity" }, new[] { 3, 3 }, null),
@@ -163,8 +163,25 @@ namespace ThermoRawFileParserTest
             {
                 var rg = reader.OpenRowGroupReader(0);
 
-                // accession: row0 present (def 3), row1 null (def 2). String leaves read back
-                // with the null embedded inline; def levels are the authoritative lock.
+                // integer: row0 populated (def 4), row1 null (def 3).
+                var integer = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/value/integer")).Result;
+                Assert.That(integer.Data, Is.EqualTo(new long?[] { 7, null }));
+                Assert.That(integer.DefinitionLevels, Is.EqualTo(new[] { 4, 3 }));
+
+                // string: row0 null (def 3), row1 populated (def 4).
+                var str = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/value/string")).Result;
+                Assert.That(str.Data, Is.EqualTo(new[] { null, "hello" }));
+                Assert.That(str.DefinitionLevels, Is.EqualTo(new[] { 3, 4 }));
+
+                // float never populated: both rows null (def 3).
+                var fl = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/value/float")).Result;
+                Assert.That(fl.DefinitionLevels, Is.EqualTo(new[] { 3, 3 }));
+
+                // boolean never populated: both rows null (def 3).
+                var boolean = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/value/boolean")).Result;
+                Assert.That(boolean.DefinitionLevels, Is.EqualTo(new[] { 3, 3 }));
+
+                // accession: row0 present (def 3), row1 null (def 2).
                 var acc = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/accession")).Result;
                 Assert.That(acc.Data, Is.EqualTo(new[] { "MS:1000511", null }));
                 Assert.That(acc.DefinitionLevels, Is.EqualTo(new[] { 3, 2 }));
@@ -172,15 +189,6 @@ namespace ThermoRawFileParserTest
                 var unit = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/unit")).Result;
                 Assert.That(unit.Data, Is.EqualTo(new[] { "UO:0000031", null }));
                 Assert.That(unit.DefinitionLevels, Is.EqualTo(new[] { 3, 2 }));
-
-                var str = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/value/string")).Result;
-                Assert.That(str.Data, Is.EqualTo(new[] { "hello", null }));
-                Assert.That(str.DefinitionLevels, Is.EqualTo(new[] { 4, 3 }));
-
-                // integer populated on both rows.
-                var integer = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/value/integer")).Result;
-                Assert.That(integer.Data, Is.EqualTo(new long[] { 7, 9 }));
-                Assert.That(integer.DefinitionLevels, Is.EqualTo(new[] { 4, 4 }));
 
                 // name populated on both rows.
                 var name = rg.ReadColumnAsync(Leaf(schema, "spectrum/p/name")).Result;

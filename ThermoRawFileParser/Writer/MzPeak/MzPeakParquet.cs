@@ -56,7 +56,7 @@ namespace ThermoRawFileParser.Writer
             IReadOnlyDictionary<string, string> customMetadata,
             IDictionary<DataField, (Array defined, int[] defLevels, int[] repLevels)> columns)
         {
-            using (var writer = await ParquetWriter.CreateAsync(schema, output))
+            using (var writer = await ParquetWriter.CreateAsync(schema, output).ConfigureAwait(false))
             {
                 writer.CompressionMethod = CompressionMethod.Zstd;
                 if (customMetadata != null) writer.CustomMetadata = customMetadata;
@@ -66,7 +66,8 @@ namespace ThermoRawFileParser.Writer
                     foreach (var field in schema.GetDataFields())
                     {
                         var triple = columns[field];
-                        await rg.WriteColumnAsync(Column(field, triple.defined, triple.defLevels, triple.repLevels));
+                        await rg.WriteColumnAsync(Column(field, triple.defined, triple.defLevels, triple.repLevels))
+                            .ConfigureAwait(false);
                     }
                 }
             }
