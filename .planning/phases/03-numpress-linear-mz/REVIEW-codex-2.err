@@ -1,0 +1,1449 @@
+Reading additional input from stdin...
+OpenAI Codex v0.137.0
+--------
+workdir: /Users/kohlbach/Claude/mzPeak4TRFR
+model: gpt-5.5
+provider: openai
+approval: never
+sandbox: read-only
+reasoning effort: xhigh
+reasoning summaries: none
+session id: 019ec7e6-8934-7210-a84d-8bd9ec544f7a
+--------
+user
+Confirmation re-review. You returned REWORK on this plan; it was revised for N1-N3 in .planning/phases/03-numpress-linear-mz/REVIEW-SYNTHESIS.md. Read that synthesis and the REVISED .planning/phases/03-numpress-linear-mz/03-01-PLAN.md (Task 1 algorithm section + Task 4 L2 test especially). For each N1-N3 state RESOLVED or NOT-RESOLVED citing the plan location. CRITICAL: verify the canonical-algorithm details the plan now states are actually CORRECT vs real ms-numpress (optimalLinearFixedPoint max-value formula floor(0x7FFFFFFF/maxDouble); 4-byte first-value packing; encodeInt/decodeInt half-byte scheme) and that the concrete test vectors are right (e.g. optimalLinearFixedPoint([1,2,3])==1073741823; any byte-prefix example). Use python3.11 + pynumpress to CHECK the vectors if possible. If any stated vector/detail is wrong, flag it NOT-RESOLVED with the correct value. List NEW issues. End with one line VERDICT: SHIP / SHIP-WITH-FIXES / REWORK.
+codex
+I’ll use the adversarial review skill for the confirmation pass, then verify the revised plan against the local files and any available Numpress implementation/tests.
+exec
+/bin/zsh -lc "sed -n '1,220p' /Users/kohlbach/.agents/skills/bmad-review-adversarial-general/SKILL.md" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+---
+name: bmad-review-adversarial-general
+description: 'Perform a Cynical Review and produce a findings report. Use when the user requests a critical review of something'
+---
+
+# Adversarial Review (General)
+
+**Goal:** Cynically review content and produce findings.
+
+**Your Role:** You are a cynical, jaded reviewer with zero patience for sloppy work. The content was submitted by a clueless weasel and you expect to find problems. Be skeptical of everything. Look for what's missing, not just what's wrong. Use a precise, professional tone — no profanity or personal attacks.
+
+**Inputs:**
+- **content** — Content to review: diff, spec, story, doc, or any artifact
+- **also_consider** (optional) — Areas to keep in mind during review alongside normal adversarial analysis
+
+
+## EXECUTION
+
+### Step 1: Receive Content
+
+- Load the content to review from provided input or context
+- If content to review is empty, ask for clarification and abort
+- Identify content type (diff, branch, uncommitted changes, document, etc.)
+
+### Step 2: Adversarial Analysis
+
+Review with extreme skepticism — assume problems exist. Find at least ten issues to fix or improve in the provided content.
+
+### Step 3: Present Findings
+
+Output findings as a Markdown list (descriptions only).
+
+
+## HALT CONDITIONS
+
+- HALT if zero findings — this is suspicious, re-analyze or ask for guidance
+- HALT if content is empty or unreadable
+
+codex
+I’m reading the synthesis and the revised plan sections now, with focus on the three prior objections and the exact Numpress claims they depend on.
+exec
+/bin/zsh -lc "sed -n '1,260p' .planning/phases/03-numpress-linear-mz/REVIEW-SYNTHESIS.md" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+# v2 Phase 3 plan review synthesis (plan gate)
+
+codex = REWORK (1 BLOCKER, 1 HIGH, 1 MEDIUM). vibe = unavailable (broken this session).
+
+| # | Sev | Finding (codex) | Resolution |
+|---|-----|-----------------|------------|
+| N1 | BLOCKER | The MSNumpress spec is wrong: `optimalLinearFixedPoint` described as least-squares slope (canonical is max-value based), residuals described as continuation-varint nibbles (canonical is the specific `encodeInt`/`decodeInt` half-byte scheme). Implementing from this prose → broken numpress | Rewrite Task 1 to require a FAITHFUL line-for-line port of the canonical ms-numpress `optimalLinearFixedPoint` + `encodeInt`/`decodeInt` + `encodeLinear`/`decodeLinear` (port from the C++/Java reference, NOT the prose). Remove the incorrect least-squares/varint description. Mandate exact verification: `optimalLinearFixedPoint([1,2,3]) == 1073741823`; reference row-0 fixed point `== 10599266.0`; BYTE-IDENTITY against a known ms-numpress test vector AND against pynumpress encode at the same fixed point (not just decode-within-bound). |
+| N2 | HIGH | Plan conflates null vs empty `mz_chunk_values`: the reference column is ALL-NULL, but `MzPeakParquet.EmptyList` writes present zero-length lists | In numpress mode emit `mz_chunk_values` as NULL via `MzPeakParquet.NullList(list)` (parent-present / list-null), NOT EmptyList. Test: `mz_chunk_values` null_count == row count, zero present/empty lists. |
+| N3 | MED | L2-bound test is vacuity-prone: a bad decode/drop could compare fewer/zero values; the phantom-leading-value drop helper indexes `decoded[1]` on short chunks | Add anti-vacuity guards: assert chunk count > 0; fp finite & > 0; per-chunk decoded length == intensity (== lossless) length; total compared count == `spectrum_data_point_count`; guard 1- and 2-value chunks; validate BOTH the start and end anchor m/z. |
+
+All FIX NOW. N1 (correct canonical port + exact vectors) is load-bearing. After revision, recommend a codex
+confirm of the algorithm-spec + vectors before execution.
+
+exec
+/bin/zsh -lc "sed -n '1,360p' .planning/phases/03-numpress-linear-mz/03-01-PLAN.md" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+---
+phase: 03-numpress-linear-mz
+plan: 01
+type: execute
+wave: 1
+depends_on: [02-01]
+files_modified:
+  - ThermoRawFileParser/Writer/MzPeak/MSNumpress.cs
+  - ThermoRawFileParser/Writer/MzPeak/MzPeakChunkCodec.cs
+  - ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs
+  - ThermoRawFileParser/ParseInput.cs
+  - ThermoRawFileParser/MainClass.cs
+  - ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs
+autonomous: true
+requirements: [NP-01, NP-02, NP-03, NP-04]
+
+must_haves:
+  truths:
+    - "A pure-managed (AnyCPU, no x64 marker) C# MSNumpress-linear encode+decode exists and round-trips m/z within 0.5/fp"
+    - "Numpress is the default mode: m/z is carried as mz_numpress_linear_bytes, mz_chunk_values is null, chunk_encoding = MS:1002312"
+    - "Intensity stays the plain large_list<float> (no SLOF); intensity is bit-exact f32 in every mode"
+    - "--no-numpress / --lossless restores Phase-2 delta chunks (chunk_encoding = MS:1003089); --point restores v1 point layout"
+    - "A CLI warning fires when default lossy m/z is in effect; data_processing records the numpress transform + a lossy-m/z note"
+    - "mzpeak-validate reports 0 errors in all three modes (numpress default, --lossless, --point) on small.RAW"
+    - "Decoded numpress m/z is within 0.5/fp of the lossless m/z; --lossless and --point stay BITWISE-L1"
+    - "numpress spectra_data.parquet is smaller than delta-chunked spectra_data.parquet"
+  artifacts:
+    - path: "ThermoRawFileParser/Writer/MzPeak/MSNumpress.cs"
+      provides: "OptimalLinearFixedPoint / EncodeLinear / DecodeLinear, Apache-2.0 attributed, AnyCPU"
+      contains: "EncodeLinear"
+    - path: "ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs"
+      provides: "7-field numpress chunk struct, numpress array_index footer, MS:1002312 cv_list + data_processing"
+      contains: "mz_numpress_linear_bytes"
+    - path: "ThermoRawFileParser/ParseInput.cs"
+      provides: "MzPeakNumpress flag (default true)"
+      contains: "MzPeakNumpress"
+    - path: "ThermoRawFileParser/MainClass.cs"
+      provides: "--no-numpress / --lossless option + lossy-m/z warning"
+      contains: "no-numpress"
+  key_links:
+    - from: "ChunkFacetStream.Append"
+      to: "MSNumpress.EncodeLinear"
+      via: "numpress encoding branch keyed on chunk_encoding == MS:1002312"
+      pattern: "MSNumpress\\.EncodeLinear"
+    - from: "ChunkStructField / ChunkedSpectrumArrayIndex"
+      to: "mz_numpress_linear_bytes (MS:1002312)"
+      via: "7th chunk field present only in numpress mode"
+      pattern: "mz_numpress_linear_bytes"
+    - from: "L2 round-trip test"
+      to: "MSNumpress.DecodeLinear"
+      via: "decode numpress m/z, assert max|Δ| <= 0.5/fp vs --lossless"
+      pattern: "DecodeLinear"
+---
+
+<objective>
+Add Numpress-linear m/z compression to the chunked spectra_data layout and make it the new default.
+A vendored, pure-managed C# MSNumpress port encodes each chunk's sorted m/z into a `mz_numpress_linear_bytes`
+list<uint8> column (7th chunk field), `mz_chunk_values` becomes null, `chunk_encoding = MS:1002312`, and the
+intensity list stays the plain lossless `large_list<float>`. `--no-numpress` / `--lossless` falls back to the
+Phase-2 delta chunks (bitwise-L1); `--point` falls back to the v1 point layout (bitwise-L1).
+
+LOCKED scope: intensity stays lossless f32. We do NOT implement intensity Numpress-SLOF (the reference does;
+that drives its ~63% total reduction). Our numpress output is therefore a VALID m/z-only-numpress variant of
+the chunk schema, intentionally NOT byte/schema-identical to small.numpress.mzpeak. Intensity-SLOF is backlog.
+
+Purpose: smallest m/z encoding (the size win), self-describing transform, bounded L2 m/z fidelity while
+intensity remains exact. Output: the MSNumpress codec + numpress chunk emission + CLI default + L2/3-mode
+verification.
+</objective>
+
+<execution_context>
+@$HOME/.claude/get-shit-done/workflows/execute-plan.md
+@$HOME/.claude/get-shit-done/templates/summary.md
+</execution_context>
+
+<context>
+@.planning/PROJECT.md
+@.planning/ROADMAP.md
+@.planning/STATE.md
+@.planning/REQUIREMENTS.md
+@.planning/phases/03-numpress-linear-mz/RESEARCH.md
+@.planning/phases/03-numpress-linear-mz/RESEARCH-schema.md
+@.planning/phases/03-numpress-linear-mz/RESEARCH-port.md
+@.planning/phases/03-numpress-linear-mz/CONTEXT.md
+@.planning/phases/02-chunked-layout/02-01-SUMMARY.md
+
+<interfaces>
+<!-- Exact integration seams extracted from the codebase. Use directly; no exploration needed. -->
+
+Phase-2 chunk struct (MzPeakSpectrumWriter.cs ~788) — the plug point. Numpress adds a 7th field:
+```csharp
+private static StructField ChunkStructField() =>
+    new StructField("chunk",
+        new DataField<ulong>("spectrum_index"),
+        new DataField<double>("mz_chunk_start"),
+        new DataField<double>("mz_chunk_end"),
+        new ListField("mz_chunk_values", new DataField<double>("item", true)),
+        new DataField<string>("chunk_encoding"),
+        new ListField("intensity", new DataField<float>("item", true)));
+// Numpress mode adds: new ListField("mz_numpress_linear_bytes", new DataField<byte>("item")) // not null
+```
+
+CURIEs already in the writer (MzPeakSpectrumWriter.cs 60-62):
+```csharp
+private const string ChunkEncodingCurie  = "MS:1003089"; // delta (Phase-2 default; now --lossless)
+private const string MzTransformCurie    = "MS:1003901"; // m/z anchor transform (unchanged in numpress)
+private const string IntensityTransformCurie = "MS:1003902";
+// ADD: private const string NumpressLinearCurie = "MS:1002312"; // numpress chunk_encoding + mz bytes transform
+```
+
+ChunkFacetStream.Append (MzPeakSpectrumWriter.cs ~963) builds one chunk row per window: it computes the
+window slice, calls MzPeakChunkCodec.DeltaEncode -> start/end/values, sets _bEnc.Add(ChunkEncodingCurie),
+emits mz_chunk_values (delta) + intensity. The numpress branch keeps start/end (true first/last m/z anchors),
+sets encoding = NumpressLinearCurie, emits mz_chunk_values as a NULL row (parent-present, list-null via
+MzPeakParquet.NullList — NOT EmptyList), and emits the numpress bytes row from MSNumpress.EncodeLinear(slice-as-double[]).
+
+ChunkFacetStream.Flush (MzPeakSpectrumWriter.cs ~1007) writes columns via NestedLevels + WriteRowGroupAsync.
+A numpress byte-list leaf is added the same way mz/intensity item leaves are (Leaf + ListOf + NestedLevels).
+
+ChunkFooter / ChunkedSpectrumArrayIndex (MzPeakSpectrumWriter.cs 64-81, 437) — the footer const. Numpress
+footer: entries 1-4 (start/end/values/encoding, MS:1003901, sorting_rank 0) UNCHANGED, KEEP the Phase-2
+chunk.intensity entry (buffer_format chunk_secondary, MS:1003902, sorting_rank null) verbatim, INSERT a
+chunk.mz_numpress_linear_bytes entry (buffer_format chunk_transform, transform MS:1002312, sorting_rank 0).
+This is Option B (m/z-only numpress): 6 footer entries, NOT the reference's intensity-SLOF entry.
+
+cv_list registration (MzPeakSpectrumWriter.cs 268-273): the layout block calls CollectPrefix per CURIE; in
+numpress mode register NumpressLinearCurie (MS:1002312) alongside the m/z/intensity transforms.
+
+CLI (MainClass.cs ~597) + ParseInput (ParseInput.cs 111-147): MzPeakPointLayout (default false=chunked),
+MzPeakChunkSize (default 50.0). ADD MzPeakNumpress (default true). Mode precedence: --point wins over numpress.
+
+Test helpers (MzPeakChunkTests.cs): ResolvePython() (python3/python with pyarrow), ResolveValidator()
+(mzpeak-validate), PyArrow(archive, entry, snippet) runs a pyarrow snippet over a parquet entry, Convert(point,
+out dir) runs an in-process/CLI conversion. Reuse these for the numpress tests (extend Convert to take a mode
+or add a numpress-aware overload).
+</interfaces>
+</context>
+
+<tasks>
+
+<task type="auto" tdd="true">
+  <name>Task 1: Vendor a faithful line-for-line C# port of canonical ms-numpress linear + exact-vector tests</name>
+  <files>ThermoRawFileParser/Writer/MzPeak/MSNumpress.cs, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs</files>
+  <behavior>
+    AUTHORITY: the port is a FAITHFUL LINE-FOR-LINE port of the CANONICAL ms-numpress reference source
+    (C++ MSNumpress.cpp / Java MSNumpress.java) for optimalLinearFixedPoint, encodeInt, decodeInt, encodeLinear,
+    decodeLinear, encodeFixedPoint, decodeFixedPoint. Port from the REFERENCE SOURCE, NOT from any prose summary.
+    The prose in RESEARCH-port.md section 1 mis-describes the algorithm (it says least-squares slope and 5-byte
+    values / continuation-varint nibbles) — that prose is WRONG and MUST be ignored. The canonical facts below
+    are authoritative.
+
+    - OptimalLinearFixedPoint(double[]) is MAX-VALUE based (NOT least-squares): seed maxDouble = max(data[0],data[1]);
+      for i>=2, extrapol = data[i-1] + (data[i-1]-data[i-2]), diff = data[i]-extrapol,
+      maxDouble = max(maxDouble, ceil(abs(diff)+1)); return floor(0x7FFFFFFF / maxDouble).
+      dataSize==0 -> 0; dataSize==1 -> floor(0x7FFFFFFF / data[0]).
+    - EncodeLinear(double[], double fp): bytes 0-7 = fp as a BIG-ENDIAN IEEE-754 double (encodeFixedPoint);
+      then data[0] and data[1] each as a 4-byte LITTLE-ENDIAN int32 = (long)(value*fp + 0.5) (bytes 8-11, 12-15,
+      LSB first); then for i>=2: predicted = ints[1] + (ints[1]-ints[0]) on the QUANTIZED ints,
+      diff = (int)(quant[i] - predicted), encoded via encodeInt's 4-bit half-byte scheme starting at byte 16,
+      two half-bytes packed per byte, trailing odd half-byte flushed as (hb<<4). EncodeLinear(double[]) overload
+      computes fp via OptimalLinearFixedPoint internally. (NOTE: values are 4-byte int32, NOT 5-byte.)
+    - encodeInt/decodeInt: the canonical half-byte (nibble) scheme — head nibble encodes leading-zero count
+      (0..8) or, for the 0xf0000000 case, leading-ones count + 8; remaining nibbles carry the value low-to-high.
+      Port the bit loops EXACTLY from the reference (mask 0xf0000000, the init==0 / init==mask / else branches).
+    - DecodeLinear(byte[]) reconstructs the array, mirroring the reference (read BE-double fp; first two as 4-byte
+      LE int32 / fp; then extrapolate quantized ints and add decoded diff, divide by fp). dataSize==8 -> empty;
+      dataSize<8 -> throw; dataSize==12 -> 1 value. Round-trip max|Δ| <= 0.5/fp.
+    - Edge cases: empty array -> 8-byte (fp-only) output and decode -> empty; single value (12 bytes); two values
+      (16 bytes, no residuals); ascending m/z slices of length 1..N.
+    - EXACT VERIFICATION VECTORS (all MUST pass, byte-for-byte where stated):
+      (V1) OptimalLinearFixedPoint([1.0,2.0,3.0]) == 1073741823 (== floor(0x7FFFFFFF / 2)).
+      (V2) data=[100.0,100.5,101.0,101.5], fp=21367996 -> the canonical ms-numpress encode bytes; the first 8 bytes
+           are BitConverter.DoubleToInt64Bits(21367996.0) in BIG-ENDIAN order (0x41 0x74 0x60 0xCB 0xC0 0x00 0x00 0x00);
+           decode(encode) is exact.
+      (V3) Reference row-0 fixed point: read mz_numpress_linear_bytes row 0 from refs/mzPeak/small.numpress.mzpeak,
+           the first 8 bytes decoded as a BE double == 10599266.0; DecodeLinear of that row succeeds and its decoded
+           m/z (after caller anchor-alignment, Task 2/4) is within 0.5/10599266 of the row's mz_chunk_start anchor.
+      (V4) BYTE-IDENTITY at a shared fp, asserted TWICE: our EncodeLinear(data, fp) bytes ==
+           (a) the known ms-numpress reference test-vector bytes for that data+fp, AND
+           (b) pynumpress.encode_linear(data, fp) bytes. This is byte-identity, NOT merely decode-within-bound.
+    - Cross-check vs pynumpress (python3.11, Ignore if absent): in addition to V4 byte-identity, assert
+      pynumpress.decode_linear(our-C#-bytes) is within 0.5/fp, and OptimalLinearFixedPoint matches
+      pynumpress.optimal_linear_fixed_point on real m/z slices.
+    - phantom-leading-value: anchor decode to chunk start/end is the CALLER's concern (Task 2/4 test); the codec
+      returns the raw MSNumpress decode. Document the artifact in the codec header note (no harness/phase wording).
+  </behavior>
+  <action>
+    Create ThermoRawFileParser/Writer/MzPeak/MSNumpress.cs (BOM-free, explicit usings: System only) as a FAITHFUL
+    LINE-FOR-LINE PORT of the CANONICAL ms-numpress reference source (github.com/ms-numpress/ms-numpress,
+    src/main/cpp/MSNumpress.cpp or the equivalent Java) for optimalLinearFixedPoint, encodeFixedPoint,
+    decodeFixedPoint, encodeInt, decodeInt, encodeLinear, decodeLinear. Do NOT port from RESEARCH-port.md prose —
+    that prose's "least-squares slope" and "5-byte values / continuation-varint" descriptions are WRONG; the
+    canonical algorithm is max-value-based optimalLinearFixedPoint with 4-byte int32 first values and the encodeInt
+    half-byte scheme. Match the reference's branch structure, masks (0xf0000000), and byte offsets (fp 0-7, values
+    8-15, residuals 16+) exactly. Pure managed, AnyCPU — no P/Invoke, no x64-pinned APIs. Big-endian fixed-point
+    prefix via explicit byte reversal of the double bits (C# BitConverter is LE; swap explicitly to mirror
+    encodeFixedPoint's IS_LITTLE_ENDIAN ? (7-i) : i). Apache-2.0 attribution header crediting
+    github.com/ms-numpress/ms-numpress (Apache-2.0, Copyright the ProteoWizard / ms-numpress authors), with an
+    assertion comment that this is pure-managed AnyCPU (no native / x64 dependency). Public static class MSNumpress
+    in namespace ThermoRawFileParser.Writer. Keep code compact; no comments referencing harness/process/phases.
+
+    Add NUnit tests to MzPeakChunkTests.cs (reuse ResolvePython): (a) EXACT vectors V1-V4 above — V1 fixed-point
+    equality, V2 known-vector BE-prefix + exact decode, V3 reference row-0 fp == 10599266.0 + anchored decode bound,
+    V4 byte-identity vs the ms-numpress reference test vector AND vs pynumpress.encode_linear at the same fp;
+    (b) synthetic-and-real-m/z round-trip within 0.5/fp using OptimalLinearFixedPoint; (c) edge cases
+    (empty/single/two); (d) pynumpress cross-check via python3.11 subprocess (Ignore when unavailable) asserting
+    byte-identity at a shared fp AND decode-within-bound AND optimal-fp parity on real m/z; (e) AnyCPU assertion —
+    assert the test/writer assembly is AnyCPU (ProcessorArchitecture == MSIL via Assembly.GetName(); no x64 marker
+    introduced). Run RED first (codec absent), then GREEN.
+  </action>
+  <verify>
+    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 arch -arm64 dotnet test ThermoRawFileParser/ThermoRawFileParserTest/ThermoRawFileParserTest.csproj -c Release --filter "FullyQualifiedName~MSNumpress|FullyQualifiedName~Numpress"</automated>
+  </verify>
+  <done>MSNumpress.cs is a faithful line-for-line canonical port, builds AnyCPU native arm64; V1 OptimalLinearFixedPoint([1,2,3])==1073741823; V2 known-vector BE prefix + exact decode; V3 reference row-0 fp==10599266.0 + anchored bound; V4 BYTE-IDENTITY vs ms-numpress test vector AND vs pynumpress encode at the same fp; round-trip within 0.5/fp; pynumpress cross-check passes (or Ignored if python3.11 absent); AnyCPU/no-x64 assertion green. (NP-01)</done>
+</task>
+
+<task type="auto">
+  <name>Task 2: Numpress chunk encoding + 7th field + array_index/data_processing + cv_list</name>
+  <files>ThermoRawFileParser/Writer/MzPeak/MzPeakChunkCodec.cs, ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs</files>
+  <action>
+    Add NumpressLinearCurie = "MS:1002312" to MzPeakSpectrumWriter.cs. NOTE the ROADMAP sketch says "MS:1003089"
+    for numpress — that is wrong; the verified pyarrow dump (RESEARCH-schema.md Item 1/2) proves numpress
+    chunk_encoding AND the mz-bytes transform are MS:1002312, while MS:1003089 is the DELTA encoding. Use MS:1002312.
+
+    Branch ChunkFacetStream on a numpress flag (constructor arg from ParseInput.MzPeakNumpress, default true), NOT a
+    forked facet. In numpress mode: ChunkStructField() adds a 7th field `new ListField("mz_numpress_linear_bytes",
+    new DataField<byte>("item"))` (item NOT null, per the reference large_list<uint8 not null>); keep mz_chunk_start/end
+    as the true first/last m/z anchors; set _bEnc.Add(NumpressLinearCurie); emit mz_chunk_values as a NULL row via
+    MzPeakParquet.NullList(list) — parent-present, list-null (NOT EmptyList, which writes a present zero-length list;
+    the reference column is ALL-NULL). Intensity stays the plain f32 list unchanged. Encode the window's m/z (build a
+    double[] from the slice — reuse the existing slice loop) via MSNumpress.EncodeLinear and push the bytes through a
+    new mz_numpress_linear_bytes byte-list leaf (mirror the intensity ListOf/NestedLevels path in Append+Flush). In
+    delta mode ChunkStructField stays 6 fields and the column is ABSENT (do not add it empty).
+
+    Add a decode helper to MzPeakChunkCodec.cs (used by tests): given start/end anchors + numpress bytes, call
+    MSNumpress.DecodeLinear and drop the phantom leading value (when |decoded[0]-start| > |decoded[1]-start|), so the
+    reconstructed m/z aligns to mz_chunk_start/mz_chunk_end (RESEARCH-schema Item 3 artifact). Guard short chunks:
+    do NOT index decoded[1] when decoded.Length < 2 (1- and 2-value chunks have no phantom to drop).
+
+    Footer: build the numpress ChunkedSpectrumArrayIndex (Option B, 6 entries) — entries 1-4 unchanged; KEEP the
+    Phase-2 chunk.intensity entry (chunk_secondary, MS:1003902, sorting_rank null) verbatim; INSERT chunk.mz_numpress_linear_bytes
+    (data_type MS:1000523, array_type MS:1000514, array_name "m/z array", unit MS:1000040, buffer_format "chunk_transform",
+    transform "MS:1002312", data_processing_id null, buffer_priority "primary", sorting_rank 0). Select the numpress vs
+    delta footer + struct by the same flag. cv_list: in numpress mode CollectPrefix(NumpressLinearCurie) alongside the
+    existing m/z/intensity transform prefixes. data_processing (BuildDataProcessingList ~1704): add a method step in
+    numpress mode carrying the numpress transform by accession (CvParam MS:1002312) and a human-readable note that m/z
+    is lossy numpress-linear (bounded). Keep the existing conversion + intensity-narrowing steps. BOM-free edits;
+    compact; no harness/phase comments.
+  </action>
+  <verify>
+    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 arch -arm64 dotnet build -c Release ThermoRawFileParser/ThermoRawFileParser.csproj</automated>
+  </verify>
+  <done>Numpress default chunk rows carry mz_numpress_linear_bytes (MS:1002312), mz_chunk_values emitted NULL via NullList (not EmptyList), plain f32 intensity; footer has the 6 Option-B entries; cv_list + data_processing record MS:1002312 + lossy note; delta mode stays 6-field/absent-column. Builds clean native arm64. (NP-02, partial NP-04 decode path)</done>
+</task>
+
+<task type="auto">
+  <name>Task 3: CLI default + --no-numpress/--lossless + --point precedence + lossy-m/z warning</name>
+  <files>ThermoRawFileParser/ParseInput.cs, ThermoRawFileParser/MainClass.cs</files>
+  <action>
+    ParseInput.cs: add `public bool MzPeakNumpress { get; set; }` and default it to true in the constructor
+    (alongside MzPeakPointLayout=false, MzPeakChunkSize=DefaultChunkSize). MainClass.cs: add an option
+    `"no-numpress|lossless"` whose setter sets MzPeakNumpress = (v == null) when present — i.e. presence of either alias
+    turns numpress OFF (delta chunks). Help text: numpress-linear m/z is the default (lossy, bounded); --no-numpress /
+    --lossless emits lossless delta chunks; --point emits the v1 point layout. Precedence: --point forces point layout
+    (numpress ignored); chunked+numpress is the default. Wire ChunkFacetStream construction
+    (MzPeakSpectrumWriter.cs ~207) to pass ParseInput.MzPeakNumpress (only relevant when !MzPeakPointLayout).
+
+    Emit a clear CLI warning (Log.Warn / Console.Error, matching the existing warning style) when effective mode is
+    numpress (i.e. !MzPeakPointLayout && MzPeakNumpress): "default m/z encoding is lossy Numpress-linear (bounded ~5e-7
+    Th); use --lossless for exact m/z or --point for v1 point layout". Update --format/help docs accordingly. BOM-free;
+    compact; no harness/phase comments.
+  </action>
+  <verify>
+    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 arch -arm64 dotnet build -c Release ThermoRawFileParser/ThermoRawFileParser.csproj && arch -arm64 dotnet ThermoRawFileParser/bin/Release/net8.0/ThermoRawFileParser.dll --help 2>&1 | grep -i -E "no-numpress|lossless"</automated>
+  </verify>
+  <done>numpress is ON by default; --no-numpress/--lossless -> delta chunks; --point -> v1 point; lossy-m/z warning fires only in numpress mode; help documents all three. (NP-03)</done>
+</task>
+
+<task type="auto">
+  <name>Task 4: L2 round-trip + 3-mode validator 0/0 + size verification locks</name>
+  <files>ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs</files>
+  <action>
+    Add NUnit locks (reuse Convert/PyArrow/ResolvePython/ResolveValidator; extend Convert to select numpress vs
+    --lossless vs --point). Convert small.RAW in all three modes.
+
+    (1) L2 m/z bound (ANTI-VACUITY HARDENED): decode our numpress m/z per chunk (read mz_chunk_start + mz_chunk_end +
+    mz_numpress_linear_bytes via pyarrow; decode with the MzPeakChunkCodec numpress-decode helper / MSNumpress; drop the
+    phantom leading value via the anchor rule), compare positionally to the SAME small.RAW converted with --lossless
+    (Phase-2 proved bit-identical to source). The test MUST assert ALL of:
+      - chunk count > 0 (the numpress spectra_data has at least one chunk row);
+      - per chunk: the fixed point (decoded from the first 8 BE bytes) is finite AND > 0;
+      - per chunk: decoded m/z length == that chunk's intensity length == that chunk's --lossless m/z length
+        (no silent drops / mismatches);
+      - 1- and 2-value chunks are guarded: do NOT index decoded[1] blindly; validate accordingly;
+      - per chunk: BOTH the start anchor (decoded[0] ≈ mz_chunk_start) AND the end anchor
+        (decoded[last] ≈ mz_chunk_end) are within 0.5/fp_used;
+      - total compared m/z count across all chunks == the archive's spectrum_data_point_count (no chunk skipped,
+        no values dropped);
+      - max|Δm/z| <= 0.5/fp_used per chunk (using the SAME per-chunk fp the encoder used), worst-case ~4.63e-7 Th.
+    (2) Intensity bit-exact: numpress intensity list == --lossless intensity list bitwise (SingleToInt32Bits),
+    0 mismatches. (3) --lossless and --point remain BITWISE-L1: keep/extend the Phase-2 bitwise-multiset lock so both
+    modes still match source exactly. (4) Schema/footer: numpress spectra_data has 7 fields incl mz_numpress_linear_bytes;
+    chunk_encoding == MS:1002312; mz_chunk_values null_count == row count with ZERO present/empty lists (assert null,
+    not zero-length); footer mz_numpress_linear_bytes entry has buffer_format chunk_transform + transform MS:1002312 +
+    sorting_rank 0; intensity entry unchanged. (5) Validator: mzpeak-validate 0 errors on all THREE archives (numpress
+    default, --lossless, --point); Ignore when validator absent. (6) Size: numpress spectra_data.parquet bytes <
+    --lossless (delta) spectra_data.parquet bytes. BOM-free; compact; no harness/phase comments.
+  </action>
+  <verify>
+    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 arch -arm64 dotnet test ThermoRawFileParser/ThermoRawFileParserTest/ThermoRawFileParserTest.csproj -c Release</automated>
+  </verify>
+  <done>Full suite green native arm64: chunk count > 0; per-chunk fp finite & > 0; per-chunk decoded length == intensity == lossless length; total compared count == spectrum_data_point_count; both start and end anchors validated; numpress m/z within 0.5/fp vs lossless; intensity bit-exact; mz_chunk_values null (zero present/empty); --lossless/--point bitwise-L1; validator 0/0 in all three modes; numpress spectra_data smaller than delta. (NP-04, VER for NP-01..03)</done>
+</task>
+
+</tasks>
+
+<threat_model>
+## Trust Boundaries
+
+| Boundary | Description |
+|----------|-------------|
+| RAW scan data → numpress encoder | Untrusted/variable m/z arrays (empty, single-point, near-equal, non-monotone) cross into the codec |
+| vendored ms-numpress source → assembly | Third-party algorithm ported into our managed assembly |
+| numpress bytes → archive consumers | Lossy m/z bytes must be self-describing (transform CURIE) for downstream readers |
+
+## STRIDE Threat Register
+
+| Threat ID | Category | Component | Disposition | Mitigation Plan |
+|-----------|----------|-----------|-------------|-----------------|
+| T-03-01 | Tampering | Numpress encode/decode correctness | mitigate | Faithful line-for-line canonical port + exact vectors V1-V4 (OptimalLinearFixedPoint([1,2,3])==1073741823, reference row-0 fp==10599266.0, byte-identity vs ms-numpress test vector AND vs pynumpress encode) + per-chunk anti-vacuity L2 bound assertion (Tasks 1,4) |
+| T-03-02 | Tampering | x64 dependency reintroduction | mitigate | Pure-managed AnyCPU port (System only); explicit AnyCPU/MSIL assembly assertion in tests (Task 1) |
+| T-03-03 | Information disclosure | Self-describing transform | mitigate | MS:1002312 recorded in array_index footer + cv_list + data_processing lossy note (Task 2) |
+| T-03-04 | Denial of service | Pathological m/z slices (empty/single/2/near-equal) | mitigate | Codec edge-case tests; encoder must terminate on all slice lengths; short-chunk guards in decode (Tasks 1,2) |
+| T-03-05 | Repudiation | --lossless/--point silently lossy | accept→mitigate | Bitwise-L1 locks keep both modes exact; CLI warning only in numpress mode (Tasks 3,4) |
+| T-03-SC | Tampering | npm/pip/cargo installs | n/a | No package-manager installs introduced; ms-numpress is vendored source, not a package; python3.11/pynumpress used only as a test oracle (pre-existing on system) |
+</threat_model>
+
+<verification>
+- Build clean native arm64 Release (writer + test projects).
+- Full NUnit suite green native arm64 (Phase-1/2 regressions + new MSNumpress + numpress locks).
+- mzpeak-validate 0 errors on small.RAW in numpress (default), --lossless, --point.
+- L2: decoded numpress m/z within 0.5/fp vs --lossless (anti-vacuity: chunk count > 0, per-chunk length parity, total == spectrum_data_point_count, both anchors); intensity bit-exact f32; --lossless/--point bitwise-L1.
+- Numpress correctness: OptimalLinearFixedPoint([1,2,3])==1073741823; reference row-0 fp==10599266.0; byte-identity vs ms-numpress test vector AND vs pynumpress encode at the same fp.
+- Size: numpress spectra_data.parquet < delta-chunked spectra_data.parquet.
+- No x64 marker: writer/test assemblies AnyCPU (MSIL).
+</verification>
+
+<success_criteria>
+- NP-01: pure-managed AnyCPU C# MSNumpress-linear encode+decode, faithful canonical port, no x64 dep, native arm64. ✓ Task 1
+- NP-02: m/z in mz_numpress_linear_bytes with chunk_encoding/transform MS:1002312, mz_chunk_values NULL (not empty), recorded in array_index AND data_processing. ✓ Task 2
+  (Deviation noted vs ROADMAP "MS:1003089": the verified reference dump shows numpress = MS:1002312; MS:1003089 is delta. We use MS:1002312.)
+- NP-03: numpress ON by default; --no-numpress/--lossless -> delta chunks; lossy note in data_processing + CLI warning; --point -> v1. ✓ Task 3
+- NP-04: decoded m/z within Numpress-linear bound (0.5/fp) vs source; intensity stays lossless f32. ✓ Tasks 2,4
+- Must NOT regress: validator 0/0 all three modes; --lossless/--point bitwise-L1; streaming per-chunk encode preserved. ✓ Task 4
+- Scope lock honored: intensity is plain f32 (no SLOF); intensity-SLOF deferred to backlog.
+</success_criteria>
+
+<risks>
+- **Numpress port correctness / L2 bound (chief):** the encodeInt 4-bit half-byte residual scheme and the 4-byte LE int32 first-value packing are the easiest places to mis-port — and the RESEARCH-port.md PROSE actively misleads (it claims least-squares slope + 5-byte values / continuation-varint nibbles, all wrong). The executor MUST port from the canonical reference source, not the prose. Mitigated by the exact vectors: OptimalLinearFixedPoint([1,2,3])==1073741823, reference row-0 fp==10599266.0, and BYTE-IDENTITY vs both the ms-numpress test vector and pynumpress encode at a shared fp (not merely decode-within-bound), plus the per-chunk anti-vacuity 0.5/fp decode assertion. The phantom-leading-value decode artifact is handled in the codec's anchor-aligned decode helper (with short-chunk guards), not the raw codec.
+- **Reintroducing an x64 dependency:** port uses System only; AnyCPU/MSIL assembly assertion guards against an accidental native pull-in.
+
+exec
+/bin/zsh -lc 'rg -n "N1|N2|N3|optimalLinearFixedPoint|floor|0x7FFFFFFF|first-value|first value|encodeInt|decodeInt|half-byte|Task 1|Task 4|L2|1073741823|byte-prefix|byte prefix" .planning/phases/03-numpress-linear-mz -S' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+.planning/phases/03-numpress-linear-mz/REVIEW-SYNTHESIS.md:7:| N1 | BLOCKER | The MSNumpress spec is wrong: `optimalLinearFixedPoint` described as least-squares slope (canonical is max-value based), residuals described as continuation-varint nibbles (canonical is the specific `encodeInt`/`decodeInt` half-byte scheme). Implementing from this prose → broken numpress | Rewrite Task 1 to require a FAITHFUL line-for-line port of the canonical ms-numpress `optimalLinearFixedPoint` + `encodeInt`/`decodeInt` + `encodeLinear`/`decodeLinear` (port from the C++/Java reference, NOT the prose). Remove the incorrect least-squares/varint description. Mandate exact verification: `optimalLinearFixedPoint([1,2,3]) == 1073741823`; reference row-0 fixed point `== 10599266.0`; BYTE-IDENTITY against a known ms-numpress test vector AND against pynumpress encode at the same fixed point (not just decode-within-bound). |
+.planning/phases/03-numpress-linear-mz/REVIEW-SYNTHESIS.md:8:| N2 | HIGH | Plan conflates null vs empty `mz_chunk_values`: the reference column is ALL-NULL, but `MzPeakParquet.EmptyList` writes present zero-length lists | In numpress mode emit `mz_chunk_values` as NULL via `MzPeakParquet.NullList(list)` (parent-present / list-null), NOT EmptyList. Test: `mz_chunk_values` null_count == row count, zero present/empty lists. |
+.planning/phases/03-numpress-linear-mz/REVIEW-SYNTHESIS.md:9:| N3 | MED | L2-bound test is vacuity-prone: a bad decode/drop could compare fewer/zero values; the phantom-leading-value drop helper indexes `decoded[1]` on short chunks | Add anti-vacuity guards: assert chunk count > 0; fp finite & > 0; per-chunk decoded length == intensity (== lossless) length; total compared count == `spectrum_data_point_count`; guard 1- and 2-value chunks; validate BOTH the start and end anchor m/z. |
+.planning/phases/03-numpress-linear-mz/REVIEW-SYNTHESIS.md:11:All FIX NOW. N1 (correct canonical port + exact vectors) is load-bearing. After revision, recommend a codex
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:26:3. Encode remaining values as linear-prediction residuals via a 4-bit half-byte signed-int varint.
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:33:### 1.1 Fixed Point Calculation (`optimalLinearFixedPoint`)
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:60:Bytes 18+:    Residuals, each encoded as 4-bit "half-byte" signed ints
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:71:**Detail: 4-bit half-byte residual encoding** (`encodeInt` / `decodeInt`)
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:81:- Each half-byte (4 bits) encodes 4 bits of the integer's two's-complement representation.
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:82:- The high bit (bit 3) signals "continuation": if set, another half-byte follows.
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:83:- A value fitting in 4 bits (−8 to +7) encodes in one half-byte (no continuation).
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:84:- A value needing more bits uses multiple half-bytes, packed two per byte.
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:105:2. Decode first value from bytes 8–12 (5-byte LE int, divide by fixedPoint).
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:107:4. For each remaining half-byte pair:
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:202:The algorithm is deterministic: for a given `fixedPoint`, the same input produces the same bytes. The only non-determinism is in `optimalLinearFixedPoint`, which minimizes sum of squared residuals and may have ties or rounding choices.
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:304:        // Helper: encodeInt / decodeInt for 4-bit half-byte residuals
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:315:3. **4-bit half-byte packing:** The residual encoding uses a custom bitstream (continuation bit in bit 3 of each nibble). Reference C++ uses a clever bit-unpacking loop; C# should mirror it exactly.
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:348:The `optimalLinearFixedPoint` function implements a **deterministic least-squares fit**. Given the same input array, it should produce the same fixed point as:
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:360:- 4-bit half-bytes are packed identically.
+.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:449:   - L2 error: decode(our bytes) vs. reference m/z within bound.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:14:Confirmation re-review. You returned REWORK on this plan; it was revised for N1-N3 in .planning/phases/03-numpress-linear-mz/REVIEW-SYNTHESIS.md. Read that synthesis and the REVISED .planning/phases/03-numpress-linear-mz/03-01-PLAN.md (Task 1 algorithm section + Task 4 L2 test especially). For each N1-N3 state RESOLVED or NOT-RESOLVED citing the plan location. CRITICAL: verify the canonical-algorithm details the plan now states are actually CORRECT vs real ms-numpress (optimalLinearFixedPoint max-value formula floor(0x7FFFFFFF/maxDouble); 4-byte first-value packing; encodeInt/decodeInt half-byte scheme) and that the concrete test vectors are right (e.g. optimalLinearFixedPoint([1,2,3])==1073741823; any byte-prefix example). Use python3.11 + pynumpress to CHECK the vectors if possible. If any stated vector/detail is wrong, flag it NOT-RESOLVED with the correct value. List NEW issues. End with one line VERDICT: SHIP / SHIP-WITH-FIXES / REWORK.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:69:| N1 | BLOCKER | The MSNumpress spec is wrong: `optimalLinearFixedPoint` described as least-squares slope (canonical is max-value based), residuals described as continuation-varint nibbles (canonical is the specific `encodeInt`/`decodeInt` half-byte scheme). Implementing from this prose → broken numpress | Rewrite Task 1 to require a FAITHFUL line-for-line port of the canonical ms-numpress `optimalLinearFixedPoint` + `encodeInt`/`decodeInt` + `encodeLinear`/`decodeLinear` (port from the C++/Java reference, NOT the prose). Remove the incorrect least-squares/varint description. Mandate exact verification: `optimalLinearFixedPoint([1,2,3]) == 1073741823`; reference row-0 fixed point `== 10599266.0`; BYTE-IDENTITY against a known ms-numpress test vector AND against pynumpress encode at the same fixed point (not just decode-within-bound). |
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:70:| N2 | HIGH | Plan conflates null vs empty `mz_chunk_values`: the reference column is ALL-NULL, but `MzPeakParquet.EmptyList` writes present zero-length lists | In numpress mode emit `mz_chunk_values` as NULL via `MzPeakParquet.NullList(list)` (parent-present / list-null), NOT EmptyList. Test: `mz_chunk_values` null_count == row count, zero present/empty lists. |
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:71:| N3 | MED | L2-bound test is vacuity-prone: a bad decode/drop could compare fewer/zero values; the phantom-leading-value drop helper indexes `decoded[1]` on short chunks | Add anti-vacuity guards: assert chunk count > 0; fp finite & > 0; per-chunk decoded length == intensity (== lossless) length; total compared count == `spectrum_data_point_count`; guard 1- and 2-value chunks; validate BOTH the start and end anchor m/z. |
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:73:All FIX NOW. N1 (correct canonical port + exact vectors) is load-bearing. After revision, recommend a codex
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:127:    - from: "L2 round-trip test"
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:144:Purpose: smallest m/z encoding (the size win), self-describing transform, bounded L2 m/z fidelity while
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:145:intensity remains exact. Output: the MSNumpress codec + numpress chunk emission + CLI default + L2/3-mode
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:220:  <name>Task 1: Vendor a faithful line-for-line C# port of canonical ms-numpress linear + exact-vector tests</name>
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:224:    (C++ MSNumpress.cpp / Java MSNumpress.java) for optimalLinearFixedPoint, encodeInt, decodeInt, encodeLinear,
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:232:      maxDouble = max(maxDouble, ceil(abs(diff)+1)); return floor(0x7FFFFFFF / maxDouble).
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:233:      dataSize==0 -> 0; dataSize==1 -> floor(0x7FFFFFFF / data[0]).
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:237:      diff = (int)(quant[i] - predicted), encoded via encodeInt's 4-bit half-byte scheme starting at byte 16,
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:238:      two half-bytes packed per byte, trailing odd half-byte flushed as (hb<<4). EncodeLinear(double[]) overload
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:240:    - encodeInt/decodeInt: the canonical half-byte (nibble) scheme — head nibble encodes leading-zero count
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:249:      (V1) OptimalLinearFixedPoint([1.0,2.0,3.0]) == 1073741823 (== floor(0x7FFFFFFF / 2)).
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:268:    src/main/cpp/MSNumpress.cpp or the equivalent Java) for optimalLinearFixedPoint, encodeFixedPoint,
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:269:    decodeFixedPoint, encodeInt, decodeInt, encodeLinear, decodeLinear. Do NOT port from RESEARCH-port.md prose —
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:271:    canonical algorithm is max-value-based optimalLinearFixedPoint with 4-byte int32 first values and the encodeInt
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:272:    half-byte scheme. Match the reference's branch structure, masks (0xf0000000), and byte offsets (fp 0-7, values
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:292:  <done>MSNumpress.cs is a faithful line-for-line canonical port, builds AnyCPU native arm64; V1 OptimalLinearFixedPoint([1,2,3])==1073741823; V2 known-vector BE prefix + exact decode; V3 reference row-0 fp==10599266.0 + anchored bound; V4 BYTE-IDENTITY vs ms-numpress test vector AND vs pynumpress encode at the same fp; round-trip within 0.5/fp; pynumpress cross-check passes (or Ignored if python3.11 absent); AnyCPU/no-x64 assertion green. (NP-01)</done>
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:358:  <name>Task 4: L2 round-trip + 3-mode validator 0/0 + size verification locks</name>
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:364:    (1) L2 m/z bound (ANTI-VACUITY HARDENED): decode our numpress m/z per chunk (read mz_chunk_start + mz_chunk_end +
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:408:| T-03-01 | Tampering | Numpress encode/decode correctness | mitigate | Faithful line-for-line canonical port + exact vectors V1-V4 (OptimalLinearFixedPoint([1,2,3])==1073741823, reference row-0 fp==10599266.0, byte-identity vs ms-numpress test vector AND vs pynumpress encode) + per-chunk anti-vacuity L2 bound assertion (Tasks 1,4) |
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:409:| T-03-02 | Tampering | x64 dependency reintroduction | mitigate | Pure-managed AnyCPU port (System only); explicit AnyCPU/MSIL assembly assertion in tests (Task 1) |
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:420:- L2: decoded numpress m/z within 0.5/fp vs --lossless (anti-vacuity: chunk count > 0, per-chunk length parity, total == spectrum_data_point_count, both anchors); intensity bit-exact f32; --lossless/--point bitwise-L1.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:421:- Numpress correctness: OptimalLinearFixedPoint([1,2,3])==1073741823; reference row-0 fp==10599266.0; byte-identity vs ms-numpress test vector AND vs pynumpress encode at the same fp.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:427:- NP-01: pure-managed AnyCPU C# MSNumpress-linear encode+decode, faithful canonical port, no x64 dep, native arm64. ✓ Task 1
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:432:- Must NOT regress: validator 0/0 all three modes; --lossless/--point bitwise-L1; streaming per-chunk encode preserved. ✓ Task 4
+.planning/phases/03-numpress-linear-mz/REVIEW-codex-2.err:437:- **Numpress port correctness / L2 bound (chief):** the encodeInt 4-bit half-byte residual scheme and the 4-byte LE int32 first-value packing are the easiest places to mis-port — and the RESEARCH-port.md PROSE actively misleads (it claims least-squares slope + 5-byte values / continuation-varint nibbles, all wrong). The executor MUST port from the canonical reference source, not the prose. Mitigated by the exact vectors: OptimalLinearFixedPoint([1,2,3])==1073741823, reference row-0 fp==10599266.0, and BYTE-IDENTITY vs both the ms-numpress test vector and pynumpress encode at a shared fp (not merely decode-within-bound), plus the per-chunk anti-vacuity 0.5/fp decode assertion. The phantom-leading-value decode artifact is handled in the codec's anchor-aligned decode helper (with short-chunk guards), not the raw codec.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:28:L2 bound 0.5/fp ≈ 4.6e-7 Th, mz_chunk_values null when numpress, intensity stays plain f32 list.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:40:   correctly (8-byte fixed-point header, first two values as 5-byte ints, 4-bit half-byte residual packing,
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:41:   optimalLinearFixedPoint)? Are the tests decisive — known ms-numpress test vectors + pynumpress cross-check
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:42:   + round-trip ≤ 0.5/fp? Is the "phantom leading value" pynumpress decode artifact handled so the L2 test
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:44:2. L2 vs L1 INTEGRITY: numpress mode = bounded L2 (m/z), intensity bit-exact f32. Do `--lossless` and
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:45:   `--point` remain BITWISE-L1 (Phase-1/2 gates untouched)? Is the L2 bound asserted correctly (max|Δm/z| ≤
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:74:- `RESEARCH-schema.md` — reference numpress schema, transform CURIEs, L2 bound, validator rules (pyarrow/pynumpress verified).
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:99:- **Fixed point: per-chunk optimal** (`optimalLinearFixedPoint`); **L2 m/z bound = 0.5/fp ≈ 4.6e-7 Th
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:108:  point; it is NOT a gate — the gate is decode-within-L2-bound for m/z (intensity bit-exact f32).
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:273:- Resulting m/z error bound (the L2 bound our writer must meet) = the numpress quantization half-step **`0.5 / fixed_point`**:
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:287:> **L2 caveat for the verifier (not a schema fact):** the numpress and chunked reference files are **different conversions with different scan/point selections** (numpress: 488 chunks, ~217k decoded m/z values; chunked: fewer points per spectrum, only 14 spectra overlap and even those differ in count). A positional whole-file diff between the two reference files is therefore meaningless. The L2 verification for OUR writer must compare **our numpress output decoded vs our own `--lossless`/`--point` output of the SAME small.RAW** (which Phase-2 proved bit-identical to source), asserting `max |Δm/z| <= 0.5/fp_used` per chunk (≈5e-7 Th worst case). Intensity under Option A is SLOF-lossy (do NOT assert bit-exact); under Option B intensity stays bit-exact f32.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:291:`pynumpress.decode_linear` (and canonical MSNumpress `decodeLinear`) can emit a **phantom extrapolated leading value** for some chunks: in 154/488 chunks `decoded[0] == mz_chunk_start`, but in the rest `decoded[1] == mz_chunk_start` and `decoded[0]` is a ~0.09-Th extrapolation seed. The true chunk data is anchored by `mz_chunk_start`/`mz_chunk_end`; a correct decoder aligns to those anchors (drop the leading phantom when `|decoded[0]-mz_chunk_start| > |decoded[1]-mz_chunk_start|`). The C# port's decode + the L2 round-trip test MUST handle this — it is the single biggest decode correctness trap. (Detailed handling is the C#-port sub-report's responsibility.)
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:295:## Item 4 — Validator L2 / numpress rules
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:299:- mzpeak-validate (profile mzpeak-0.9) has **NO numpress-specific rule, NO L2 rule, NO bytes-decodability rule, and does NOT require the transform CURIE be declared in cv_list.** `[VERIFIED]`
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:355:- **To the C# MSNumpress port sub-report:** (1) the phantom-leading-value decode artifact (Item 3) is the top correctness risk for the L2 round-trip test; align decode to `mz_chunk_start`/`mz_chunk_end`. (2) Use **per-chunk `optimalLinearFixedPoint`** (the reference does; matches exactly). (3) Fixed point is stored as the first 8 bytes BE double — standard MSNumpress prefix.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:374:- Fixed point = per-chunk optimal + L2 bound 0.5/fp: HIGH — file-fp == pynumpress.optimal exactly (50/50), idempotent round-trip.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:375:- Validator has no numpress/L2 rule + identical errors on both refs: HIGH — direct rule-file read + live validator run.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:426:    - from: "L2 round-trip test"
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:443:Purpose: smallest m/z encoding (the size win), self-describing transform, bounded L2 m/z fidelity while
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:444:intensity remains exact. Output: the MSNumpress codec + numpress chunk emission + CLI default + L2/3-mode
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:522:  <name>Task 1: Vendor the pure-managed C# MSNumpress-linear port + unit/cross-check tests</name>
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:526:    - EncodeLinear(double[], long fp): 8-byte BE-double fixed-point prefix, first two values as 5-byte LE fixed-point ints, residuals as 4-bit half-byte varints (encodeInt). EncodeLinear(double[]) overload computes fp internally.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:535:    the canonical ms-numpress encodeLinear/decodeLinear/optimalLinearFixedPoint/encodeInt/decodeInt from RESEARCH-port.md
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:614:  <name>Task 4: L2 round-trip + 3-mode validator 0/0 + size verification locks</name>
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:620:    (1) L2 m/z bound: decode our numpress m/z per chunk (read mz_chunk_start + mz_numpress_linear_bytes via pyarrow,
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:667:3. Encode remaining values as linear-prediction residuals via a 4-bit half-byte signed-int varint.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:674:### 1.1 Fixed Point Calculation (`optimalLinearFixedPoint`)
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:701:Bytes 18+:    Residuals, each encoded as 4-bit "half-byte" signed ints
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:712:**Detail: 4-bit half-byte residual encoding** (`encodeInt` / `decodeInt`)
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:722:- Each half-byte (4 bits) encodes 4 bits of the integer's two's-complement representation.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:723:- The high bit (bit 3) signals "continuation": if set, another half-byte follows.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:724:- A value fitting in 4 bits (−8 to +7) encodes in one half-byte (no continuation).
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:725:- A value needing more bits uses multiple half-bytes, packed two per byte.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:746:2. Decode first value from bytes 8–12 (5-byte LE int, divide by fixedPoint).
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:748:4. For each remaining half-byte pair:
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:843:The algorithm is deterministic: for a given `fixedPoint`, the same input produces the same bytes. The only non-determinism is in `optimalLinearFixedPoint`, which minimizes sum of squared residuals and may have ties or rounding choices.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4038:    49	    - from: "L2 round-trip test"
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4055:    66	Purpose: smallest m/z encoding (the size win), self-describing transform, bounded L2 m/z fidelity while
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4056:    67	intensity remains exact. Output: the MSNumpress codec + numpress chunk emission + CLI default + L2/3-mode
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4134:   145	  <name>Task 1: Vendor the pure-managed C# MSNumpress-linear port + unit/cross-check tests</name>
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4138:   149	    - EncodeLinear(double[], long fp): 8-byte BE-double fixed-point prefix, first two values as 5-byte LE fixed-point ints, residuals as 4-bit half-byte varints (encodeInt). EncodeLinear(double[]) overload computes fp internally.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4147:   158	    the canonical ms-numpress encodeLinear/decodeLinear/optimalLinearFixedPoint/encodeInt/decodeInt from RESEARCH-port.md
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4226:   237	  <name>Task 4: L2 round-trip + 3-mode validator 0/0 + size verification locks</name>
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4232:   243	    (1) L2 m/z bound: decode our numpress m/z per chunk (read mz_chunk_start + mz_numpress_linear_bytes via pyarrow,
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4409:   158	- Resulting m/z error bound (the L2 bound our writer must meet) = the numpress quantization half-step **`0.5 / fixed_point`**:
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4423:   172	> **L2 caveat for the verifier (not a schema fact):** the numpress and chunked reference files are **different conversions with different scan/point selections** (numpress: 488 chunks, ~217k decoded m/z values; chunked: fewer points per spectrum, only 14 spectra overlap and even those differ in count). A positional whole-file diff between the two reference files is therefore meaningless. The L2 verification for OUR writer must compare **our numpress output decoded vs our own `--lossless`/`--point` output of the SAME small.RAW** (which Phase-2 proved bit-identical to source), asserting `max |Δm/z| <= 0.5/fp_used` per chunk (≈5e-7 Th worst case). Intensity under Option A is SLOF-lossy (do NOT assert bit-exact); under Option B intensity stays bit-exact f32.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4427:   176	`pynumpress.decode_linear` (and canonical MSNumpress `decodeLinear`) can emit a **phantom extrapolated leading value** for some chunks: in 154/488 chunks `decoded[0] == mz_chunk_start`, but in the rest `decoded[1] == mz_chunk_start` and `decoded[0]` is a ~0.09-Th extrapolation seed. The true chunk data is anchored by `mz_chunk_start`/`mz_chunk_end`; a correct decoder aligns to those anchors (drop the leading phantom when `|decoded[0]-mz_chunk_start| > |decoded[1]-mz_chunk_start|`). The C# port's decode + the L2 round-trip test MUST handle this — it is the single biggest decode correctness trap. (Detailed handling is the C#-port sub-report's responsibility.)
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4431:   180	## Item 4 — Validator L2 / numpress rules
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4435:   184	- mzpeak-validate (profile mzpeak-0.9) has **NO numpress-specific rule, NO L2 rule, NO bytes-decodability rule, and does NOT require the transform CURIE be declared in cv_list.** `[VERIFIED]`
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4491:   240	- **To the C# MSNumpress port sub-report:** (1) the phantom-leading-value decode artifact (Item 3) is the top correctness risk for the L2 round-trip test; align decode to `mz_chunk_start`/`mz_chunk_end`. (2) Use **per-chunk `optimalLinearFixedPoint`** (the reference does; matches exactly). (3) Fixed point is stored as the first 8 bytes BE double — standard MSNumpress prefix.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4510:   259	- Fixed point = per-chunk optimal + L2 bound 0.5/fp: HIGH — file-fp == pynumpress.optimal exactly (50/50), idempotent round-trip.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4511:   260	- Validator has no numpress/L2 rule + identical errors on both refs: HIGH — direct rule-file read + live validator run.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4541:    26	3. Encode remaining values as linear-prediction residuals via a 4-bit half-byte signed-int varint.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4548:    33	### 1.1 Fixed Point Calculation (`optimalLinearFixedPoint`)
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4575:    60	Bytes 18+:    Residuals, each encoded as 4-bit "half-byte" signed ints
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4586:    71	**Detail: 4-bit half-byte residual encoding** (`encodeInt` / `decodeInt`)
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4596:    81	- Each half-byte (4 bits) encodes 4 bits of the integer's two's-complement representation.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4597:    82	- The high bit (bit 3) signals "continuation": if set, another half-byte follows.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4598:    83	- A value fitting in 4 bits (−8 to +7) encodes in one half-byte (no continuation).
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4599:    84	- A value needing more bits uses multiple half-bytes, packed two per byte.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4620:   105	2. Decode first value from bytes 8–12 (5-byte LE int, divide by fixedPoint).
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4622:   107	4. For each remaining half-byte pair:
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4717:   202	The algorithm is deterministic: for a given `fixedPoint`, the same input produces the same bytes. The only non-determinism is in `optimalLinearFixedPoint`, which minimizes sum of squared residuals and may have ties or rounding choices.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4763:     4	- `RESEARCH-schema.md` — reference numpress schema, transform CURIEs, L2 bound, validator rules (pyarrow/pynumpress verified).
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4788:    29	- **Fixed point: per-chunk optimal** (`optimalLinearFixedPoint`); **L2 m/z bound = 0.5/fp ≈ 4.6e-7 Th
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4797:    38	  point; it is NOT a gate — the gate is decode-within-L2-bound for m/z (intensity bit-exact f32).
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4898:   304	        // Helper: encodeInt / decodeInt for 4-bit half-byte residuals
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4909:   315	3. **4-bit half-byte packing:** The residual encoding uses a custom bitstream (continuation bit in bit 3 of each nibble). Reference C++ uses a clever bit-unpacking loop; C# should mirror it exactly.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4942:   348	The `optimalLinearFixedPoint` function implements a **deterministic least-squares fit**. Given the same input array, it should produce the same fixed point as:
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:4954:   360	- 4-bit half-bytes are packed identically.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:5035:   276	| T-03-01 | Tampering | Numpress encode/decode correctness | mitigate | Known ms-numpress test vector byte-identity + pynumpress cross-check + per-chunk L2 bound assertion (Tasks 1,4) |
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:5036:   277	| T-03-02 | Tampering | x64 dependency reintroduction | mitigate | Pure-managed AnyCPU port (System only); explicit AnyCPU/MSIL assembly assertion in tests (Task 1) |
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:5038:   279	| T-03-04 | Denial of service | Pathological m/z slices (empty/single/2/near-equal) | mitigate | Codec edge-case tests; encoder must terminate on all slice lengths (Task 1) |
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:5047:   288	- L2: decoded numpress m/z within 0.5/fp vs --lossless; intensity bit-exact f32; --lossless/--point bitwise-L1.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:5053:   294	- NP-01: pure-managed AnyCPU C# MSNumpress-linear encode+decode, no x64 dep, native arm64. ✓ Task 1
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:5058:   299	- Must NOT regress: validator 0/0 all three modes; --lossless/--point bitwise-L1; streaming per-chunk encode preserved. ✓ Task 4
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:5063:   304	- **Numpress port correctness / L2 bound (chief):** the residual 4-bit half-byte varint and 5-byte LE fixed-point packing are the easiest places to mis-port. Mitigated by the ms-numpress known vector (byte-identity), pynumpress byte cross-check at a shared fp, and the per-chunk 0.5/fp decode assertion. The phantom-leading-value decode artifact is handled in the codec's anchor-aligned decode helper, not the raw codec.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:5090:/bin/zsh -lc 'rg -n "optimalLinearFixedPoint|encodeInt|MSNumpress|Numpress" -S .' in /Users/kohlbach/Claude/mzPeak4TRFR
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:5099:./refs/_findings/mzpeak_mapping_report.md:368:  - L2 (bounded): Numpress allowed; relative m/z error ≤ 1e-7, recorded in archive
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:5135:[1, 2, 3] 1073741823.0 2^32/max 1431655765.0 2^32/(2*max) 715827882.5 2^32/(max+min) 1073741823.75
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:5862:- BLOCKER, [.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:148](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:148): MSNumpress algorithm spec is incorrect/incomplete. `optimalLinearFixedPoint` is described as least-squares slope-based, and residual packing is described in [RESEARCH-port.md:71](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:71) as continuation-varint nibbles; canonical/pynumpress behavior differs. Fix: replace the prose with direct canonical `optimalLinearFixedPoint`, `encodeInt`, and `decodeInt` pseudocode/source-port requirements, and add fixed-point vectors such as `[1,2,3] -> 1073741823`, known vector byte identity, and reference row0 fp `10599266.0`.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.err:5866:- MEDIUM, [.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:243](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:243): L2 bound test lacks anti-vacuity guards. A bad decode/drop could compare fewer or no values, and the phantom-drop helper can index `decoded[1]` on short chunks. Fix: assert chunk count > 0, fp finite > 0, decoded length equals intensity/lossless length per chunk, total compared count equals `spectrum_data_point_count`, and guard single/two-value chunks while validating both start and end anchors.
+.planning/phases/03-numpress-linear-mz/RESEARCH.md:4:- `RESEARCH-schema.md` — reference numpress schema, transform CURIEs, L2 bound, validator rules (pyarrow/pynumpress verified).
+.planning/phases/03-numpress-linear-mz/RESEARCH.md:29:- **Fixed point: per-chunk optimal** (`optimalLinearFixedPoint`); **L2 m/z bound = 0.5/fp ≈ 4.6e-7 Th
+.planning/phases/03-numpress-linear-mz/RESEARCH.md:38:  point; it is NOT a gate — the gate is decode-within-L2-bound for m/z (intensity bit-exact f32).
+.planning/phases/03-numpress-linear-mz/RESEARCH-schema.md:158:- Resulting m/z error bound (the L2 bound our writer must meet) = the numpress quantization half-step **`0.5 / fixed_point`**:
+.planning/phases/03-numpress-linear-mz/RESEARCH-schema.md:172:> **L2 caveat for the verifier (not a schema fact):** the numpress and chunked reference files are **different conversions with different scan/point selections** (numpress: 488 chunks, ~217k decoded m/z values; chunked: fewer points per spectrum, only 14 spectra overlap and even those differ in count). A positional whole-file diff between the two reference files is therefore meaningless. The L2 verification for OUR writer must compare **our numpress output decoded vs our own `--lossless`/`--point` output of the SAME small.RAW** (which Phase-2 proved bit-identical to source), asserting `max |Δm/z| <= 0.5/fp_used` per chunk (≈5e-7 Th worst case). Intensity under Option A is SLOF-lossy (do NOT assert bit-exact); under Option B intensity stays bit-exact f32.
+.planning/phases/03-numpress-linear-mz/RESEARCH-schema.md:176:`pynumpress.decode_linear` (and canonical MSNumpress `decodeLinear`) can emit a **phantom extrapolated leading value** for some chunks: in 154/488 chunks `decoded[0] == mz_chunk_start`, but in the rest `decoded[1] == mz_chunk_start` and `decoded[0]` is a ~0.09-Th extrapolation seed. The true chunk data is anchored by `mz_chunk_start`/`mz_chunk_end`; a correct decoder aligns to those anchors (drop the leading phantom when `|decoded[0]-mz_chunk_start| > |decoded[1]-mz_chunk_start|`). The C# port's decode + the L2 round-trip test MUST handle this — it is the single biggest decode correctness trap. (Detailed handling is the C#-port sub-report's responsibility.)
+.planning/phases/03-numpress-linear-mz/RESEARCH-schema.md:180:## Item 4 — Validator L2 / numpress rules
+.planning/phases/03-numpress-linear-mz/RESEARCH-schema.md:184:- mzpeak-validate (profile mzpeak-0.9) has **NO numpress-specific rule, NO L2 rule, NO bytes-decodability rule, and does NOT require the transform CURIE be declared in cv_list.** `[VERIFIED]`
+.planning/phases/03-numpress-linear-mz/RESEARCH-schema.md:240:- **To the C# MSNumpress port sub-report:** (1) the phantom-leading-value decode artifact (Item 3) is the top correctness risk for the L2 round-trip test; align decode to `mz_chunk_start`/`mz_chunk_end`. (2) Use **per-chunk `optimalLinearFixedPoint`** (the reference does; matches exactly). (3) Fixed point is stored as the first 8 bytes BE double — standard MSNumpress prefix.
+.planning/phases/03-numpress-linear-mz/RESEARCH-schema.md:259:- Fixed point = per-chunk optimal + L2 bound 0.5/fp: HIGH — file-fp == pynumpress.optimal exactly (50/50), idempotent round-trip.
+.planning/phases/03-numpress-linear-mz/RESEARCH-schema.md:260:- Validator has no numpress/L2 rule + identical errors on both refs: HIGH — direct rule-file read + live validator run.
+.planning/phases/03-numpress-linear-mz/REVIEW-BRIEF.md:11:L2 bound 0.5/fp ≈ 4.6e-7 Th, mz_chunk_values null when numpress, intensity stays plain f32 list.
+.planning/phases/03-numpress-linear-mz/REVIEW-BRIEF.md:23:   correctly (8-byte fixed-point header, first two values as 5-byte ints, 4-bit half-byte residual packing,
+.planning/phases/03-numpress-linear-mz/REVIEW-BRIEF.md:24:   optimalLinearFixedPoint)? Are the tests decisive — known ms-numpress test vectors + pynumpress cross-check
+.planning/phases/03-numpress-linear-mz/REVIEW-BRIEF.md:25:   + round-trip ≤ 0.5/fp? Is the "phantom leading value" pynumpress decode artifact handled so the L2 test
+.planning/phases/03-numpress-linear-mz/REVIEW-BRIEF.md:27:2. L2 vs L1 INTEGRITY: numpress mode = bounded L2 (m/z), intensity bit-exact f32. Do `--lossless` and
+.planning/phases/03-numpress-linear-mz/REVIEW-BRIEF.md:28:   `--point` remain BITWISE-L1 (Phase-1/2 gates untouched)? Is the L2 bound asserted correctly (max|Δm/z| ≤
+.planning/phases/03-numpress-linear-mz/CONTEXT.md:11:the Phase-2 delta chunks. Numpress m/z is **lossy** (bounded) → L2 conformance; intensity stays lossless f32.
+.planning/phases/03-numpress-linear-mz/CONTEXT.md:17:  optimalLinearFixedPoint). Decode is needed for the L2 round-trip tests.
+.planning/phases/03-numpress-linear-mz/CONTEXT.md:25:- **L2 conformance:** decoded numpress m/z is within the numpress-linear bound of the source (define the
+.planning/phases/03-numpress-linear-mz/CONTEXT.md:27:  `--lossless`/`--point` modes; numpress mode uses the bounded L2 check.
+.planning/phases/03-numpress-linear-mz/CONTEXT.md:41:- L2: decode our numpress m/z vs source within bound; intensity exact. `--lossless` still bitwise-L1.
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:49:    - from: "L2 round-trip test"
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:66:Purpose: smallest m/z encoding (the size win), self-describing transform, bounded L2 m/z fidelity while
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:67:intensity remains exact. Output: the MSNumpress codec + numpress chunk emission + CLI default + L2/3-mode
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:142:  <name>Task 1: Vendor a faithful line-for-line C# port of canonical ms-numpress linear + exact-vector tests</name>
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:146:    (C++ MSNumpress.cpp / Java MSNumpress.java) for optimalLinearFixedPoint, encodeInt, decodeInt, encodeLinear,
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:154:      maxDouble = max(maxDouble, ceil(abs(diff)+1)); return floor(0x7FFFFFFF / maxDouble).
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:155:      dataSize==0 -> 0; dataSize==1 -> floor(0x7FFFFFFF / data[0]).
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:159:      diff = (int)(quant[i] - predicted), encoded via encodeInt's 4-bit half-byte scheme starting at byte 16,
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:160:      two half-bytes packed per byte, trailing odd half-byte flushed as (hb<<4). EncodeLinear(double[]) overload
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:162:    - encodeInt/decodeInt: the canonical half-byte (nibble) scheme — head nibble encodes leading-zero count
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:171:      (V1) OptimalLinearFixedPoint([1.0,2.0,3.0]) == 1073741823 (== floor(0x7FFFFFFF / 2)).
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:190:    src/main/cpp/MSNumpress.cpp or the equivalent Java) for optimalLinearFixedPoint, encodeFixedPoint,
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:191:    decodeFixedPoint, encodeInt, decodeInt, encodeLinear, decodeLinear. Do NOT port from RESEARCH-port.md prose —
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:193:    canonical algorithm is max-value-based optimalLinearFixedPoint with 4-byte int32 first values and the encodeInt
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:194:    half-byte scheme. Match the reference's branch structure, masks (0xf0000000), and byte offsets (fp 0-7, values
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:214:  <done>MSNumpress.cs is a faithful line-for-line canonical port, builds AnyCPU native arm64; V1 OptimalLinearFixedPoint([1,2,3])==1073741823; V2 known-vector BE prefix + exact decode; V3 reference row-0 fp==10599266.0 + anchored bound; V4 BYTE-IDENTITY vs ms-numpress test vector AND vs pynumpress encode at the same fp; round-trip within 0.5/fp; pynumpress cross-check passes (or Ignored if python3.11 absent); AnyCPU/no-x64 assertion green. (NP-01)</done>
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:280:  <name>Task 4: L2 round-trip + 3-mode validator 0/0 + size verification locks</name>
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:286:    (1) L2 m/z bound (ANTI-VACUITY HARDENED): decode our numpress m/z per chunk (read mz_chunk_start + mz_chunk_end +
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:330:| T-03-01 | Tampering | Numpress encode/decode correctness | mitigate | Faithful line-for-line canonical port + exact vectors V1-V4 (OptimalLinearFixedPoint([1,2,3])==1073741823, reference row-0 fp==10599266.0, byte-identity vs ms-numpress test vector AND vs pynumpress encode) + per-chunk anti-vacuity L2 bound assertion (Tasks 1,4) |
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:331:| T-03-02 | Tampering | x64 dependency reintroduction | mitigate | Pure-managed AnyCPU port (System only); explicit AnyCPU/MSIL assembly assertion in tests (Task 1) |
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:342:- L2: decoded numpress m/z within 0.5/fp vs --lossless (anti-vacuity: chunk count > 0, per-chunk length parity, total == spectrum_data_point_count, both anchors); intensity bit-exact f32; --lossless/--point bitwise-L1.
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:343:- Numpress correctness: OptimalLinearFixedPoint([1,2,3])==1073741823; reference row-0 fp==10599266.0; byte-identity vs ms-numpress test vector AND vs pynumpress encode at the same fp.
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:349:- NP-01: pure-managed AnyCPU C# MSNumpress-linear encode+decode, faithful canonical port, no x64 dep, native arm64. ✓ Task 1
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:354:- Must NOT regress: validator 0/0 all three modes; --lossless/--point bitwise-L1; streaming per-chunk encode preserved. ✓ Task 4
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:359:- **Numpress port correctness / L2 bound (chief):** the encodeInt 4-bit half-byte residual scheme and the 4-byte LE int32 first-value packing are the easiest places to mis-port — and the RESEARCH-port.md PROSE actively misleads (it claims least-squares slope + 5-byte values / continuation-varint nibbles, all wrong). The executor MUST port from the canonical reference source, not the prose. Mitigated by the exact vectors: OptimalLinearFixedPoint([1,2,3])==1073741823, reference row-0 fp==10599266.0, and BYTE-IDENTITY vs both the ms-numpress test vector and pynumpress encode at a shared fp (not merely decode-within-bound), plus the per-chunk anti-vacuity 0.5/fp decode assertion. The phantom-leading-value decode artifact is handled in the codec's anchor-aligned decode helper (with short-chunk guards), not the raw codec.
+.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:364:- **Vacuous L2 pass:** a bad decode or silent drop could compare fewer/zero values and trivially pass a naive bound. Mitigated by the Task-4 anti-vacuity guards (chunk count > 0, per-chunk + total length parity vs spectrum_data_point_count, both start/end anchors, short-chunk guards).
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.md:1:- BLOCKER, [.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:148](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:148): MSNumpress algorithm spec is incorrect/incomplete. `optimalLinearFixedPoint` is described as least-squares slope-based, and residual packing is described in [RESEARCH-port.md:71](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz/RESEARCH-port.md:71) as continuation-varint nibbles; canonical/pynumpress behavior differs. Fix: replace the prose with direct canonical `optimalLinearFixedPoint`, `encodeInt`, and `decodeInt` pseudocode/source-port requirements, and add fixed-point vectors such as `[1,2,3] -> 1073741823`, known vector byte identity, and reference row0 fp `10599266.0`.
+.planning/phases/03-numpress-linear-mz/REVIEW-codex.md:5:- MEDIUM, [.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:243](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:243): L2 bound test lacks anti-vacuity guards. A bad decode/drop could compare fewer or no values, and the phantom-drop helper can index `decoded[1]` on short chunks. Fix: assert chunk count > 0, fp finite > 0, decoded length equals intensity/lossless length per chunk, total compared count equals `spectrum_data_point_count`, and guard single/two-value chunks while validating both start and end anchors.
+
+codex
+The revised plan now has the right shape for N1-N3 on paper. I’m checking the algorithm/vector claims against an actual `pynumpress` install next, because a plausible-looking byte vector can still be wrong.
+exec
+/bin/zsh -lc "nl -ba .planning/phases/03-numpress-linear-mz/03-01-PLAN.md | sed -n '140,220p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+   140	
+   141	<task type="auto" tdd="true">
+   142	  <name>Task 1: Vendor a faithful line-for-line C# port of canonical ms-numpress linear + exact-vector tests</name>
+   143	  <files>ThermoRawFileParser/Writer/MzPeak/MSNumpress.cs, ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs</files>
+   144	  <behavior>
+   145	    AUTHORITY: the port is a FAITHFUL LINE-FOR-LINE port of the CANONICAL ms-numpress reference source
+   146	    (C++ MSNumpress.cpp / Java MSNumpress.java) for optimalLinearFixedPoint, encodeInt, decodeInt, encodeLinear,
+   147	    decodeLinear, encodeFixedPoint, decodeFixedPoint. Port from the REFERENCE SOURCE, NOT from any prose summary.
+   148	    The prose in RESEARCH-port.md section 1 mis-describes the algorithm (it says least-squares slope and 5-byte
+   149	    values / continuation-varint nibbles) — that prose is WRONG and MUST be ignored. The canonical facts below
+   150	    are authoritative.
+   151	
+   152	    - OptimalLinearFixedPoint(double[]) is MAX-VALUE based (NOT least-squares): seed maxDouble = max(data[0],data[1]);
+   153	      for i>=2, extrapol = data[i-1] + (data[i-1]-data[i-2]), diff = data[i]-extrapol,
+   154	      maxDouble = max(maxDouble, ceil(abs(diff)+1)); return floor(0x7FFFFFFF / maxDouble).
+   155	      dataSize==0 -> 0; dataSize==1 -> floor(0x7FFFFFFF / data[0]).
+   156	    - EncodeLinear(double[], double fp): bytes 0-7 = fp as a BIG-ENDIAN IEEE-754 double (encodeFixedPoint);
+   157	      then data[0] and data[1] each as a 4-byte LITTLE-ENDIAN int32 = (long)(value*fp + 0.5) (bytes 8-11, 12-15,
+   158	      LSB first); then for i>=2: predicted = ints[1] + (ints[1]-ints[0]) on the QUANTIZED ints,
+   159	      diff = (int)(quant[i] - predicted), encoded via encodeInt's 4-bit half-byte scheme starting at byte 16,
+   160	      two half-bytes packed per byte, trailing odd half-byte flushed as (hb<<4). EncodeLinear(double[]) overload
+   161	      computes fp via OptimalLinearFixedPoint internally. (NOTE: values are 4-byte int32, NOT 5-byte.)
+   162	    - encodeInt/decodeInt: the canonical half-byte (nibble) scheme — head nibble encodes leading-zero count
+   163	      (0..8) or, for the 0xf0000000 case, leading-ones count + 8; remaining nibbles carry the value low-to-high.
+   164	      Port the bit loops EXACTLY from the reference (mask 0xf0000000, the init==0 / init==mask / else branches).
+   165	    - DecodeLinear(byte[]) reconstructs the array, mirroring the reference (read BE-double fp; first two as 4-byte
+   166	      LE int32 / fp; then extrapolate quantized ints and add decoded diff, divide by fp). dataSize==8 -> empty;
+   167	      dataSize<8 -> throw; dataSize==12 -> 1 value. Round-trip max|Δ| <= 0.5/fp.
+   168	    - Edge cases: empty array -> 8-byte (fp-only) output and decode -> empty; single value (12 bytes); two values
+   169	      (16 bytes, no residuals); ascending m/z slices of length 1..N.
+   170	    - EXACT VERIFICATION VECTORS (all MUST pass, byte-for-byte where stated):
+   171	      (V1) OptimalLinearFixedPoint([1.0,2.0,3.0]) == 1073741823 (== floor(0x7FFFFFFF / 2)).
+   172	      (V2) data=[100.0,100.5,101.0,101.5], fp=21367996 -> the canonical ms-numpress encode bytes; the first 8 bytes
+   173	           are BitConverter.DoubleToInt64Bits(21367996.0) in BIG-ENDIAN order (0x41 0x74 0x60 0xCB 0xC0 0x00 0x00 0x00);
+   174	           decode(encode) is exact.
+   175	      (V3) Reference row-0 fixed point: read mz_numpress_linear_bytes row 0 from refs/mzPeak/small.numpress.mzpeak,
+   176	           the first 8 bytes decoded as a BE double == 10599266.0; DecodeLinear of that row succeeds and its decoded
+   177	           m/z (after caller anchor-alignment, Task 2/4) is within 0.5/10599266 of the row's mz_chunk_start anchor.
+   178	      (V4) BYTE-IDENTITY at a shared fp, asserted TWICE: our EncodeLinear(data, fp) bytes ==
+   179	           (a) the known ms-numpress reference test-vector bytes for that data+fp, AND
+   180	           (b) pynumpress.encode_linear(data, fp) bytes. This is byte-identity, NOT merely decode-within-bound.
+   181	    - Cross-check vs pynumpress (python3.11, Ignore if absent): in addition to V4 byte-identity, assert
+   182	      pynumpress.decode_linear(our-C#-bytes) is within 0.5/fp, and OptimalLinearFixedPoint matches
+   183	      pynumpress.optimal_linear_fixed_point on real m/z slices.
+   184	    - phantom-leading-value: anchor decode to chunk start/end is the CALLER's concern (Task 2/4 test); the codec
+   185	      returns the raw MSNumpress decode. Document the artifact in the codec header note (no harness/phase wording).
+   186	  </behavior>
+   187	  <action>
+   188	    Create ThermoRawFileParser/Writer/MzPeak/MSNumpress.cs (BOM-free, explicit usings: System only) as a FAITHFUL
+   189	    LINE-FOR-LINE PORT of the CANONICAL ms-numpress reference source (github.com/ms-numpress/ms-numpress,
+   190	    src/main/cpp/MSNumpress.cpp or the equivalent Java) for optimalLinearFixedPoint, encodeFixedPoint,
+   191	    decodeFixedPoint, encodeInt, decodeInt, encodeLinear, decodeLinear. Do NOT port from RESEARCH-port.md prose —
+   192	    that prose's "least-squares slope" and "5-byte values / continuation-varint" descriptions are WRONG; the
+   193	    canonical algorithm is max-value-based optimalLinearFixedPoint with 4-byte int32 first values and the encodeInt
+   194	    half-byte scheme. Match the reference's branch structure, masks (0xf0000000), and byte offsets (fp 0-7, values
+   195	    8-15, residuals 16+) exactly. Pure managed, AnyCPU — no P/Invoke, no x64-pinned APIs. Big-endian fixed-point
+   196	    prefix via explicit byte reversal of the double bits (C# BitConverter is LE; swap explicitly to mirror
+   197	    encodeFixedPoint's IS_LITTLE_ENDIAN ? (7-i) : i). Apache-2.0 attribution header crediting
+   198	    github.com/ms-numpress/ms-numpress (Apache-2.0, Copyright the ProteoWizard / ms-numpress authors), with an
+   199	    assertion comment that this is pure-managed AnyCPU (no native / x64 dependency). Public static class MSNumpress
+   200	    in namespace ThermoRawFileParser.Writer. Keep code compact; no comments referencing harness/process/phases.
+   201	
+   202	    Add NUnit tests to MzPeakChunkTests.cs (reuse ResolvePython): (a) EXACT vectors V1-V4 above — V1 fixed-point
+   203	    equality, V2 known-vector BE-prefix + exact decode, V3 reference row-0 fp == 10599266.0 + anchored decode bound,
+   204	    V4 byte-identity vs the ms-numpress reference test vector AND vs pynumpress.encode_linear at the same fp;
+   205	    (b) synthetic-and-real-m/z round-trip within 0.5/fp using OptimalLinearFixedPoint; (c) edge cases
+   206	    (empty/single/two); (d) pynumpress cross-check via python3.11 subprocess (Ignore when unavailable) asserting
+   207	    byte-identity at a shared fp AND decode-within-bound AND optimal-fp parity on real m/z; (e) AnyCPU assertion —
+   208	    assert the test/writer assembly is AnyCPU (ProcessorArchitecture == MSIL via Assembly.GetName(); no x64 marker
+   209	    introduced). Run RED first (codec absent), then GREEN.
+   210	  </action>
+   211	  <verify>
+   212	    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 arch -arm64 dotnet test ThermoRawFileParser/ThermoRawFileParserTest/ThermoRawFileParserTest.csproj -c Release --filter "FullyQualifiedName~MSNumpress|FullyQualifiedName~Numpress"</automated>
+   213	  </verify>
+   214	  <done>MSNumpress.cs is a faithful line-for-line canonical port, builds AnyCPU native arm64; V1 OptimalLinearFixedPoint([1,2,3])==1073741823; V2 known-vector BE prefix + exact decode; V3 reference row-0 fp==10599266.0 + anchored bound; V4 BYTE-IDENTITY vs ms-numpress test vector AND vs pynumpress encode at the same fp; round-trip within 0.5/fp; pynumpress cross-check passes (or Ignored if python3.11 absent); AnyCPU/no-x64 assertion green. (NP-01)</done>
+   215	</task>
+   216	
+   217	<task type="auto">
+   218	  <name>Task 2: Numpress chunk encoding + 7th field + array_index/data_processing + cv_list</name>
+   219	  <files>ThermoRawFileParser/Writer/MzPeak/MzPeakChunkCodec.cs, ThermoRawFileParser/Writer/MzPeakSpectrumWriter.cs</files>
+   220	  <action>
+
+exec
+/bin/zsh -lc "nl -ba .planning/phases/03-numpress-linear-mz/03-01-PLAN.md | sed -n '220,325p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+   220	  <action>
+   221	    Add NumpressLinearCurie = "MS:1002312" to MzPeakSpectrumWriter.cs. NOTE the ROADMAP sketch says "MS:1003089"
+   222	    for numpress — that is wrong; the verified pyarrow dump (RESEARCH-schema.md Item 1/2) proves numpress
+   223	    chunk_encoding AND the mz-bytes transform are MS:1002312, while MS:1003089 is the DELTA encoding. Use MS:1002312.
+   224	
+   225	    Branch ChunkFacetStream on a numpress flag (constructor arg from ParseInput.MzPeakNumpress, default true), NOT a
+   226	    forked facet. In numpress mode: ChunkStructField() adds a 7th field `new ListField("mz_numpress_linear_bytes",
+   227	    new DataField<byte>("item"))` (item NOT null, per the reference large_list<uint8 not null>); keep mz_chunk_start/end
+   228	    as the true first/last m/z anchors; set _bEnc.Add(NumpressLinearCurie); emit mz_chunk_values as a NULL row via
+   229	    MzPeakParquet.NullList(list) — parent-present, list-null (NOT EmptyList, which writes a present zero-length list;
+   230	    the reference column is ALL-NULL). Intensity stays the plain f32 list unchanged. Encode the window's m/z (build a
+   231	    double[] from the slice — reuse the existing slice loop) via MSNumpress.EncodeLinear and push the bytes through a
+   232	    new mz_numpress_linear_bytes byte-list leaf (mirror the intensity ListOf/NestedLevels path in Append+Flush). In
+   233	    delta mode ChunkStructField stays 6 fields and the column is ABSENT (do not add it empty).
+   234	
+   235	    Add a decode helper to MzPeakChunkCodec.cs (used by tests): given start/end anchors + numpress bytes, call
+   236	    MSNumpress.DecodeLinear and drop the phantom leading value (when |decoded[0]-start| > |decoded[1]-start|), so the
+   237	    reconstructed m/z aligns to mz_chunk_start/mz_chunk_end (RESEARCH-schema Item 3 artifact). Guard short chunks:
+   238	    do NOT index decoded[1] when decoded.Length < 2 (1- and 2-value chunks have no phantom to drop).
+   239	
+   240	    Footer: build the numpress ChunkedSpectrumArrayIndex (Option B, 6 entries) — entries 1-4 unchanged; KEEP the
+   241	    Phase-2 chunk.intensity entry (chunk_secondary, MS:1003902, sorting_rank null) verbatim; INSERT chunk.mz_numpress_linear_bytes
+   242	    (data_type MS:1000523, array_type MS:1000514, array_name "m/z array", unit MS:1000040, buffer_format "chunk_transform",
+   243	    transform "MS:1002312", data_processing_id null, buffer_priority "primary", sorting_rank 0). Select the numpress vs
+   244	    delta footer + struct by the same flag. cv_list: in numpress mode CollectPrefix(NumpressLinearCurie) alongside the
+   245	    existing m/z/intensity transform prefixes. data_processing (BuildDataProcessingList ~1704): add a method step in
+   246	    numpress mode carrying the numpress transform by accession (CvParam MS:1002312) and a human-readable note that m/z
+   247	    is lossy numpress-linear (bounded). Keep the existing conversion + intensity-narrowing steps. BOM-free edits;
+   248	    compact; no harness/phase comments.
+   249	  </action>
+   250	  <verify>
+   251	    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 arch -arm64 dotnet build -c Release ThermoRawFileParser/ThermoRawFileParser.csproj</automated>
+   252	  </verify>
+   253	  <done>Numpress default chunk rows carry mz_numpress_linear_bytes (MS:1002312), mz_chunk_values emitted NULL via NullList (not EmptyList), plain f32 intensity; footer has the 6 Option-B entries; cv_list + data_processing record MS:1002312 + lossy note; delta mode stays 6-field/absent-column. Builds clean native arm64. (NP-02, partial NP-04 decode path)</done>
+   254	</task>
+   255	
+   256	<task type="auto">
+   257	  <name>Task 3: CLI default + --no-numpress/--lossless + --point precedence + lossy-m/z warning</name>
+   258	  <files>ThermoRawFileParser/ParseInput.cs, ThermoRawFileParser/MainClass.cs</files>
+   259	  <action>
+   260	    ParseInput.cs: add `public bool MzPeakNumpress { get; set; }` and default it to true in the constructor
+   261	    (alongside MzPeakPointLayout=false, MzPeakChunkSize=DefaultChunkSize). MainClass.cs: add an option
+   262	    `"no-numpress|lossless"` whose setter sets MzPeakNumpress = (v == null) when present — i.e. presence of either alias
+   263	    turns numpress OFF (delta chunks). Help text: numpress-linear m/z is the default (lossy, bounded); --no-numpress /
+   264	    --lossless emits lossless delta chunks; --point emits the v1 point layout. Precedence: --point forces point layout
+   265	    (numpress ignored); chunked+numpress is the default. Wire ChunkFacetStream construction
+   266	    (MzPeakSpectrumWriter.cs ~207) to pass ParseInput.MzPeakNumpress (only relevant when !MzPeakPointLayout).
+   267	
+   268	    Emit a clear CLI warning (Log.Warn / Console.Error, matching the existing warning style) when effective mode is
+   269	    numpress (i.e. !MzPeakPointLayout && MzPeakNumpress): "default m/z encoding is lossy Numpress-linear (bounded ~5e-7
+   270	    Th); use --lossless for exact m/z or --point for v1 point layout". Update --format/help docs accordingly. BOM-free;
+   271	    compact; no harness/phase comments.
+   272	  </action>
+   273	  <verify>
+   274	    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 arch -arm64 dotnet build -c Release ThermoRawFileParser/ThermoRawFileParser.csproj && arch -arm64 dotnet ThermoRawFileParser/bin/Release/net8.0/ThermoRawFileParser.dll --help 2>&1 | grep -i -E "no-numpress|lossless"</automated>
+   275	  </verify>
+   276	  <done>numpress is ON by default; --no-numpress/--lossless -> delta chunks; --point -> v1 point; lossy-m/z warning fires only in numpress mode; help documents all three. (NP-03)</done>
+   277	</task>
+   278	
+   279	<task type="auto">
+   280	  <name>Task 4: L2 round-trip + 3-mode validator 0/0 + size verification locks</name>
+   281	  <files>ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs</files>
+   282	  <action>
+   283	    Add NUnit locks (reuse Convert/PyArrow/ResolvePython/ResolveValidator; extend Convert to select numpress vs
+   284	    --lossless vs --point). Convert small.RAW in all three modes.
+   285	
+   286	    (1) L2 m/z bound (ANTI-VACUITY HARDENED): decode our numpress m/z per chunk (read mz_chunk_start + mz_chunk_end +
+   287	    mz_numpress_linear_bytes via pyarrow; decode with the MzPeakChunkCodec numpress-decode helper / MSNumpress; drop the
+   288	    phantom leading value via the anchor rule), compare positionally to the SAME small.RAW converted with --lossless
+   289	    (Phase-2 proved bit-identical to source). The test MUST assert ALL of:
+   290	      - chunk count > 0 (the numpress spectra_data has at least one chunk row);
+   291	      - per chunk: the fixed point (decoded from the first 8 BE bytes) is finite AND > 0;
+   292	      - per chunk: decoded m/z length == that chunk's intensity length == that chunk's --lossless m/z length
+   293	        (no silent drops / mismatches);
+   294	      - 1- and 2-value chunks are guarded: do NOT index decoded[1] blindly; validate accordingly;
+   295	      - per chunk: BOTH the start anchor (decoded[0] ≈ mz_chunk_start) AND the end anchor
+   296	        (decoded[last] ≈ mz_chunk_end) are within 0.5/fp_used;
+   297	      - total compared m/z count across all chunks == the archive's spectrum_data_point_count (no chunk skipped,
+   298	        no values dropped);
+   299	      - max|Δm/z| <= 0.5/fp_used per chunk (using the SAME per-chunk fp the encoder used), worst-case ~4.63e-7 Th.
+   300	    (2) Intensity bit-exact: numpress intensity list == --lossless intensity list bitwise (SingleToInt32Bits),
+   301	    0 mismatches. (3) --lossless and --point remain BITWISE-L1: keep/extend the Phase-2 bitwise-multiset lock so both
+   302	    modes still match source exactly. (4) Schema/footer: numpress spectra_data has 7 fields incl mz_numpress_linear_bytes;
+   303	    chunk_encoding == MS:1002312; mz_chunk_values null_count == row count with ZERO present/empty lists (assert null,
+   304	    not zero-length); footer mz_numpress_linear_bytes entry has buffer_format chunk_transform + transform MS:1002312 +
+   305	    sorting_rank 0; intensity entry unchanged. (5) Validator: mzpeak-validate 0 errors on all THREE archives (numpress
+   306	    default, --lossless, --point); Ignore when validator absent. (6) Size: numpress spectra_data.parquet bytes <
+   307	    --lossless (delta) spectra_data.parquet bytes. BOM-free; compact; no harness/phase comments.
+   308	  </action>
+   309	  <verify>
+   310	    <automated>DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 arch -arm64 dotnet test ThermoRawFileParser/ThermoRawFileParserTest/ThermoRawFileParserTest.csproj -c Release</automated>
+   311	  </verify>
+   312	  <done>Full suite green native arm64: chunk count > 0; per-chunk fp finite & > 0; per-chunk decoded length == intensity == lossless length; total compared count == spectrum_data_point_count; both start and end anchors validated; numpress m/z within 0.5/fp vs lossless; intensity bit-exact; mz_chunk_values null (zero present/empty); --lossless/--point bitwise-L1; validator 0/0 in all three modes; numpress spectra_data smaller than delta. (NP-04, VER for NP-01..03)</done>
+   313	</task>
+   314	
+   315	</tasks>
+   316	
+   317	<threat_model>
+   318	## Trust Boundaries
+   319	
+   320	| Boundary | Description |
+   321	|----------|-------------|
+   322	| RAW scan data → numpress encoder | Untrusted/variable m/z arrays (empty, single-point, near-equal, non-monotone) cross into the codec |
+   323	| vendored ms-numpress source → assembly | Third-party algorithm ported into our managed assembly |
+   324	| numpress bytes → archive consumers | Lossy m/z bytes must be self-describing (transform CURIE) for downstream readers |
+   325	
+
+exec
+/bin/zsh -lc "rg --files | rg 'small\\.numpress\\.mzpeak|small\\.RAW|\\.mzpeak"'$|MSNumpress|numpress'"'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+ThermoRawFileParser/ThermoRawFileParserTest/Data/small.RAW
+
+exec
+/bin/zsh -lc "nl -ba .planning/phases/03-numpress-linear-mz/REVIEW-SYNTHESIS.md | sed -n '1,40p'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+     1	# v2 Phase 3 plan review synthesis (plan gate)
+     2	
+     3	codex = REWORK (1 BLOCKER, 1 HIGH, 1 MEDIUM). vibe = unavailable (broken this session).
+     4	
+     5	| # | Sev | Finding (codex) | Resolution |
+     6	|---|-----|-----------------|------------|
+     7	| N1 | BLOCKER | The MSNumpress spec is wrong: `optimalLinearFixedPoint` described as least-squares slope (canonical is max-value based), residuals described as continuation-varint nibbles (canonical is the specific `encodeInt`/`decodeInt` half-byte scheme). Implementing from this prose → broken numpress | Rewrite Task 1 to require a FAITHFUL line-for-line port of the canonical ms-numpress `optimalLinearFixedPoint` + `encodeInt`/`decodeInt` + `encodeLinear`/`decodeLinear` (port from the C++/Java reference, NOT the prose). Remove the incorrect least-squares/varint description. Mandate exact verification: `optimalLinearFixedPoint([1,2,3]) == 1073741823`; reference row-0 fixed point `== 10599266.0`; BYTE-IDENTITY against a known ms-numpress test vector AND against pynumpress encode at the same fixed point (not just decode-within-bound). |
+     8	| N2 | HIGH | Plan conflates null vs empty `mz_chunk_values`: the reference column is ALL-NULL, but `MzPeakParquet.EmptyList` writes present zero-length lists | In numpress mode emit `mz_chunk_values` as NULL via `MzPeakParquet.NullList(list)` (parent-present / list-null), NOT EmptyList. Test: `mz_chunk_values` null_count == row count, zero present/empty lists. |
+     9	| N3 | MED | L2-bound test is vacuity-prone: a bad decode/drop could compare fewer/zero values; the phantom-leading-value drop helper indexes `decoded[1]` on short chunks | Add anti-vacuity guards: assert chunk count > 0; fp finite & > 0; per-chunk decoded length == intensity (== lossless) length; total compared count == `spectrum_data_point_count`; guard 1- and 2-value chunks; validate BOTH the start and end anchor m/z. |
+    10	
+    11	All FIX NOW. N1 (correct canonical port + exact vectors) is load-bearing. After revision, recommend a codex
+    12	confirm of the algorithm-spec + vectors before execution.
+
+codex
+The first Python probe hit the read-only shell’s here-doc limitation, so I’m rerunning it as `python -c` only. The plan line references are now pinned for the final answer.
+exec
+/bin/zsh -lc "python3.11 -c 'import importlib.util
+spec=importlib.util.find_spec(\"pynumpress\")
+print(spec.origin if spec else \"NOT FOUND\")
+print(spec.submodule_search_locations if spec and spec.submodule_search_locations else \"NO LOCS\")'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+/Users/kohlbach/Library/Python/3.11/lib/python/site-packages/pynumpress/__init__.py
+['/Users/kohlbach/Library/Python/3.11/lib/python/site-packages/pynumpress']
+
+exec
+/bin/zsh -lc "python3.11 -c 'import sys, importlib.util
+print(sys.version)
+for name in [\"pynumpress\",\"pyarrow\",\"numpy\"]:
+    spec=importlib.util.find_spec(name)
+    print(name, spec.origin if spec else \"NOT FOUND\")'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+3.11.3 (v3.11.3:f3909b8bc8, Apr  4 2023, 20:12:10) [Clang 13.0.0 (clang-1300.0.29.30)]
+pynumpress /Users/kohlbach/Library/Python/3.11/lib/python/site-packages/pynumpress/__init__.py
+pyarrow /Users/kohlbach/Library/Python/3.11/lib/python/site-packages/pyarrow/__init__.py
+numpy /Library/Frameworks/Python.framework/Versions/3.11/lib/python3.11/site-packages/numpy/__init__.py
+
+exec
+/bin/zsh -lc "find /Users/kohlbach/Claude/mzPeak4TRFR -maxdepth 5 -iname '*numpress*' -print" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+/Users/kohlbach/Claude/mzPeak4TRFR/refs/mzPeak/small.numpress.mzpeak
+/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz
+
+exec
+/bin/zsh -lc 'find /Users/kohlbach/Library/Python/3.11/lib/python/site-packages/pynumpress -maxdepth 3 -type f -print' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+/Users/kohlbach/Library/Python/3.11/lib/python/site-packages/pynumpress/version.py
+/Users/kohlbach/Library/Python/3.11/lib/python/site-packages/pynumpress/__init__.py
+/Users/kohlbach/Library/Python/3.11/lib/python/site-packages/pynumpress/pynumpress.cpython-311-darwin.so
+/Users/kohlbach/Library/Python/3.11/lib/python/site-packages/pynumpress/__pycache__/version.cpython-311.pyc
+/Users/kohlbach/Library/Python/3.11/lib/python/site-packages/pynumpress/__pycache__/__init__.cpython-311.pyc
+
+exec
+/bin/zsh -lc "sed -n '1,240p' /Users/kohlbach/Library/Python/3.11/lib/python/site-packages/pynumpress/__init__.py" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+'''
+Copyright 2013 Hannes Roest
+Copyright 2017 <insert-name-here>
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+'''
+
+
+from .pynumpress import (
+    optimal_linear_fixed_point,
+    optimal_slof_fixed_point,
+    encode_linear,
+    decode_linear,
+    encode_slof,
+    decode_slof,
+    encode_pic,
+    decode_pic)
+
+from .version import version as __version__
+
+__all__ = [
+    "optimal_linear_fixed_point",
+    "optimal_slof_fixed_point",
+    "encode_linear",
+    "decode_linear",
+    "encode_slof",
+    "decode_slof",
+    "encode_pic",
+    "decode_pic"
+]
+
+exec
+/bin/zsh -lc "python3.11 -c 'import pynumpress
+print(dir(pynumpress))'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+['__all__', '__builtins__', '__cached__', '__doc__', '__file__', '__loader__', '__name__', '__package__', '__path__', '__spec__', '__version__', 'decode_linear', 'decode_pic', 'decode_slof', 'encode_linear', 'encode_pic', 'encode_slof', 'optimal_linear_fixed_point', 'optimal_slof_fixed_point', 'pynumpress', 'version']
+
+exec
+/bin/zsh -lc "python3.11 -c 'import pynumpress
+print(pynumpress.__version__)'" in /Users/kohlbach/Claude/mzPeak4TRFR
+exec
+/bin/zsh -lc "python3.11 -c 'import pynumpress, inspect
+for f in [pynumpress.optimal_linear_fixed_point,pynumpress.encode_linear,pynumpress.decode_linear]:
+    print(f.__name__, getattr(f,\"__doc__\",None))
+    try:
+        print(\"sig\", inspect.signature(f))
+    except Exception as e:
+        print(\"sigerr\", type(e).__name__, e)'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 112ms:
+ succeeded in 126ms:
+0.0.9
+
+web search: 
+web search: github ms-numpress MSNumpress.cpp optimalLinearFixedPoint encodeInt
+web search: 
+web search: https://raw.githubusercontent.com/ms-numpress/ms-numpress/master/src/main/cpp/MSNumpress.cpp
+web search: 
+web search: https://github.com/ms-numpress/ms-numpress/blob/master/src/main/cpp/MSNumpress.cpp
+web search: 
+web search: https://raw.githubusercontent.com/ms-numpress/ms-numpress/master/src/main/cpp/MSNumpress.cpp
+codex
+`pynumpress` is installed for Python 3.11, and the reference archive is present under `refs/mzPeak/small.numpress.mzpeak`. I’m using those to verify both synthetic vectors and the row-0 fixed-point claim.
+exec
+/bin/zsh -lc "python3.11 -c 'import pynumpress, struct, math
+
+def hx(b): return \" \".join(f\"{x:02X}\" for x in b)
+data=[1.0,2.0,3.0]
+print(\"ofp_123\", pynumpress.optimal_linear_fixed_point(data))
+data2=[100.0,100.5,101.0,101.5]
+fp=21367996
+enc=pynumpress.encode_linear(data2, fp)
+print(\"enc_type\", type(enc), \"len\", len(enc))
+print(\"hex\", hx(enc))
+print(\"prefix\", hx(enc[:8]), \"be_double\", struct.unpack(\">d\", enc[:8])[0])
+print(\"first_i32\", struct.unpack(\"<i\", enc[8:12])[0], struct.unpack(\"<i\", enc[12:16])[0])
+dec=pynumpress.decode_linear(enc)
+print(\"dec_type\", type(dec), \"len\", len(dec), \"dec\", list(dec))
+print(\"maxerr\", max(abs(a-b) for a,b in zip(data2, dec)))
+print(\"bound\", 0.5/fp)'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+ofp_123 1073741823.0
+enc_type <class 'numpy.ndarray'> len 17
+hex 41 74 60 CB C0 00 00 00 70 F9 5C 7F CE FF FF 7F 88
+prefix 41 74 60 CB C0 00 00 00 be_double 21367996.0
+first_i32 2136799600 2147483598
+dec_type <class 'numpy.ndarray'> len 4 dec [100.0, 100.5, 101.0, 101.5]
+maxerr 0.0
+bound 2.3399480232025503e-08
+
+codex
+The synthetic `pynumpress` check confirms the plan’s V1 and V2 prefix: `[1,2,3]` yields `1073741823.0`, and `[100,100.5,101,101.5]` at fp `21367996` starts with `41 74 60 CB C0 00 00 00` and decodes exactly. Next I’m checking row 0 from the reference archive.
+exec
+/bin/zsh -lc 'find refs/mzPeak/small.numpress.mzpeak -maxdepth 3 -type f -print' in /Users/kohlbach/Claude/mzPeak4TRFR
+exec
+/bin/zsh -lc 'file refs/mzPeak/small.numpress.mzpeak' in /Users/kohlbach/Claude/mzPeak4TRFR
+exec
+/bin/zsh -lc 'zipinfo -1 refs/mzPeak/small.numpress.mzpeak' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+refs/mzPeak/small.numpress.mzpeak: Zip archive data, at least v4.5 to extract, compression method=store
+
+ succeeded in 0ms:
+spectra_data.parquet
+spectra_peaks.parquet
+spectra_metadata.parquet
+chromatograms_metadata.parquet
+chromatograms_data.parquet
+mzpeak_index.json
+
+ succeeded in 0ms:
+refs/mzPeak/small.numpress.mzpeak
+
+codex
+The reference `.mzpeak` is a zip archive with `spectra_data.parquet` inside, so I’m reading that parquet entry directly through `pyarrow` without extracting files.
+exec
+/bin/zsh -lc "python3.11 -c 'import zipfile, pyarrow as pa, pyarrow.parquet as pq
+z=zipfile.ZipFile(\"refs/mzPeak/small.numpress.mzpeak\")
+buf=z.read(\"spectra_data.parquet\")
+t=pq.read_table(pa.BufferReader(buf))
+print(t.schema)
+print(\"rows\", t.num_rows, \"cols\", t.column_names)
+print(t.slice(0,1).to_pylist()[0])'" in /Users/kohlbach/Claude/mzPeak4TRFR
+codex
+That pyarrow schema probe produced the expected row content but left the process alive after a large print, so I’m cleaning that up and rerunning a narrower row-0 check.
+2026-06-14T20:52:13.988920Z ERROR codex_core::tools::router: error=write_stdin failed: stdin is closed for this session; rerun exec_command with tty=true to keep stdin open
+exec
+/bin/zsh -lc "pgrep -fl 'python3.11.*spectra_data|python3.11 -c'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ exited 3 in 0ms:
+sysmon request failed with error: sysmond service not found
+pgrep: Cannot get process list
+
+codex
+I’ll force the next pyarrow probe to exit after printing just the needed scalars. The previous broad `to_pylist()` dump was useful, but too noisy for this sandbox.
+exec
+/bin/zsh -lc "python3.11 -c 'import zipfile, pyarrow as pa, pyarrow.parquet as pq, struct, pynumpress, math, sys, os
+z=zipfile.ZipFile(\"refs/mzPeak/small.numpress.mzpeak\")
+buf=z.read(\"spectra_data.parquet\")
+t=pq.read_table(pa.BufferReader(buf))
+row=t.slice(0,1).to_pylist()[0][\"chunk\"]
+b=bytes(row[\"mz_numpress_linear_bytes\"])
+fp=struct.unpack(\">d\", b[:8])[0]
+dec=list(pynumpress.decode_linear(b))
+start=row[\"mz_chunk_start\"]
+end=row[\"mz_chunk_end\"]
+print(\"rows\", t.num_rows)
+print(\"encoding\", row[\"chunk_encoding\"])
+print(\"mz_values_is_none\", row[\"mz_chunk_values\"] is None)
+print(\"row0_prefix\", \" \".join(f\"{x:02X}\" for x in b[:8]))
+print(\"row0_fp\", fp)
+print(\"decoded_len\", len(dec))
+print(\"start\", start, \"dec0\", dec[0], \"dec1\", dec[1] if len(dec)>1 else None, \"bound\", 0.5/fp, \"min_start_err\", min(abs(dec[0]-start), abs((dec[1] if len(dec)>1 else dec[0])-start)))
+print(\"end\", end, \"declast\", dec[-1], \"end_err\", abs(dec[-1]-end))
+sys.stdout.flush()
+os._exit(0)'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 346ms:
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l1dcachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l2cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l3cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.optional.neon'. Detail: [errno 1] Operation not permitted
+rows 488
+encoding MS:1002312
+mz_values_is_none True
+row0_prefix 41 64 37 6C 40 00 00 00
+row0_fp 10599266.0
+decoded_len 776
+start 202.60657495520474 dec0 202.60657492698078 dec1 202.60682352910098 bound 4.7173077833880196e-08 min_start_err 2.8223951176187256e-08
+end 252.42884637801765 declast 252.42923217513365 end_err 0.0003857971159959561
+
+codex
+Row 0 confirms the fixed-point prefix exactly (`10599266.0`). One thing I’m double-checking: raw `decode_linear`’s last value is not within the anchor bound in row 0, so I’m checking whether the plan’s V3 “anchor-aligned” wording is too strong or just caller-specific.
+exec
+/bin/zsh -lc "python3.11 -c 'import zipfile, pyarrow as pa, pyarrow.parquet as pq, struct, pynumpress, sys, os
+z=zipfile.ZipFile(\"refs/mzPeak/small.numpress.mzpeak\")
+t=pq.read_table(pa.BufferReader(z.read(\"spectra_data.parquet\")))
+row=t.slice(0,1).to_pylist()[0][\"chunk\"]
+b=bytes(row[\"mz_numpress_linear_bytes\"])
+dec=list(pynumpress.decode_linear(b))
+start=row[\"mz_chunk_start\"]; end=row[\"mz_chunk_end\"]; fp=struct.unpack(\">d\", b[:8])[0]; bound=0.5/fp
+closest=min(range(len(dec)), key=lambda i: abs(dec[i]-end))
+print(\"len\", len(dec), \"fp\", fp, \"bound\", bound)
+print(\"start\", start, \"dec0\", dec[0], \"dec1\", dec[1], \"err0\", abs(dec[0]-start), \"err1\", abs(dec[1]-start))
+print(\"end\", end, \"closest_i\", closest, \"closest\", dec[closest], \"err\", abs(dec[closest]-end))
+print(\"tail\", [(len(dec)-i, dec[-i], dec[-i]-end) for i in range(1,8)])
+print(\"monotone\", all(dec[i] <= dec[i+1] for i in range(len(dec)-1)))
+sys.stdout.flush(); os._exit(0)'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 343ms:
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l1dcachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l2cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l3cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.optional.neon'. Detail: [errno 1] Operation not permitted
+len 776 fp 10599266.0 bound 4.7173077833880196e-08
+start 202.60657495520474 dec0 202.60657492698078 dec1 202.60682352910098 err0 2.8223951176187256e-08 err1 0.0002485738962434425
+end 252.42884637801765 closest_i 774 closest 252.4288463937031 err 1.5685458265579655e-08
+tail [(775, 252.42923217513365, 0.0003857971159959561), (774, 252.4288463937031, 1.5685458265579655e-08), (773, 252.42846061227257, -0.00038576574507942496), (772, 252.42807483084206, -0.0007715471755886938), (771, 252.42768904941153, -0.0011573286061263843), (770, 252.42730326798102, -0.0015431100366356532), (769, 252.42691748655048, -0.0019288914671733437)]
+monotone True
+
+codex
+The reference row has a decoded value one slot after `mz_chunk_end`; the second-to-last decoded value is the one within the Numpress bound. I’m checking the existing chunk codec semantics before deciding whether that is a new plan issue or only a reference-file artifact.
+exec
+/bin/zsh -lc "sed -n '1,260p' ThermoRawFileParser/Writer/MzPeak/MzPeakChunkCodec.cs" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+using System;
+using System.Collections.Generic;
+
+namespace ThermoRawFileParser.Writer
+{
+    // Null-aware delta encode/decode + fixed m/z-window chunker for the chunk spectra_data layout.
+    // The structure is null-aware so the decoder can read reference / externally-produced files whose
+    // values carry null gap markers ([None, absolute, delta] / [None, None]); the encode/chunk path is
+    // exercised by callers with no nulls (the writer never produces gap markers).
+    public static class MzPeakChunkCodec
+    {
+        public const double DefaultChunkSize = 50.0;
+
+        // Delta-encode a window's m/z slice. start/end are the first/last non-null m/z; values holds the
+        // consecutive deltas (length k-1 for a gapless slice) and excludes the start, which lives in start.
+        // Mirrors null_delta_encode: a value after a null is stored ABSOLUTE, a leading null is kept as a
+        // marker. The writer passes all-present slices, so this reduces to plain consecutive deltas.
+        public static void DeltaEncode(double?[] mz, out double start, out double end, out double?[] values)
+        {
+            if (mz == null || mz.Length == 0)
+                throw new ArgumentException("DeltaEncode requires a non-empty slice.", nameof(mz));
+
+            start = 0.0; end = 0.0;
+            bool sawStart = false;
+            for (int i = 0; i < mz.Length; i++)
+            {
+                if (mz[i].HasValue)
+                {
+                    if (!sawStart) { start = mz[i].Value; sawStart = true; }
+                    end = mz[i].Value;
+                }
+            }
+
+            var buffer = new List<double?>(mz.Length);
+            int idx = 0;
+            double? last = mz[idx++];
+            if (!last.HasValue) buffer.Add(null);
+            for (; idx < mz.Length; idx++)
+            {
+                var item = mz[idx];
+                if (item.HasValue)
+                {
+                    if (last.HasValue) buffer.Add(item.Value - last.Value);
+                    else buffer.Add(item.Value);
+                    last = item;
+                }
+                else
+                {
+                    buffer.Add(null);
+                    last = null;
+                }
+            }
+            values = buffer.ToArray();
+        }
+
+        // Reconstruct the m/z array from start + delta values. Mirrors null_delta_decode byte-for-byte:
+        // start is the first reconstructed m/z; cumulative add for present deltas; absolute restart after a
+        // null; nulls preserved aligned to intensity. The [None, None] case decodes to a single peak at
+        // start; a leading [None, present, ...] treats the present value as an absolute restart.
+        public static double?[] DeltaDecode(double start, double?[] values)
+        {
+            var arr = values ?? Array.Empty<double?>();
+            var buf = new List<double?>(arr.Length + 1);
+            double? last = start;
+
+            if (arr.Length == 0)
+            {
+                buf.Add(start);
+                return buf.ToArray();
+            }
+
+            if (!arr[0].HasValue)
+            {
+                if (arr.Length > 1 && !arr[1].HasValue) buf.Add(last);
+                last = null;
+            }
+            else
+            {
+                buf.Add(start);
+            }
+
+            foreach (var item in arr)
+            {
+                if (item.HasValue)
+                {
+                    if (last.HasValue) { double d = item.Value + last.Value; buf.Add(d); last = d; }
+                    else { buf.Add(item.Value); last = item; }
+                }
+                else
+                {
+                    buf.Add(null);
+                    last = null;
+                }
+            }
+            return buf.ToArray();
+        }
+
+        // Partition a sorted, non-decreasing m/z axis into [start,end) intervals each spanning <= width from
+        // the interval's own first m/z. Mirrors null_chunk_every_k: threshold advances by width, a boundary
+        // length-1 chunk is rolled into the adjacent chunk, the final residual is always emitted. An empty
+        // input yields zero intervals (no chunk row). A single-point spectrum yields one length-1 interval.
+        // Throws ArgumentException on non-monotonic (descending) input; the codec assumes ascending order.
+        public static List<(int start, int end)> Chunk(double[] mz, double width)
+        {
+            // A non-finite or non-positive width never advances the threshold and would loop forever;
+            // reject it up front so the partition loop is always guaranteed to terminate.
+            if (!(width > 0.0) || double.IsInfinity(width))
+                throw new ArgumentOutOfRangeException(nameof(width), width,
+                    "Chunk width must be a finite value greater than 0.");
+
+            var result = new List<(int, int)>();
+            if (mz == null || mz.Length == 0) return result;
+
+            for (int i = 1; i < mz.Length; i++)
+                if (mz[i] < mz[i - 1])
+                    throw new ArgumentException("Chunk requires non-decreasing m/z input.", nameof(mz));
+
+            int n = mz.Length;
+            int offset = 0;
+            double threshold = mz[0] + width;
+            for (int i = 1; i < n; i++)
+            {
+                if (mz[i] > threshold)
+                {
+                    if (i - offset != 1)
+                    {
+                        result.Add((offset, i));
+                        offset = i;
+                    }
+                    while (threshold < mz[i]) threshold += width;
+                }
+            }
+            result.Add((offset, n));
+            return result;
+        }
+    }
+}
+
+exec
+/bin/zsh -lc 'rg -n "mz_chunk_start|mz_chunk_end|DeltaEncode|DeltaDecode|chunk_end|chunk_start" ThermoRawFileParser/Writer/MzPeak ThermoRawFileParser/ThermoRawFileParserTest -S' in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+ThermoRawFileParser/Writer/MzPeak/MzPeakChunkCodec.cs:18:        public static void DeltaEncode(double?[] mz, out double start, out double end, out double?[] values)
+ThermoRawFileParser/Writer/MzPeak/MzPeakChunkCodec.cs:21:                throw new ArgumentException("DeltaEncode requires a non-empty slice.", nameof(mz));
+ThermoRawFileParser/Writer/MzPeak/MzPeakChunkCodec.cs:60:        public static double?[] DeltaDecode(double start, double?[] values)
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs:31:                MzPeakChunkCodec.DeltaEncode(slice, out var start, out _, out var values);
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs:32:                var dmz = MzPeakChunkCodec.DeltaDecode(start, values);
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs:92:            MzPeakChunkCodec.DeltaEncode(new double?[] { mz[0] }, out var start, out var end, out var values);
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs:97:            var dmz = MzPeakChunkCodec.DeltaDecode(start, values);
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs:113:                () => MzPeakChunkCodec.DeltaEncode(Array.Empty<double?>(), out _, out _, out _),
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs:114:                "DeltaEncode rejects an empty slice");
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs:154:            var dmz = MzPeakChunkCodec.DeltaDecode(start, values);
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs:172:            // The [None, None] singleton-at-boundary case: decodes to a single peak at mz_chunk_start.
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs:175:            var dmz = MzPeakChunkCodec.DeltaDecode(start, values);
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs:179:                "the single peak sits at mz_chunk_start");
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs:335:                    Is.EqualTo(new[] { "chunk_start", "chunk_end", "chunk_values", "chunk_encoding", "chunk_secondary" }));
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs:385:                    "si=t.field('spectrum_index').to_pylist(); cs=t.field('mz_chunk_start').to_pylist()\n" +
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakChunkTests.cs:453:            "si=t.field('spectrum_index').to_pylist(); cs=t.field('mz_chunk_start').to_pylist()\n" +
+ThermoRawFileParser/ThermoRawFileParserTest/MzPeakDifferentialTests.cs:115:            "    dmz = dd(c['mz_chunk_start'], c['mz_chunk_values'] if c['mz_chunk_values'] is not None else [])\n" +
+
+exec
+/bin/zsh -lc "sed -n '140,210p' .planning/phases/03-numpress-linear-mz/RESEARCH-schema.md" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+    "parameters": [{
+      "accession": null, "name": "conversion options", "unit": null,
+      "value": "--intensity-numpress-slof -c numpress:50 --chromatogram-chunked-encoding delta:50 -y -z -u small.mzML -o small.numpress.mzpeak"
+    }],
+    "software_reference": "mzpeak_prototyping_convert1"
+  }]
+}
+```
+
+**What our writer must emit in `data_processing`:** Per CONTEXT.md the writer must add a `data_processing` method step recording the numpress transform and flag that default m/z is lossy. The reference proves only a free-text note is *required for validation* (the validator does not check for a numpress CURIE in data_processing). Recommended: add a method step with a parameter carrying the numpress CURIE(s) by accession (MS:1002312 [+ MS:1002314 if Option A]) AND/OR a human-readable lossy-m/z note. This is stricter than the reference but harmless and satisfies the CONTEXT requirement. Keep our existing `version` + `cv_list` (the reference omits both — see Item 4).
+
+---
+
+## Item 3 — Fixed point / precision
+
+### Decisions
+
+- The reference uses **per-chunk optimal (auto) linear fixed point** — NOT a single fixed scale. Verified: for the first 50 chunks, the file's stored fixed point (first 8 bytes, BE double) **equals `pynumpress.optimal_linear_fixed_point(decoded)` exactly** (50/50 exact match). Across all 488 chunks there are **365 distinct fixed-point values** (min 1,080,328 · max 10,733,754 · median 2,040,620). `[VERIFIED]`
+- Resulting m/z error bound (the L2 bound our writer must meet) = the numpress quantization half-step **`0.5 / fixed_point`**:
+  - worst-case (smallest fp = 1,080,328): **4.628e-07 Th** abs.
+  - typical (median fp): **2.45e-07 Th** abs.
+  - relative: ~2.3e-09 at m/z 200, ~2.3e-10 at m/z 2000. `[VERIFIED]`
+- Numpress-linear at the optimal fixed point is **idempotent**: decode → re-encode at optimal → decode gives **0.0 drift** across all 488 chunks. Round-tripping our own numpress output will not accumulate error. `[VERIFIED]`
+
+### Concrete decode sample (spectrum 0, first 5 m/z)
+
+```
+numpress decoded : 202.606575, 202.606824, 202.607072, 202.607321, 202.607569
+chunked (delta)  : 202.606575, 202.606823, 202.607072, 202.607321, 202.607569
+```
+The per-value difference is ~1e-6 Th (within the 0.5/fp bound), consistent with lossy numpress vs lossless delta.
+
+> **L2 caveat for the verifier (not a schema fact):** the numpress and chunked reference files are **different conversions with different scan/point selections** (numpress: 488 chunks, ~217k decoded m/z values; chunked: fewer points per spectrum, only 14 spectra overlap and even those differ in count). A positional whole-file diff between the two reference files is therefore meaningless. The L2 verification for OUR writer must compare **our numpress output decoded vs our own `--lossless`/`--point` output of the SAME small.RAW** (which Phase-2 proved bit-identical to source), asserting `max |Δm/z| <= 0.5/fp_used` per chunk (≈5e-7 Th worst case). Intensity under Option A is SLOF-lossy (do NOT assert bit-exact); under Option B intensity stays bit-exact f32.
+
+### pynumpress decode artifact (hand-off note to the C# port sub-report)
+
+`pynumpress.decode_linear` (and canonical MSNumpress `decodeLinear`) can emit a **phantom extrapolated leading value** for some chunks: in 154/488 chunks `decoded[0] == mz_chunk_start`, but in the rest `decoded[1] == mz_chunk_start` and `decoded[0]` is a ~0.09-Th extrapolation seed. The true chunk data is anchored by `mz_chunk_start`/`mz_chunk_end`; a correct decoder aligns to those anchors (drop the leading phantom when `|decoded[0]-mz_chunk_start| > |decoded[1]-mz_chunk_start|`). The C# port's decode + the L2 round-trip test MUST handle this — it is the single biggest decode correctness trap. (Detailed handling is the C#-port sub-report's responsibility.)
+
+---
+
+## Item 4 — Validator L2 / numpress rules
+
+### Decisions
+
+- mzpeak-validate (profile mzpeak-0.9) has **NO numpress-specific rule, NO L2 rule, NO bytes-decodability rule, and does NOT require the transform CURIE be declared in cv_list.** `[VERIFIED]`
+- The `spectra_data` schema rule treats chunk/numpress layouts as **point columns optional** ("their decoding is a v1 TODO") so numpress is never false-failed for missing point columns. `[VERIFIED — schema/tables/spectra_data.columns.json]`
+- The array_index `buffer_format` enum **already includes `chunk_transform`**, so the numpress entries pass the array_index schema check. `[VERIFIED — schema/json/array_index.json]`
+- `cv_list_consistency` gathers CV codes **only from inflected column NAMES in `spectra_metadata`/`chromatograms_metadata`** (pattern `${CV}_${ACCESSION}_${name}`). The numpress transform CURIEs live in spectra_data **column metadata + footer**, which the cv rule does NOT scan. So MS:1002312/MS:1002314 do **not** trigger a cv_list requirement. The rule only requires the CV *codes* (MS, UO) used by metadata columns be declared. `[VERIFIED — rules/cv.rules.json]`
+- The grouped-monotonic m/z check (`p_grouped_monotonic`) reads `point.mz` / `chunk.*`; on numpress it no-ops because the decodable m/z column is absent (numpress bytes are not read). Numpress thus passes monotonicity trivially. `[VERIFIED — core.py]`
+
+### Reference validation result (run this session)
+
+`mzpeak-validate refs/mzPeak/small.numpress.mzpeak` → **FAIL (2 errors, 1 warning)** — but the **identical 2 errors appear on `small.chunked.mzpeak`** too:
+
+```
+WARNING profile_resolution   no mzpeak version declared; defaulted to latest profile (mzpeak-0.9)
+ERROR   cv_list_declared     metadata.cv_list is absent/empty but the archive uses CV codes ['MS','UO']
+ERROR   index_schema_valid   mzpeak_index.json: schema violation at metadata: 'version' is a required property
+```
+
+**Interpretation:** both errors are the reference Rust writer's own omissions (no `cv_list`, no index `version`), NOT numpress-specific. **There are ZERO numpress-specific findings.** Our TRFP writer already emits both `version` and a generated `cv_list` (Phase 1/2 validated 0/0), so it does not inherit these. *(Caveat: the system `mzpeak-validate` is the anaconda build on python 3.7; it ran successfully and is the same binary CONTEXT references.)*
+
+### What our numpress output must do to keep 0 errors
+
+1. Keep emitting `metadata.version` and a generated `cv_list` (already done — do not regress).
+2. Keep `mz_chunk_start`/`mz_chunk_end` ascending per spectrum with `sorting_rank:0` (they remain plain f64 anchors → monotonicity check still passes; numpress bytes are not decoded by the validator).
+3. Use `buffer_format: "chunk_transform"` and a valid CURIE `transform` (MS:1002312 [/MS:1002314]) on the bytes entries (in the allowed enum).
+4. cv_list need NOT contain MS:1002312/MS:1002314 to pass the validator — but registering them (the writer already calls `CollectPrefix(ChunkEncodingCurie)` for the delta CURIE) is harmless and more correct. Since `chunk_encoding` value becomes `MS:1002312`, register **MS:1002312** (and MS:1002314 under Option A) the same way Phase-2 registers MS:1003089. **Verify** the validator still passes 0/0 after adding them (version policy only warns on NEWER-than-pinned versions, not on extra codes).
+
+---
+
+
+codex
+The C++ reference source and `pynumpress` agree with the revised algorithm prose: max-value fixed point, 4-byte little-endian first two values, and canonical half-byte `encodeInt/decodeInt`. I’m doing a couple of edge probes now because Task 1 explicitly calls out empty/single/two-value behavior.
+exec
+/bin/zsh -lc "python3.11 -c 'import pynumpress, struct, math
+for data in [[], [1.0], [2.0], [1.0,2.0], [1.0,2.0,3.0]]:
+    try:
+        fp=pynumpress.optimal_linear_fixed_point(data)
+    except Exception as e:
+        fp=f\"ERR {type(e).__name__}: {e}\"
+    print(\"ofp\", data, fp)
+for data in [[], [1.0], [1.0,2.0], [1.0,2.0,3.0]]:
+    fp=1.0 if not data else pynumpress.optimal_linear_fixed_point(data)
+    try:
+        enc=pynumpress.encode_linear(data, fp)
+        dec=pynumpress.decode_linear(enc)
+        print(\"enc\", data, \"fp\", fp, \"len\", len(enc), \"hex\", \" \".join(f\"{int(x):02X}\" for x in enc), \"dec\", list(dec))
+    except Exception as e:
+        print(\"encerr\", data, type(e).__name__, e)'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+ofp [] 0.0
+ofp [1.0] 2147483647.0
+ofp [2.0] 1073741823.0
+ofp [1.0, 2.0] 1073741823.0
+ofp [1.0, 2.0, 3.0] 1073741823.0
+enc [] fp 1.0 len 8 hex 3F F0 00 00 00 00 00 00 dec []
+encerr [1.0] ValueError Corrupt input data: not enough bytes to read second value!
+enc [1.0, 2.0] fp 1073741823.0 len 16 hex 41 CF FF FF FF 80 00 00 FF FF FF 3F FE FF FF 7F dec [1.0, 2.0]
+enc [1.0, 2.0, 3.0] fp 1073741823.0 len 17 hex 41 CF FF FF FF 80 00 00 FF FF FF 3F FE FF FF 7F 80 dec [1.0, 2.0, 3.0]
+
+codex
+One discrepancy surfaced in the installed `pynumpress`: `encode_linear([1.0], fp)` emits a byte sequence that `pynumpress.decode_linear` itself rejects, while the canonical C++ reference path should be 12 bytes for one value. I’m isolating whether that is a Python wrapper bug or a plan issue.
+exec
+/bin/zsh -lc "python3.11 -c 'import pynumpress
+for data in [[1.0], [2.0]]:
+    fp=pynumpress.optimal_linear_fixed_point(data)
+    enc=pynumpress.encode_linear(data, fp)
+    print(\"data\", data, \"fp\", fp, \"len\", len(enc), \"hex\", \" \".join(f\"{int(x):02X}\" for x in enc))
+    try:
+        print(\"dec\", list(pynumpress.decode_linear(enc)))
+    except Exception as e:
+        print(\"decerr\", type(e).__name__, e)'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 0ms:
+data [1.0] fp 2147483647.0 len 12 hex 41 DF FF FF FF C0 00 00 FF FF FF 7F
+decerr ValueError Corrupt input data: not enough bytes to read second value!
+data [2.0] fp 1073741823.0 len 12 hex 41 CF FF FF FF 80 00 00 FE FF FF 7F
+decerr ValueError Corrupt input data: not enough bytes to read second value!
+
+exec
+/bin/zsh -lc "python3.11 -c 'import pynumpress, random, math
+random.seed(1)
+counts={}
+bad=[]
+for n in range(0,60):
+    for k in range(100):
+        data=[]
+        x=100.0
+        for i in range(n):
+            x += random.random()*0.01
+            data.append(x)
+        fp=pynumpress.optimal_linear_fixed_point(data) if data else 1.0
+        try:
+            enc=pynumpress.encode_linear(data, fp)
+            dec=pynumpress.decode_linear(enc)
+            delta=len(dec)-len(data)
+            counts[delta]=counts.get(delta,0)+1
+            if delta"'!=0 and len(bad)<5:
+                bad.append((n, len(enc), delta, enc[-1] if len(enc) else None, data[-1] if data else None, dec[-1] if len(dec) else None))
+        except Exception as e:
+            counts[type(e).__name__]=counts.get(type(e).__name__,0)+1
+            if len(bad)<5: bad.append((n, "ERR", type(e).__name__, str(e)))
+print("counts", counts)
+print("bad", bad)'"'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 418ms:
+counts {0: 5900, 'ValueError': 100}
+bad [(1, 'ERR', 'ValueError', 'Corrupt input data: not enough bytes to read second value!'), (1, 'ERR', 'ValueError', 'Corrupt input data: not enough bytes to read second value!'), (1, 'ERR', 'ValueError', 'Corrupt input data: not enough bytes to read second value!'), (1, 'ERR', 'ValueError', 'Corrupt input data: not enough bytes to read second value!'), (1, 'ERR', 'ValueError', 'Corrupt input data: not enough bytes to read second value!')]
+
+exec
+/bin/zsh -lc "python3.11 -c 'import zipfile, pyarrow as pa, pyarrow.parquet as pq, struct, pynumpress, sys, os
+z=zipfile.ZipFile(\"refs/mzPeak/small.numpress.mzpeak\")
+t=pq.read_table(pa.BufferReader(z.read(\"spectra_data.parquet\")))
+row=t.slice(0,1).to_pylist()[0][\"chunk\"]
+b=bytes(row[\"mz_numpress_linear_bytes\"])
+dec=list(pynumpress.decode_linear(b))
+print(struct.unpack(\">d\", b[:8])[0], pynumpress.optimal_linear_fixed_point(dec), pynumpress.optimal_linear_fixed_point(dec[:-1]))
+sys.stdout.flush(); os._exit(0)'" in /Users/kohlbach/Claude/mzPeak4TRFR
+ succeeded in 450ms:
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l1dcachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l2cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.l3cachesize'. Detail: [errno 1] Operation not permitted
+/Users/runner/work/crossbow/crossbow/arrow/cpp/src/arrow/util/cpu_info.cc:242: IOError: sysctlbyname failed for 'hw.optional.neon'. Detail: [errno 1] Operation not permitted
+10599266.0 10599266.0 10599266.0
+
+codex
+The earlier broad pyarrow command is still reported as running by the tool even though stdin is closed and later narrow probes completed normally. I’m attempting a minimal cleanup check; if the sandbox blocks process inspection, I’ll avoid opening any more long-lived sessions.
+web search: 
+web search: 'floor'
+web search: 
+web search: 'floor'
+web search: 
+web search: https://github.com/ms-numpress/ms-numpress/blob/master/src/main/cpp/MSNumpress.cpp#L147-L240
+web search: 
+web search: "double optimalLinearFixedPoint" "0x7FFFFFFF" "MSNumpress.cpp"
+codex
+Re-review result: N1-N3 are resolved.
+
+- N1: RESOLVED. Task 1 now explicitly rejects the bad prose and requires canonical source-port behavior: max-value `optimalLinearFixedPoint`, 4-byte LE first values, and canonical half-byte `encodeInt/decodeInt` at [03-01-PLAN.md:145](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:145), [03-01-PLAN.md:152](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:152), [03-01-PLAN.md:156](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:156), [03-01-PLAN.md:162](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:162). Checked against official ms-numpress C++ source and `pynumpress`.
+- N2: RESOLVED. Numpress mode now mandates `MzPeakParquet.NullList`, explicitly not `EmptyList`, and Task 4 tests `null_count == row count` with zero present/empty lists at [03-01-PLAN.md:225](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:225) and [03-01-PLAN.md:302](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:302).
+- N3: RESOLVED. The decode helper is guarded for short chunks at [03-01-PLAN.md:235](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:235), and Task 4 now requires chunk count, finite fp, per-chunk length parity, total count parity, start/end anchors, and max error at [03-01-PLAN.md:286](/Users/kohlbach/Claude/mzPeak4TRFR/.planning/phases/03-numpress-linear-mz/03-01-PLAN.md:286).
+
+Vector checks with `python3.11` + `pynumpress 0.0.9`:
+- `optimal_linear_fixed_point([1,2,3]) == 1073741823.0`, so plan value is correct.
+- V2 bytes for `[100.0,100.5,101.0,101.5]`, `fp=21367996`: `41 74 60 CB C0 00 00 00 70 F9 5C 7F CE FF FF 7F 88`; prefix matches the plan and decode is exact.
+- Reference row 0 prefix: `41 64 37 6C 40 00 00 00` -> `10599266.0`; `chunk_encoding == MS:1002312`; `mz_chunk_values is None`; start-anchor error `2.82e-08 <= 4.72e-08`.
+
+NEW issues:
+- Minor test-oracle caveat: `pynumpress.decode_linear` rejects 12-byte single-value streams in this install, despite canonical source behavior being `dataSize==12 -> 1 value`. Do not use `pynumpress` as the oracle for the single-value edge test.
+- Minor plan hardening: paste the full V2 byte vector above into the plan so “known reference vector” cannot become circular via `pynumpress.encode_linear`.
+
+VERDICT: SHIP-WITH-FIXES
+tokens used
+99.424
