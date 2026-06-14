@@ -95,6 +95,23 @@ namespace ThermoRawFileParser.Writer
             return buf.ToArray();
         }
 
+        // Decode a numpress-linear m/z chunk and align it to the chunk's first/last anchors. The
+        // canonical numpress-linear decode can emit a phantom extrapolated value at the leading
+        // and/or trailing edge; the true chunk is bounded by start/end, so a leading value farther
+        // from start than its neighbour (and likewise a trailing value vs end) is dropped. Short
+        // chunks (< 2 decoded values) have no phantom to drop.
+        public static double[] NumpressDecode(double start, double end, byte[] numpressBytes)
+        {
+            var dec = MSNumpress.DecodeLinear(numpressBytes);
+            int lo = 0, hi = dec.Length;
+            if (hi - lo >= 2 && Math.Abs(dec[lo] - start) > Math.Abs(dec[lo + 1] - start)) lo++;
+            if (hi - lo >= 2 && Math.Abs(dec[hi - 1] - end) > Math.Abs(dec[hi - 2] - end)) hi--;
+
+            var outp = new double[hi - lo];
+            Array.Copy(dec, lo, outp, 0, hi - lo);
+            return outp;
+        }
+
         // Partition a sorted, non-decreasing m/z axis into [start,end) intervals each spanning <= width from
         // the interval's own first m/z. Mirrors null_chunk_every_k: threshold advances by width, a boundary
         // length-1 chunk is rolled into the adjacent chunk, the final residual is always emitted. An empty

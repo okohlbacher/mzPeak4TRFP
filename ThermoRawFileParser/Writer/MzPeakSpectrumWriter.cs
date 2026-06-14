@@ -61,6 +61,10 @@ namespace ThermoRawFileParser.Writer
         private const string MzTransformCurie = "MS:1003901";
         private const string IntensityTransformCurie = "MS:1003902";
 
+        // Numpress-linear chunk_encoding + m/z bytes transform (verified against the reference
+        // numpress archive). The reference dump proves numpress = MS:1002312; MS:1003089 is delta.
+        private const string NumpressLinearCurie = "MS:1002312";
+
         private const string ChunkedSpectrumArrayIndex =
             "{\"prefix\":\"chunk\",\"entries\":[" +
             "{\"context\":\"spectrum\",\"path\":\"chunk.mz_chunk_start\",\"data_type\":\"MS:1000523\",\"array_type\":\"MS:1000514\"," +
@@ -78,6 +82,31 @@ namespace ThermoRawFileParser.Writer
             "{\"context\":\"spectrum\",\"path\":\"chunk.intensity\",\"data_type\":\"MS:1000521\",\"array_type\":\"MS:1000515\"," +
             "\"array_name\":\"intensity array\",\"unit\":\"MS:1000131\",\"buffer_format\":\"chunk_secondary\",\"transform\":\"MS:1003902\"," +
             "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":null}" +
+            "]}";
+
+        // Option B (m/z-only numpress): the four m/z anchor entries (MS:1003901) and the plain
+        // intensity entry (chunk_secondary, MS:1003902) are unchanged; the m/z values live in
+        // mz_numpress_linear_bytes (chunk_transform, MS:1002312, sorting_rank 0). 6 entries.
+        private const string NumpressSpectrumArrayIndex =
+            "{\"prefix\":\"chunk\",\"entries\":[" +
+            "{\"context\":\"spectrum\",\"path\":\"chunk.mz_chunk_start\",\"data_type\":\"MS:1000523\",\"array_type\":\"MS:1000514\"," +
+            "\"array_name\":\"m/z array\",\"unit\":\"MS:1000040\",\"buffer_format\":\"chunk_start\",\"transform\":\"MS:1003901\"," +
+            "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":0}," +
+            "{\"context\":\"spectrum\",\"path\":\"chunk.mz_chunk_end\",\"data_type\":\"MS:1000523\",\"array_type\":\"MS:1000514\"," +
+            "\"array_name\":\"m/z array\",\"unit\":\"MS:1000040\",\"buffer_format\":\"chunk_end\",\"transform\":\"MS:1003901\"," +
+            "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":0}," +
+            "{\"context\":\"spectrum\",\"path\":\"chunk.mz_chunk_values\",\"data_type\":\"MS:1000523\",\"array_type\":\"MS:1000514\"," +
+            "\"array_name\":\"m/z array\",\"unit\":\"MS:1000040\",\"buffer_format\":\"chunk_values\",\"transform\":\"MS:1003901\"," +
+            "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":0}," +
+            "{\"context\":\"spectrum\",\"path\":\"chunk.chunk_encoding\",\"data_type\":\"MS:1000523\",\"array_type\":\"MS:1000514\"," +
+            "\"array_name\":\"m/z array\",\"unit\":\"MS:1000040\",\"buffer_format\":\"chunk_encoding\",\"transform\":\"MS:1003901\"," +
+            "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":0}," +
+            "{\"context\":\"spectrum\",\"path\":\"chunk.intensity\",\"data_type\":\"MS:1000521\",\"array_type\":\"MS:1000515\"," +
+            "\"array_name\":\"intensity array\",\"unit\":\"MS:1000131\",\"buffer_format\":\"chunk_secondary\",\"transform\":\"MS:1003902\"," +
+            "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":null}," +
+            "{\"context\":\"spectrum\",\"path\":\"chunk.mz_numpress_linear_bytes\",\"data_type\":\"MS:1000523\",\"array_type\":\"MS:1000514\"," +
+            "\"array_name\":\"m/z array\",\"unit\":\"MS:1000040\",\"buffer_format\":\"chunk_transform\",\"transform\":\"MS:1002312\"," +
+            "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":0}" +
             "]}";
 
         private const string ChromatogramArrayIndex =
@@ -206,7 +235,7 @@ namespace ThermoRawFileParser.Writer
             {
                 dataFacet = ParseInput.MzPeakPointLayout
                     ? (ISpectraDataFacet)new PointFacetStream(Cap)
-                    : new ChunkFacetStream(Cap, ParseInput.MzPeakChunkSize);
+                    : new ChunkFacetStream(Cap, ParseInput.MzPeakChunkSize, ParseInput.MzPeakNumpress);
                 peaksFacet = new PointFacetStream(Cap);
                 chromFacet = new ChromDataFacetStream(Cap);
 
@@ -265,16 +294,17 @@ namespace ThermoRawFileParser.Writer
                 // metadata facet so the generated cv_list — finalized inside the metadata facet — covers
                 // every prefix the archive uses.
                 RegisterChromDataPrefixes();
+                var numpress = !ParseInput.MzPeakPointLayout && ParseInput.MzPeakNumpress;
                 if (!ParseInput.MzPeakPointLayout)
                 {
-                    CollectPrefix(ChunkEncodingCurie);
+                    CollectPrefix(numpress ? NumpressLinearCurie : ChunkEncodingCurie);
                     CollectPrefix(MzTransformCurie);
                     CollectPrefix(IntensityTransformCurie);
                 }
 
                 var dataMeta = ParseInput.MzPeakPointLayout
                     ? PointFooter((int)ordinal, dataFacet.PointCount)
-                    : ChunkFooter((int)ordinal, dataFacet.PointCount);
+                    : ChunkFooter((int)ordinal, dataFacet.PointCount, numpress);
                 var peaksMeta = PointFooter(peakSpectra.Count, peaksFacet.PointCount);
                 var chromMeta = new Dictionary<string, string>
                 {
@@ -434,12 +464,12 @@ namespace ThermoRawFileParser.Writer
 
         // Footer KV for the chunked spectra_data facet: same count keys as the point facet, with the chunk
         // spectrum_array_index instead of the point one.
-        private static Dictionary<string, string> ChunkFooter(int spectrumCount, long pointCount) =>
+        private static Dictionary<string, string> ChunkFooter(int spectrumCount, long pointCount, bool numpress) =>
             new Dictionary<string, string>
             {
                 ["spectrum_count"] = spectrumCount.ToString(),
                 ["spectrum_data_point_count"] = pointCount.ToString(),
-                ["spectrum_array_index"] = ChunkedSpectrumArrayIndex
+                ["spectrum_array_index"] = numpress ? NumpressSpectrumArrayIndex : ChunkedSpectrumArrayIndex
             };
 
         // Returns the (mz,intensity) pairs in non-decreasing m/z order with the full multiset
@@ -785,14 +815,31 @@ namespace ThermoRawFileParser.Writer
 
         // The 6-field chunk struct of the reference spectra_data chunk layout. mz_chunk_values / intensity
         // are nullable-item lists (the writer emits no nulls; the type stays null-aware for read parity).
-        private static StructField ChunkStructField() =>
-            new StructField("chunk",
+        private static StructField ChunkStructField() => ChunkStructField(false);
+
+        // The chunk struct. In delta mode it is the 6-field reference struct. In numpress mode a 7th
+        // field (mz_numpress_linear_bytes, large_list<uint8 not null>) carries the encoded m/z while
+        // mz_chunk_values is emitted NULL on every row.
+        private static StructField ChunkStructField(bool numpress)
+        {
+            if (!numpress)
+                return new StructField("chunk",
+                    new DataField<ulong>("spectrum_index"),
+                    new DataField<double>("mz_chunk_start"),
+                    new DataField<double>("mz_chunk_end"),
+                    new ListField("mz_chunk_values", new DataField<double>("item", true)),
+                    new DataField<string>("chunk_encoding"),
+                    new ListField("intensity", new DataField<float>("item", true)));
+
+            return new StructField("chunk",
                 new DataField<ulong>("spectrum_index"),
                 new DataField<double>("mz_chunk_start"),
                 new DataField<double>("mz_chunk_end"),
                 new ListField("mz_chunk_values", new DataField<double>("item", true)),
                 new DataField<string>("chunk_encoding"),
-                new ListField("intensity", new DataField<float>("item", true)));
+                new ListField("intensity", new DataField<float>("item", true)),
+                new ListField("mz_numpress_linear_bytes", new DataField<byte>("item")));
+        }
 
         private static StructField ChromDataStructField() =>
             new StructField("point",
@@ -916,9 +963,11 @@ namespace ThermoRawFileParser.Writer
         {
             public string TempPath { get; }
             private readonly ParquetSchema _schema;
-            private readonly DataField _idx, _start, _end, _enc, _mzItem, _intItem;
+            private readonly DataField _idx, _start, _end, _enc, _mzItem, _intItem, _npkItem;
+            private readonly ListField _mzList;
             private readonly int _cap;
             private readonly double _chunkSize;
+            private readonly bool _numpress;
             private FileStream _sink;
             private MzPeakParquet.Handle _handle;
 
@@ -930,21 +979,26 @@ namespace ThermoRawFileParser.Writer
             private readonly List<double> _mzVals = new List<double>();
             private readonly List<MzPeakParquet.LeafRow> _intRows = new List<MzPeakParquet.LeafRow>();
             private readonly List<float> _intVals = new List<float>();
+            private readonly List<MzPeakParquet.LeafRow> _npkRows = new List<MzPeakParquet.LeafRow>();
+            private readonly List<byte> _npkVals = new List<byte>();
 
             public long PointCount { get; private set; }
 
-            public ChunkFacetStream(int cap, double chunkSize)
+            public ChunkFacetStream(int cap, double chunkSize, bool numpress)
             {
                 _cap = cap;
                 _chunkSize = chunkSize;
+                _numpress = numpress;
                 TempPath = Path.GetTempFileName();
-                _schema = new ParquetSchema(ChunkStructField());
+                _schema = new ParquetSchema(ChunkStructField(numpress));
                 _idx = Leaf(_schema, "chunk/spectrum_index");
                 _start = Leaf(_schema, "chunk/mz_chunk_start");
                 _end = Leaf(_schema, "chunk/mz_chunk_end");
                 _enc = Leaf(_schema, "chunk/chunk_encoding");
                 _mzItem = Leaf(_schema, "chunk/mz_chunk_values/list/item");
+                _mzList = (ListField)FindField(_schema, "chunk/mz_chunk_values");
                 _intItem = Leaf(_schema, "chunk/intensity/list/item");
+                _npkItem = numpress ? Leaf(_schema, "chunk/mz_numpress_linear_bytes/list/item") : null;
                 try
                 {
                     _sink = new FileStream(TempPath, FileMode.Create, FileAccess.Write);
@@ -964,32 +1018,59 @@ namespace ThermoRawFileParser.Writer
             {
                 foreach (var (s, e) in MzPeakChunkCodec.Chunk(mz, _chunkSize))
                 {
-                    var slice = new double?[e - s];
-                    for (int i = s; i < e; i++) slice[i - s] = mz[i];
-                    MzPeakChunkCodec.DeltaEncode(slice, out var start, out var end, out var values);
+                    int k = e - s;
 
-                    _bIdx.Add(ordinal);
-                    _bStart.Add(start);
-                    _bEnd.Add(end);
-                    _bEnc.Add(ChunkEncodingCurie);
-
-                    if (values.Length == 0)
+                    if (_numpress)
                     {
-                        _mzRows.Add(MzPeakParquet.EmptyList((ListField)FindField(_schema, "chunk/mz_chunk_values")));
+                        var win = new double[k];
+                        for (int i = 0; i < k; i++) win[i] = mz[i + s];
+
+                        _bIdx.Add(ordinal);
+                        _bStart.Add(win[0]);
+                        _bEnd.Add(win[k - 1]);
+                        _bEnc.Add(NumpressLinearCurie);
+
+                        // mz_chunk_values is NULL on every numpress row (parent present, list null).
+                        _mzRows.Add(MzPeakParquet.NullList(_mzList));
+
+                        var bytes = MSNumpress.EncodeLinear(win);
+                        var nLevels = new int[bytes.Length];
+                        var nHas = new bool[bytes.Length];
+                        for (int i = 0; i < bytes.Length; i++)
+                        {
+                            nLevels[i] = _npkItem.MaxDefinitionLevel; nHas[i] = true;
+                            _npkVals.Add(bytes[i]);
+                        }
+                        _npkRows.Add(MzPeakParquet.ListOf(nLevels, nHas));
                     }
                     else
                     {
-                        var levels = new int[values.Length];
-                        var has = new bool[values.Length];
-                        for (int i = 0; i < values.Length; i++)
+                        var slice = new double?[k];
+                        for (int i = s; i < e; i++) slice[i - s] = mz[i];
+                        MzPeakChunkCodec.DeltaEncode(slice, out var start, out var end, out var values);
+
+                        _bIdx.Add(ordinal);
+                        _bStart.Add(start);
+                        _bEnd.Add(end);
+                        _bEnc.Add(ChunkEncodingCurie);
+
+                        if (values.Length == 0)
                         {
-                            levels[i] = _mzItem.MaxDefinitionLevel; has[i] = true;
-                            _mzVals.Add(values[i].Value);
+                            _mzRows.Add(MzPeakParquet.EmptyList(_mzList));
                         }
-                        _mzRows.Add(MzPeakParquet.ListOf(levels, has));
+                        else
+                        {
+                            var levels = new int[values.Length];
+                            var has = new bool[values.Length];
+                            for (int i = 0; i < values.Length; i++)
+                            {
+                                levels[i] = _mzItem.MaxDefinitionLevel; has[i] = true;
+                                _mzVals.Add(values[i].Value);
+                            }
+                            _mzRows.Add(MzPeakParquet.ListOf(levels, has));
+                        }
                     }
 
-                    int k = e - s;
                     var iLevels = new int[k];
                     var iHas = new bool[k];
                     for (int i = 0; i < k; i++)
@@ -1024,10 +1105,16 @@ namespace ThermoRawFileParser.Writer
                     [_mzItem] = (_mzVals.ToArray(), mzDef, mzRep),
                     [_intItem] = (_intVals.ToArray(), intDef, intRep)
                 };
+                if (_numpress)
+                {
+                    var (npkDef, npkRep) = MzPeakParquet.NestedLevels(_npkItem, _npkRows);
+                    cols[_npkItem] = (_npkVals.ToArray(), npkDef, npkRep);
+                }
                 _handle.WriteRowGroupAsync(_schema, cols).GetAwaiter().GetResult();
 
                 _bIdx.Clear(); _bStart.Clear(); _bEnd.Clear(); _bEnc.Clear();
                 _mzRows.Clear(); _mzVals.Clear(); _intRows.Clear(); _intVals.Clear();
+                _npkRows.Clear(); _npkVals.Clear();
             }
 
             public void Close(IReadOnlyDictionary<string, string> finalMetadata)
@@ -1703,26 +1790,42 @@ namespace ThermoRawFileParser.Writer
 
         private JArray BuildDataProcessingList()
         {
+            var methods = new JArray
+            {
+                new JObject
+                {
+                    ["order"] = 0,
+                    ["software_reference"] = "ThermoRawFileParser",
+                    ["parameters"] = new JArray { CvParam("MS:1000544", "Conversion to mzML", null) }
+                },
+                new JObject
+                {
+                    ["order"] = 1,
+                    ["software_reference"] = "ThermoRawFileParser",
+                    ["parameters"] = new JArray { JParam("intensity narrowing", null, "f64 to f32", null) }
+                }
+            };
+
+            if (!ParseInput.MzPeakPointLayout && ParseInput.MzPeakNumpress)
+            {
+                methods.Add(new JObject
+                {
+                    ["order"] = 2,
+                    ["software_reference"] = "ThermoRawFileParser",
+                    ["parameters"] = new JArray
+                    {
+                        CvParam(NumpressLinearCurie, "MS-Numpress linear prediction compression", null),
+                        JParam("m/z encoding", null, "lossy Numpress-linear (bounded ~5e-7 Th); intensity lossless f32", null)
+                    }
+                });
+            }
+
             return new JArray
             {
                 new JObject
                 {
                     ["id"] = "trfp_conversion",
-                    ["methods"] = new JArray
-                    {
-                        new JObject
-                        {
-                            ["order"] = 0,
-                            ["software_reference"] = "ThermoRawFileParser",
-                            ["parameters"] = new JArray { CvParam("MS:1000544", "Conversion to mzML", null) }
-                        },
-                        new JObject
-                        {
-                            ["order"] = 1,
-                            ["software_reference"] = "ThermoRawFileParser",
-                            ["parameters"] = new JArray { JParam("intensity narrowing", null, "f64 to f32", null) }
-                        }
-                    }
+                    ["methods"] = methods
                 }
             };
         }
