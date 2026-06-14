@@ -521,5 +521,158 @@ print(json.dumps(out))
                 Assert.That(col.Data, Is.EqualTo(new ulong[] { 0 }));
             }
         }
+
+        private static ParquetSchema PointSchema()
+        {
+            var point = new StructField("point",
+                new DataField<ulong>("spectrum_index"),
+                new DataField<double>("mz"),
+                new DataField<float>("intensity"));
+            return new ParquetSchema(point);
+        }
+
+        private static Dictionary<DataField, (Array, int[], int[])> PointSlice(ParquetSchema schema,
+            ulong[] index, double[] mz, float[] intensity)
+        {
+            return new Dictionary<DataField, (Array, int[], int[])>
+            {
+                [Leaf(schema, "point/spectrum_index")] = (index, null, null),
+                [Leaf(schema, "point/mz")] = (mz, null, null),
+                [Leaf(schema, "point/intensity")] = (intensity, null, null)
+            };
+        }
+
+        [Test]
+        public void MultiRowGroupRoundTrip_EqualsSingleRowGroup()
+        {
+            var schema = PointSchema();
+            var idx = new ulong[] { 0, 0, 1, 1, 2, 2 };
+            var mz = new[] { 100.0, 200.0, 110.0, 210.0, 120.0, 220.0 };
+            var inten = new[] { 1f, 2f, 3f, 4f, 5f, 6f };
+
+            var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".parquet");
+            try
+            {
+                using (var fs = File.Create(path))
+                {
+                    var handle = MzPeakParquet.OpenAsync(fs, schema, null).GetAwaiter().GetResult();
+                    handle.WriteRowGroupAsync(schema, PointSlice(schema,
+                        idx.Take(3).ToArray(), mz.Take(3).ToArray(), inten.Take(3).ToArray()))
+                        .GetAwaiter().GetResult();
+                    handle.WriteRowGroupAsync(schema, PointSlice(schema,
+                        idx.Skip(3).ToArray(), mz.Skip(3).ToArray(), inten.Skip(3).ToArray()))
+                        .GetAwaiter().GetResult();
+                    handle.CloseAsync(null).GetAwaiter().GetResult();
+                }
+
+                var single = new MemoryStream();
+                MzPeakParquet.WriteAsync(single, schema, null,
+                    PointSlice(schema, idx, mz, inten)).GetAwaiter().GetResult();
+
+                ulong[] gIdx; double[] gMz; float[] gInt;
+                int rowGroupCount;
+                using (var fs = File.OpenRead(path))
+                using (var reader = ParquetReader.CreateAsync(fs).Result)
+                {
+                    rowGroupCount = reader.RowGroupCount;
+                    var ai = new List<ulong>(); var am = new List<double>(); var an = new List<float>();
+                    for (int g = 0; g < reader.RowGroupCount; g++)
+                    {
+                        var rg = reader.OpenRowGroupReader(g);
+                        ai.AddRange(rg.ReadColumnAsync(Leaf(schema, "point/spectrum_index")).Result.Data.Cast<ulong>());
+                        am.AddRange(rg.ReadColumnAsync(Leaf(schema, "point/mz")).Result.Data.Cast<double>());
+                        an.AddRange(rg.ReadColumnAsync(Leaf(schema, "point/intensity")).Result.Data.Cast<float>());
+                    }
+                    gIdx = ai.ToArray(); gMz = am.ToArray(); gInt = an.ToArray();
+                }
+
+                Assert.That(rowGroupCount, Is.GreaterThan(1), "multi-row-group output must have >1 row group");
+
+                single.Position = 0;
+                using (var reader = ParquetReader.CreateAsync(single).Result)
+                {
+                    var rg = reader.OpenRowGroupReader(0);
+                    var sIdx = rg.ReadColumnAsync(Leaf(schema, "point/spectrum_index")).Result.Data.Cast<ulong>().ToArray();
+                    var sMz = rg.ReadColumnAsync(Leaf(schema, "point/mz")).Result.Data.Cast<double>().ToArray();
+                    var sInt = rg.ReadColumnAsync(Leaf(schema, "point/intensity")).Result.Data.Cast<float>().ToArray();
+                    Assert.That(gIdx, Is.EqualTo(sIdx));
+                    Assert.That(gMz, Is.EqualTo(sMz));
+                    Assert.That(gInt, Is.EqualTo(sInt));
+                }
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void FinalMetadataSetAfterRowGroups_LandsInFooter()
+        {
+            var schema = PointSchema();
+            var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".parquet");
+            try
+            {
+                using (var fs = File.Create(path))
+                {
+                    var handle = MzPeakParquet.OpenAsync(fs, schema, null).GetAwaiter().GetResult();
+                    handle.WriteRowGroupAsync(schema, PointSlice(schema,
+                        new ulong[] { 0 }, new[] { 1.0 }, new[] { 1f })).GetAwaiter().GetResult();
+                    handle.WriteRowGroupAsync(schema, PointSlice(schema,
+                        new ulong[] { 1 }, new[] { 2.0 }, new[] { 2f })).GetAwaiter().GetResult();
+                    var final = new Dictionary<string, string>
+                    {
+                        ["spectrum_count"] = "2",
+                        ["spectrum_data_point_count"] = "2",
+                        ["chromatogram_tic_source"] = "device"
+                    };
+                    handle.CloseAsync(final).GetAwaiter().GetResult();
+                }
+
+                using (var fs = File.OpenRead(path))
+                using (var reader = ParquetReader.CreateAsync(fs).Result)
+                {
+                    var kv = reader.CustomMetadata;
+                    Assert.That(kv["spectrum_count"], Is.EqualTo("2"));
+                    Assert.That(kv["spectrum_data_point_count"], Is.EqualTo("2"));
+                    Assert.That(kv["chromatogram_tic_source"], Is.EqualTo("device"));
+                }
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        [Test]
+        public void NonSeekableSinkRejected()
+        {
+            var schema = PointSchema();
+            using (var nonSeekable = new NonSeekableStream())
+            {
+                Assert.That(() => MzPeakParquet.OpenAsync(nonSeekable, schema, null).GetAwaiter().GetResult(),
+                    Throws.ArgumentException);
+            }
+
+            var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".parquet");
+            try
+            {
+                using (var fs = File.Create(path))
+                {
+                    var handle = MzPeakParquet.OpenAsync(fs, schema, null).GetAwaiter().GetResult();
+                    Assert.That(handle, Is.Not.Null, "a seekable FileStream is accepted");
+                    handle.CloseAsync(null).GetAwaiter().GetResult();
+                }
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
+        private sealed class NonSeekableStream : MemoryStream
+        {
+            public override bool CanSeek => false;
+        }
     }
 }

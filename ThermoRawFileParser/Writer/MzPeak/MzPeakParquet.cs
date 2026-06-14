@@ -173,5 +173,56 @@ namespace ThermoRawFileParser.Writer
                 }
             }
         }
+
+        // Multi-row-group streaming handle: one ParquetWriter over a seekable sink, N row groups, then a
+        // final CustomMetadata assignment before dispose. The footer KV (spectrum_count / point counts /
+        // chromatogram_tic_source) is only known at finalize, so CloseAsync sets it after the last row
+        // group. The sink MUST be seekable: Parquet.Net silently buffers a non-seekable stream in RAM.
+        public static async Task<Handle> OpenAsync(Stream seekableSink, ParquetSchema schema,
+            IReadOnlyDictionary<string, string> customMetadata = null)
+        {
+            if (seekableSink == null) throw new ArgumentNullException(nameof(seekableSink));
+            if (!seekableSink.CanSeek)
+                throw new ArgumentException("Parquet sink must be seekable (use a temp FileStream); a " +
+                    "non-seekable stream is silently buffered in memory.", nameof(seekableSink));
+
+            var writer = await ParquetWriter.CreateAsync(schema, seekableSink).ConfigureAwait(false);
+            writer.CompressionMethod = CompressionMethod.Zstd;
+            if (customMetadata != null) writer.CustomMetadata = customMetadata;
+            return new Handle(writer);
+        }
+
+        public sealed class Handle : IDisposable
+        {
+            private readonly ParquetWriter _writer;
+
+            internal Handle(ParquetWriter writer) => _writer = writer;
+
+            public async Task WriteRowGroupAsync(ParquetSchema schema,
+                IDictionary<DataField, (Array defined, int[] defLevels, int[] repLevels)> columns)
+            {
+                using (var rg = _writer.CreateRowGroup())
+                {
+                    foreach (var field in schema.GetDataFields())
+                    {
+                        var triple = columns[field];
+                        await rg.WriteColumnAsync(Column(field, triple.defined, triple.defLevels, triple.repLevels))
+                            .ConfigureAwait(false);
+                    }
+                }
+            }
+
+            // Assign the final footer KV (overwriting any open-time value), then dispose so the footer is
+            // flushed with the final metadata.
+            public Task CloseAsync(IReadOnlyDictionary<string, string> finalMetadata = null)
+            {
+                if (finalMetadata != null) _writer.CustomMetadata = finalMetadata;
+                _writer.Dispose();
+                return Task.CompletedTask;
+            }
+
+            // Disposing without Close still flushes the footer (no leak); the metadata-bearing path is Close.
+            public void Dispose() => _writer.Dispose();
+        }
     }
 }
