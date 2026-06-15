@@ -45,10 +45,10 @@ RAW files and is robust to imperfect scans — without regressing v1 conformance
 
 ### Null-marking / zero-run stripping (profile data)
 
-- [ ] **ZRS-01**: Zero-run stripping — interior runs of zero-intensity profile points removed (flanking zeros kept); peak apex/centroid unaffected
-- [ ] **ZRS-02**: Null-marking — flanking zeros replaced with null m/z+intensity; per-spectrum δmz model (β0+β1·mz+β2·mz², weighted least squares) stored in `spectrum.mz_delta_model` for reconstruction
-- [ ] **ZRS-03**: Flag-controlled; reconstruction verified near-lossless (peak shape preserved within tolerance); only applied to profile spectra
-- [ ] **ZRS-04**: Centroid facets (`spectra_peaks`) untouched by stripping/marking
+- [~] **ZRS-01** (DEFERRED → BL-02): Zero-run stripping — interior runs of zero-intensity profile points removed (flanking zeros kept); peak apex/centroid unaffected
+- [~] **ZRS-02** (DEFERRED → BL-02): Null-marking — flanking zeros replaced with null m/z+intensity; per-spectrum δmz model (β0+β1·mz+β2·mz², weighted least squares) stored in `spectrum.mz_delta_model` for reconstruction
+- [~] **ZRS-03** (DEFERRED → BL-02): Flag-controlled; reconstruction verified near-lossless (peak shape preserved within tolerance); only applied to profile spectra
+- [~] **ZRS-04** (DEFERRED → BL-02): Centroid facets (`spectra_peaks`) untouched by stripping/marking
 
 ### Ion-mobility values
 
