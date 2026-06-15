@@ -78,8 +78,10 @@ namespace ThermoRawFileParser.Writer
             MzPeakColumns.AddNullableScalar(cols, schema, "scan/" + Cv(MzPeakCv.IonInjectionTime, "ion_injection_time", MzPeakCv.MillisecondUnit),
                 records.Select(r => r.IonInjectionTime).ToList());
             MzPeakColumns.AddNullableScalar(cols, schema, "scan/ion_mobility_value",
-                records.Select(_ => (double?)null).ToList());
-            MzPeakColumns.AddNullLeafScalar(cols, schema, "scan/ion_mobility_type", n);
+                records.Select(r => r.IonMobilityValue).ToList());
+            MzPeakColumns.AddNullableString(cols, schema, "scan/ion_mobility_type",
+                records.Select(r => r.IonMobilityType).ToList());
+            foreach (var r in records) CollectPrefix(r.IonMobilityType);
             MzPeakColumns.AddScalar(cols, schema, "scan/instrument_configuration_ref",
                 records.Select(r => r.InstrumentConfigRef).ToArray(), presentAll);
             MzPeakColumns.AddNullLeafScalar(cols, schema, "scan/spectrum_reference", n);

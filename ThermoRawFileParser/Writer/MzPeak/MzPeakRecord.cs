@@ -39,6 +39,8 @@ namespace ThermoRawFileParser.Writer
         public uint? PresetScanConfiguration;
         public string FilterString;
         public float? IonInjectionTime;
+        public double? IonMobilityValue;
+        public string IonMobilityType;
         public uint InstrumentConfigRef;
         public float WindowLower;
         public float WindowUpper;

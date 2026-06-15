@@ -31,6 +31,7 @@ namespace ThermoRawFileParser.Writer
         public const string IonInjectionTime = "MS:1000927";
         public const string ScanWindowLowerLimit = "MS:1000501";
         public const string ScanWindowUpperLimit = "MS:1000500";
+        public const string FaimsCompensationVoltage = "MS:1001581";
 
         // Precursor / selected-ion accessions.
         public const string IsolationWindowTargetMz = "MS:1000827";

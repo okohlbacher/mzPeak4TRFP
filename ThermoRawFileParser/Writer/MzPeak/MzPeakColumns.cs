@@ -70,6 +70,23 @@ namespace ThermoRawFileParser.Writer
             cols[leaf] = (present.ToArray(), def, null);
         }
 
+        // A string leaf present on every row's owning struct but whose VALUE may be absent: a null
+        // string emits the leaf-null definition level and contributes no value slot.
+        internal static void AddNullableString(IDictionary<DataField, (Array, int[], int[])> cols,
+            ParquetSchema schema, string path, IReadOnlyList<string> values)
+        {
+            var leaf = Leaf(schema, path);
+            var rows = new List<MzPeakParquet.LeafRow>();
+            var present = new List<string>();
+            foreach (var v in values)
+            {
+                if (v != null) { rows.Add(MzPeakParquet.Present(leaf)); present.Add(v); }
+                else rows.Add(MzPeakParquet.AtLevel(leaf.MaxDefinitionLevel - 1, false));
+            }
+            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
+            cols[leaf] = (present.ToArray(), def, null);
+        }
+
         // A scalar leaf whose owning struct is present on every row but whose value is null on every
         // row (leaf-null def level, no value slot).
         internal static void AddNullLeafScalar(IDictionary<DataField, (Array, int[], int[])> cols,

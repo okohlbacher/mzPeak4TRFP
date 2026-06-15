@@ -96,6 +96,8 @@ namespace ThermoRawFileParser.Writer
                 WindowUpper = (float)scanStats.HighMass
             };
 
+            ApplyIonMobility(trailer, rec);
+
             if (level >= 2)
             {
                 BeforeBuildPrecursor?.Invoke(scanNumber, scanNumberToOrdinal);
@@ -148,6 +150,18 @@ namespace ThermoRawFileParser.Writer
                 sortedInten[i] = (float)intensities[order[i]];
             }
             return (sortedMz, sortedInten);
+        }
+
+        // FAIMS ion mobility: the compensation voltage is recorded only when FAIMS is on (its
+        // ion_mobility_type is the FAIMS CV CURIE); absent otherwise, leaving both columns null like
+        // every non-FAIMS run. Mirrors the mzML path's trailer keys.
+        internal static void ApplyIonMobility(ScanTrailer trailer, MzPeakRecord rec)
+        {
+            if (!trailer.AsBool("FAIMS Voltage On:").GetValueOrDefault(false)) return;
+            var faimsCv = trailer.AsDouble("FAIMS CV:");
+            if (!faimsCv.HasValue) return;
+            rec.IonMobilityValue = faimsCv.Value;
+            rec.IonMobilityType = MzPeakCv.FaimsCompensationVoltage;
         }
 
         private void CaptureTic(IRawDataPlus raw, List<MzPeakRecord> records, List<double> time,

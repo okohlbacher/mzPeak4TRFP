@@ -52,8 +52,8 @@ RAW files and is robust to imperfect scans — without regressing v1 conformance
 
 ### Ion-mobility values
 
-- [ ] **IM-01**: Populate `scan.ion_mobility_value` + `ion_mobility_type` from the Thermo FAIMS scan-trailer (`FAIMS CV` / `FAIMS Voltage On`), CV term MS:1001581 (FAIMS compensation voltage)
-- [ ] **IM-02**: `selected_ion` ion-mobility populated where applicable; spectra without FAIMS leave the columns null (as today)
+- [x] **IM-01**: Populate `scan.ion_mobility_value` + `ion_mobility_type` from the Thermo FAIMS scan-trailer (`FAIMS CV` / `FAIMS Voltage On`), CV term MS:1001581 (FAIMS compensation voltage)
+- [x] **IM-02**: `selected_ion` ion-mobility populated where applicable; spectra without FAIMS leave the columns null (no Thermo source for selected-ion mobility → null, as today)
 
 ### CLI & docs
 
