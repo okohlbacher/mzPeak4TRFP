@@ -41,7 +41,11 @@ The default output is the reference **chunked layout** with **lossy Numpress-lin
 | `--chunk-size=<Th>` | m/z window width for chunked layouts (default `50.0`) | — |
 
 The default lossy mode prints a one-line warning at startup; `--lossless` or `--point` silence it.
-`--chunk-size` applies only to the chunked layouts (ignored under `--point`).
+`--chunk-size` applies only to the chunked spectra layouts (ignored under `--point`).
+
+`chromatograms_data` follows the same layout choice: the chunked modes emit the TIC as a single
+time-axis chunk (numpress-linear or delta time, f64 intensity, matching the reference); `--point`
+emits the legacy per-point chromatogram with a per-point ms_level.
 
 ```bash
 # exact (lossless) chunked output

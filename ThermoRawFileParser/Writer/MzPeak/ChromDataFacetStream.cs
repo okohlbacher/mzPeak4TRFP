@@ -7,10 +7,10 @@ using Parquet.Schema;
 namespace ThermoRawFileParser.Writer
 {
     // A chrom-data facet streamed to a seekable temp file. Bounded by scan count anyway; streamed for
-    // uniformity with the point facets.
-    internal sealed class ChromDataFacetStream : IDisposable
+    // uniformity with the point facets. The point layout keeps intensity as f32 and carries ms_level.
+    internal sealed class ChromDataFacetStream : IChromDataFacet
     {
-        public readonly string TempPath;
+        public string TempPath { get; }
         private readonly ParquetSchema _schema;
         private readonly DataField _idx, _time, _int, _lvl;
         private readonly int _cap;
@@ -60,9 +60,9 @@ namespace ThermoRawFileParser.Writer
             }
         }
 
-        public void Append(double time, float intensity, long msLevel)
+        public void Append(double time, double intensity, long msLevel)
         {
-            _bIdx.Add(0UL); _bTime.Add(time); _bInt.Add(intensity); _bLvl.Add(msLevel);
+            _bIdx.Add(0UL); _bTime.Add(time); _bInt.Add((float)intensity); _bLvl.Add(msLevel);
             PointCount++;
             _bufferedBytes += ChromRowBytes;
             if (_bIdx.Count >= _cap || _bufferedBytes >= _byteCap) Flush();

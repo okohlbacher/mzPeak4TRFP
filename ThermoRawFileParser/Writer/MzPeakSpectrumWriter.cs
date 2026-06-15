@@ -98,7 +98,7 @@ namespace ThermoRawFileParser.Writer
             // disposes and deletes every facet created so far (the finally guards each handle for null).
             ISpectraDataFacet dataFacet = null;
             PointFacetStream peaksFacet = null;
-            ChromDataFacetStream chromFacet = null;
+            IChromDataFacet chromFacet = null;
 
             try
             {
@@ -106,7 +106,11 @@ namespace ThermoRawFileParser.Writer
                     ? (ISpectraDataFacet)new PointFacetStream(Cap, ByteCap)
                     : new ChunkFacetStream(Cap, ByteCap, ParseInput.MzPeakChunkSize, ParseInput.MzPeakNumpress);
                 peaksFacet = new PointFacetStream(Cap, ByteCap);
-                chromFacet = new ChromDataFacetStream(Cap, ByteCap);
+                // Chromatograms follow the spectra layout: chunk over the time axis (numpress/delta) by
+                // default, point layout (with ms_level) under --point.
+                chromFacet = ParseInput.MzPeakPointLayout
+                    ? (IChromDataFacet)new ChromDataFacetStream(Cap, ByteCap)
+                    : new ChromChunkFacetStream(ParseInput.MzPeakNumpress);
 
                 for (var scanNumber = firstScanNumber; scanNumber <= lastScanNumber; scanNumber++)
                 {
@@ -158,7 +162,7 @@ namespace ThermoRawFileParser.Writer
                 // the summed ScanStatistics.TIC differs for MS1 and is used only when the trace is
                 // unavailable.
                 var chromTime = new List<double>();
-                var chromIntensity = new List<float>();
+                var chromIntensity = new List<double>();
                 var chromMsLevel = new List<long>();
                 CaptureTic(raw, records, chromTime, chromIntensity, chromMsLevel);
                 for (int i = 0; i < chromTime.Count; i++)
@@ -185,9 +189,12 @@ namespace ThermoRawFileParser.Writer
                 var chromMeta = new Dictionary<string, string>
                 {
                     ["chromatogram_data_point_count"] = chromTime.Count.ToString(),
-                    ["chromatogram_array_index"] = MzPeakLayout.ChromatogramArrayIndex,
                     ["chromatogram_tic_source"] = _chromFromDeviceTrace ? "device" : "summed"
                 };
+                // The point layout self-describes its time/intensity/ms_level point buffers; the chunk
+                // layout is read from its column names (the reference emits no chromatogram array_index).
+                if (ParseInput.MzPeakPointLayout)
+                    chromMeta["chromatogram_array_index"] = MzPeakLayout.ChromatogramArrayIndex;
 
                 dataFacet.Close(dataMeta);
                 peaksFacet.Close(peaksMeta);

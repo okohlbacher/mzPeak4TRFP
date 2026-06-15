@@ -165,7 +165,7 @@ namespace ThermoRawFileParser.Writer
         }
 
         private void CaptureTic(IRawDataPlus raw, List<MzPeakRecord> records, List<double> time,
-            List<float> intensity, List<long> msLevel)
+            List<double> intensity, List<long> msLevel)
         {
             ChromatogramSignal[] trace;
             if (TestForceSummedTic)
@@ -206,7 +206,7 @@ namespace ThermoRawFileParser.Writer
                 for (int i = 0; i < records.Count; i++)
                 {
                     time.Add(signal.Times[i]);
-                    intensity.Add((float)signal.Intensities[i]);
+                    intensity.Add(signal.Intensities[i]);
                     msLevel.Add(records[i].MsLevel);
                 }
                 _chromFromDeviceTrace = true;
@@ -225,7 +225,7 @@ namespace ThermoRawFileParser.Writer
                 if (byScan.TryGetValue(r.ScanNumber, out var sample))
                 {
                     time.Add(sample.time);
-                    intensity.Add((float)sample.intensity);
+                    intensity.Add(sample.intensity);
                 }
                 else
                 {

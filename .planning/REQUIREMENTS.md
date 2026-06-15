@@ -29,7 +29,7 @@ RAW files and is robust to imperfect scans — without regressing v1 conformance
 
 ### Chunked layout
 
-- [x] **CHUNK-01**: `spectra_data` emitted as the reference 6-field chunk struct `chunk<spectrum_index:u64, mz_chunk_start:f64, mz_chunk_end:f64, mz_chunk_values:large_list<f64>, chunk_encoding:string, intensity:large_list<f32>>` (the 7th `mz_numpress_linear_bytes` field is added only in Numpress mode, Phase 3). `spectra_peaks`/`chromatograms_data` stay point (chromatogram chunking deferred to Phase 5)
+- [x] **CHUNK-01**: `spectra_data` emitted as the reference 6-field chunk struct `chunk<spectrum_index:u64, mz_chunk_start:f64, mz_chunk_end:f64, mz_chunk_values:large_list<f64>, chunk_encoding:string, intensity:large_list<f32>>` (the 7th `mz_numpress_linear_bytes` field is added only in Numpress mode, Phase 3). `spectra_peaks` stays point. `chromatograms_data` now also follows the chunk layout — one time-axis chunk per chromatogram (numpress-linear/delta time, f64 intensity), matching the reference (`--point` keeps the legacy point chromatogram)
 - [x] **CHUNK-02**: Chunking = fixed m/z window over the sorted m/z axis (default 50 m/z, configurable); one chunk row per non-empty window per spectrum; `mz_chunk_start`/`end` bound the window
 - [x] **CHUNK-03**: `mz_chunk_values` delta-encoded with `chunk_encoding=MS:1003089` (lossless) when Numpress is off
 - [x] **CHUNK-04**: `spectrum_array_index` describes chunk buffer formats (chunk_start/end/values/encoding) + `sorting_rank:0`; cv_list stays exhaustive

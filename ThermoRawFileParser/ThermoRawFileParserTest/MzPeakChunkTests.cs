@@ -1116,11 +1116,99 @@ namespace ThermoRawFileParserTest
                 using (var reader = ParquetReader.CreateAsync(ms).Result)
                 {
                     var schema = reader.Schema;
-                    Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "point/chromatogram_index"),
-                        "chromatograms_data stays the point struct in chunked mode by design");
-                    Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "point/time"));
-                    Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "point/ms_level"));
+                    // In chunked mode chromatograms_data follows the spectra layout: a time-axis chunk
+                    // struct (delta here, since this is the lossless mode), not the point struct.
+                    Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "chunk/chromatogram_index"),
+                        "chromatograms_data is a time-axis chunk struct in chunked mode");
+                    Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "chunk/time_chunk_start"));
+                    Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "chunk/time_chunk_values/list/item"));
+                    Assert.That(schema.GetDataFields().Any(d => d.Path.ToString() == "chunk/intensity/list/item"));
                 }
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        // The default (numpress) chromatogram is ONE chunk row over the time axis: numpress-linear time
+        // bytes (MS:1002312), null time_chunk_values, f64 intensity (one per scan), matching the reference.
+        [Test]
+        public void Chromatogram_Chunk_Numpress_Shape()
+        {
+            var archive = Convert(DataMode.Numpress, out var dir);
+            try
+            {
+                var snippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "t = pq.read_table(r'{PARQUET}')\n" +
+                    "d = t.to_pylist()\n" +
+                    "c = d[0]['chunk']\n" +
+                    "out = {'rows': len(d), 'fields': list(c.keys()), 'enc': c['chunk_encoding'],\n" +
+                    "       'tcv_null': c['time_chunk_values'] is None,\n" +
+                    "       'npb_len': len(c['time_numpress_linear_bytes']), 'n_int': len(c['intensity']),\n" +
+                    "       'schema': str(t.schema)}\n" +
+                    "print(json.dumps(out))\n";
+                var o = PyArrow(archive, "chromatograms_data.parquet", snippet);
+
+                Assert.That((int)o["rows"], Is.EqualTo(1), "one chunk row for the single chromatogram");
+                Assert.That(o["fields"].Select(x => (string)x).ToArray(), Is.EqualTo(new[]
+                {
+                    "chromatogram_index", "time_chunk_start", "time_chunk_end", "time_chunk_values",
+                    "chunk_encoding", "intensity", "time_numpress_linear_bytes"
+                }));
+                Assert.That((string)o["enc"], Is.EqualTo("MS:1002312"));
+                Assert.That((bool)o["tcv_null"], Is.True, "time lives in numpress bytes; time_chunk_values null");
+                Assert.That((int)o["npb_len"], Is.GreaterThan(0));
+                Assert.That((int)o["n_int"], Is.GreaterThan(0));
+                Assert.That((string)o["schema"], Does.Contain("intensity: list<item: double>"),
+                    "chromatogram intensity is f64, matching the reference");
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        // --lossless emits a delta-encoded time chunk (MS:1003089, no numpress field) whose time
+        // round-trips EXACTLY to the point layout's chromatogram times (same device-trace source).
+        [Test]
+        public void Chromatogram_Chunk_Lossless_Delta_RoundTrips_Time()
+        {
+            var pArchive = Convert(DataMode.Point, out var pDir);
+            double[] pointTimes;
+            try
+            {
+                var pSnip =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "d = pq.read_table(r'{PARQUET}').to_pylist()\n" +
+                    "print(json.dumps([r['point']['time'] for r in d]))\n";
+                pointTimes = JArray.Parse(PyArrowRaw(pArchive, "chromatograms_data.parquet", pSnip))
+                    .Select(x => (double)x).ToArray();
+            }
+            finally { Directory.Delete(pDir, true); }
+
+            var archive = Convert(DataMode.Lossless, out var dir);
+            try
+            {
+                var snippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    DdFunc +
+                    "t = pq.read_table(r'{PARQUET}')\n" +
+                    "d = t.to_pylist()\n" +
+                    "c = d[0]['chunk']\n" +
+                    "out = {'rows': len(d), 'fields': list(c.keys()), 'enc': c['chunk_encoding'],\n" +
+                    "       'times': dd(c['time_chunk_start'], c['time_chunk_values']),\n" +
+                    "       'n_int': len(c['intensity']), 'schema': str(t.schema)}\n" +
+                    "print(json.dumps(out))\n";
+                var o = PyArrow(archive, "chromatograms_data.parquet", snippet);
+
+                Assert.That((int)o["rows"], Is.EqualTo(1));
+                Assert.That(o["fields"].Select(x => (string)x).ToArray(), Does.Not.Contain("time_numpress_linear_bytes"),
+                    "delta mode carries no numpress field");
+                Assert.That((string)o["enc"], Is.EqualTo("MS:1003089"));
+                Assert.That((string)o["schema"], Does.Contain("intensity: list<item: double>"));
+
+                var times = o["times"].Select(x => (double)x).ToArray();
+                Assert.That((int)o["n_int"], Is.EqualTo(pointTimes.Length), "one intensity per scan");
+                Assert.That(times.Length, Is.EqualTo(pointTimes.Length), "reconstructed time count == scan count");
+                for (int i = 0; i < pointTimes.Length; i++)
+                    Assert.That(times[i], Is.EqualTo(pointTimes[i]).Within(1e-9),
+                        $"delta-reconstructed chromatogram time[{i}] == point-layout time");
             }
             finally { Directory.Delete(dir, true); }
         }
