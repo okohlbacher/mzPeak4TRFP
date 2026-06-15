@@ -127,7 +127,9 @@ Decimal phases appear between their surrounding integers in numeric order.
   - Distinguishing interior vs flanking zeros and profile vs centroid spectra must be exact, so apex/centroid points are never stripped and centroid facets are provably untouched.
   - FAIMS trailer parsing varies by acquisition; absent/ambiguous trailer keys must leave columns null (not zero) to preserve the v1 contract for non-FAIMS runs.
 
-**Plans**: TBD
+**Plans**: 1 plan
+
+  - [ ] 04-01-PLAN.md — Profile compaction (zero-run strip + null-mark + δmz model) on the default numpress path + FAIMS ion-mobility; --lossless/--point stay bitwise-L1
 
 ### Phase 5: CLI/Docs + Conformance & Corpus Re-Verification
 
