@@ -55,7 +55,7 @@ def _chunk_mz(c):
     if vals:                                           # delta: start + consecutive (non-null) deltas
         out, mz = ([start] if start is not None else []), start
         for d in vals:
-            if d is None:                              # null-marked (zero-stripped) — Phase 4
+            if d is None:                              # null-marked (zero-stripped)
                 continue
             mz += d
             out.append(mz)

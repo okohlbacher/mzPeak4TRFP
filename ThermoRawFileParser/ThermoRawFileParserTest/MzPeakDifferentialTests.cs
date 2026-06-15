@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
+using static ThermoRawFileParserTest.MzPeakTestSupport;
 
 namespace ThermoRawFileParserTest
 {
@@ -96,19 +97,7 @@ namespace ThermoRawFileParserTest
             "    z = zipfile.ZipFile(zpath)\n" +
             "    return pq.read_table(io.BytesIO(z.read(name))).to_pylist() if name in z.namelist() else None\n" +
             "ref_data = read(ref_path, 'spectra_data.parquet')\n" +
-            "def dd(start, arr):\n" +
-            "    buf=[]; last=start\n" +
-            "    if not arr: return [start]\n" +
-            "    if arr[0] is None:\n" +
-            "        if len(arr)>1 and arr[1] is None: buf.append(last)\n" +
-            "        last=None\n" +
-            "    else: buf.append(start)\n" +
-            "    for it in arr:\n" +
-            "        if it is not None:\n" +
-            "            if last is not None: last=it+last; buf.append(last)\n" +
-            "            else: buf.append(it); last=it\n" +
-            "        else: buf.append(None); last=None\n" +
-            "    return buf\n" +
+            DdFunc +
             "ref = collections.defaultdict(list)\n" +
             "for r in ref_data:\n" +
             "    c = r['chunk']; si = c['spectrum_index']\n" +
@@ -190,8 +179,8 @@ namespace ThermoRawFileParserTest
                 Assert.That(s1.code, Is.EqualTo(0), $"RAW->profile mzML failed: {s1.stderr}");
                 Assert.That(File.Exists(mzml), "profile mzML must exist");
 
-                var s2 = Run(m2m, $"\"{mzml}\" \"{refMzpeak}\" --no-numpress");
-                Assert.That(s2.code, Is.EqualTo(0), $"mzML->ref mzpeak failed: {s2.stderr}");
+                var refConv = Run(m2m, $"\"{mzml}\" \"{refMzpeak}\" --no-numpress");
+                Assert.That(refConv.code, Is.EqualTo(0), $"mzML->ref mzpeak failed: {refConv.stderr}");
                 Assert.That(File.Exists(refMzpeak), "reference mzpeak must exist");
 
                 var s3 = Run("dotnet", $"\"{dll}\" -i \"{TestRawFile}\" -b \"{trfpMzpeak}\" -f 4 --point");

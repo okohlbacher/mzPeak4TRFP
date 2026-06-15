@@ -13,6 +13,7 @@ using ThermoFisher.CommonCore.Data.FilterEnums;
 using ThermoFisher.CommonCore.RawFileReader;
 using ThermoRawFileParser;
 using ThermoRawFileParser.Writer;
+using static ThermoRawFileParserTest.MzPeakTestSupport;
 
 namespace ThermoRawFileParserTest
 {
@@ -36,29 +37,14 @@ namespace ThermoRawFileParserTest
             var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
             Directory.CreateDirectory(dir);
             parseInput.OutputDirectory = dir;
-            // These fixtures assert the v1 point spectra_data layout, which is now the --point opt-in
-            // (chunked is the default); force point so the v1 invariants continue to be asserted here.
+            // These fixtures assert the point spectra_data layout, which is now the --point opt-in
+            // (chunked is the default); force point so the point invariants continue to be asserted here.
             parseInput.MzPeakPointLayout = true;
             RawFileParser.Parse(parseInput);
             Assert.That(parseInput.Errors, Is.EqualTo(0));
             archive = Path.Combine(dir, "small.mzpeak");
             Assert.That(File.Exists(archive));
             return dir;
-        }
-
-        private static byte[] ReadEntry(string archive, string name)
-        {
-            using (var zip = ZipFile.OpenRead(archive))
-            {
-                var entry = zip.GetEntry(name);
-                if (entry == null) return null;
-                using (var s = entry.Open())
-                using (var ms = new MemoryStream())
-                {
-                    s.CopyTo(ms);
-                    return ms.ToArray();
-                }
-            }
         }
 
         private static Facet ReadPointFacet(byte[] bytes)
@@ -84,11 +70,6 @@ namespace ThermoRawFileParserTest
                     PointCount = int.Parse(meta["spectrum_data_point_count"])
                 };
             }
-        }
-
-        private static DataField Leaf(ParquetSchema schema, string path)
-        {
-            return schema.GetDataFields().First(d => d.Path.ToString() == path);
         }
 
         private sealed class ChromFacet
@@ -126,39 +107,6 @@ namespace ThermoRawFileParserTest
                     TicSource = meta["chromatogram_tic_source"],
                     PointCount = int.Parse(meta["chromatogram_data_point_count"])
                 };
-            }
-        }
-
-        // Runs a pyarrow snippet against an arbitrary parquet entry of the archive (the {PARQUET}
-        // token is replaced with the temp file path), returning the printed JSON object.
-        private static JObject PyArrowEntry(string archive, string entry, string snippet)
-        {
-            var python = ResolvePython();
-            if (python == null) Assert.Ignore("python3/pyarrow not available");
-
-            var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".parquet");
-            File.WriteAllBytes(path, ReadEntry(archive, entry));
-            try
-            {
-                var code = snippet.Replace("{PARQUET}", path.Replace("\\", "\\\\"));
-                var psi = new ProcessStartInfo(python, "-c \"" + code.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"")
-                {
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false
-                };
-                using (var proc = Process.Start(psi))
-                {
-                    var stdout = proc.StandardOutput.ReadToEnd();
-                    var stderr = proc.StandardError.ReadToEnd();
-                    proc.WaitForExit();
-                    Assert.That(proc.ExitCode, Is.EqualTo(0), $"pyarrow failed: {stderr}");
-                    return JObject.Parse(stdout.Trim());
-                }
-            }
-            finally
-            {
-                File.Delete(path);
             }
         }
 
@@ -350,61 +298,9 @@ namespace ThermoRawFileParserTest
             }
         }
 
-        private static string ResolvePython()
-        {
-            foreach (var cand in new[] { "python3", "python" })
-            {
-                try
-                {
-                    var psi = new ProcessStartInfo(cand, "-c \"import pyarrow\"")
-                    {
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false
-                    };
-                    using (var p = Process.Start(psi))
-                    {
-                        p.WaitForExit();
-                        if (p.ExitCode == 0) return cand;
-                    }
-                }
-                catch { }
-            }
-            return null;
-        }
-
-        // Writes the metadata parquet to a temp file and runs a python pyarrow snippet that prints
-        // a single JSON object to stdout. The snippet sees the file path via the {PARQUET} token.
-        private static JObject PyArrowMetadata(string archive, string snippet)
-        {
-            var python = ResolvePython();
-            if (python == null) Assert.Ignore("python3/pyarrow not available");
-
-            var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".parquet");
-            File.WriteAllBytes(path, ReadEntry(archive, "spectra_metadata.parquet"));
-            try
-            {
-                var code = snippet.Replace("{PARQUET}", path.Replace("\\", "\\\\"));
-                var psi = new ProcessStartInfo(python, "-c \"" + code.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"")
-                {
-                    RedirectStandardOutput = true,
-                    RedirectStandardError = true,
-                    UseShellExecute = false
-                };
-                using (var proc = Process.Start(psi))
-                {
-                    var stdout = proc.StandardOutput.ReadToEnd();
-                    var stderr = proc.StandardError.ReadToEnd();
-                    proc.WaitForExit();
-                    Assert.That(proc.ExitCode, Is.EqualTo(0), $"pyarrow failed: {stderr}");
-                    return JObject.Parse(stdout.Trim());
-                }
-            }
-            finally
-            {
-                File.Delete(path);
-            }
-        }
+        // Runs a pyarrow snippet against the metadata parquet entry, returning the printed JSON object.
+        private static JObject PyArrowMetadata(string archive, string snippet) =>
+            PyArrow(archive, "spectra_metadata.parquet", snippet);
 
         [Test]
         public void Metadata_Scan_And_Spectrum_Facets_Shape_And_Values()
@@ -690,7 +586,7 @@ namespace ThermoRawFileParserTest
                         "precursor/isolation_window/MS_1000827_isolation_window_target_mz"),
                         "isolation_window_target_mz carries no unit suffix");
 
-                    // Ground-truth selected_ion carries ion-mobility columns and a parameters list even
+                    // The selected_ion struct carries ion-mobility columns and a parameters list even
                     // when the source has no mobility values; the struct shape must match exactly.
                     Assert.That(paths, Does.Contain("selected_ion/ion_mobility_value"));
                     Assert.That(paths, Does.Contain("selected_ion/ion_mobility_type"));
@@ -879,28 +775,6 @@ namespace ThermoRawFileParserTest
             }
         }
 
-        private static string ResolveValidator()
-        {
-            foreach (var cand in new[] { "mzpeak-validate" })
-            {
-                try
-                {
-                    var psi = new ProcessStartInfo(cand, "--help")
-                    {
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false
-                    };
-                    using (var p = Process.Start(psi))
-                    {
-                        p.WaitForExit();
-                        return cand;
-                    }
-                }
-                catch { }
-            }
-            return null;
-        }
 
         [Test]
         public void Validator_Gate_ScanError_And_CvList_Absent_NoNewError()
@@ -987,7 +861,7 @@ namespace ThermoRawFileParserTest
                     "out = {'time':[d[i]['spectrum']['time'] for i in range(len(d))],\n" +
                     "       'lvl':[int(d[i]['spectrum']['MS_1000511_ms_level']) for i in range(len(d))]}\n" +
                     "print(json.dumps(out))\n";
-                var o = PyArrowEntry(archive, "spectra_metadata.parquet", snippet);
+                var o = PyArrow(archive, "spectra_metadata.parquet", snippet);
                 var sTime = o["time"].Select(x => (double)x).ToArray();
                 var sLvl = o["lvl"].Select(x => (long)x).ToArray();
 
@@ -1044,7 +918,7 @@ namespace ThermoRawFileParserTest
                     "selt = t.schema.field('selected_ion').type\n" +
                     "out['seli_fields'] = [f.name for f in selt]\n" +
                     "print(json.dumps(out))\n";
-                var o = PyArrowEntry(archive, "chromatograms_metadata.parquet", snippet);
+                var o = PyArrow(archive, "chromatograms_metadata.parquet", snippet);
 
                 Assert.That((int)o["rows"], Is.EqualTo(1), "exactly one chromatogram row");
                 Assert.That((string)o["id"], Is.EqualTo("TIC"));
@@ -1066,7 +940,7 @@ namespace ThermoRawFileParserTest
                 Assert.That((bool)o["prec_null"], Is.True, "precursor present-but-null on the row");
                 Assert.That((bool)o["seli_null"], Is.True, "selected_ion present-but-null on the row");
 
-                // The chromatogram selected_ion struct must carry the same ground-truth columns as the
+                // The chromatogram selected_ion struct must carry the same columns as the
                 // spectra selected_ion, including the ion-mobility columns and the parameters list.
                 var seliFields = o["seli_fields"].Select(x => (string)x).ToArray();
                 foreach (var f in new[]
@@ -1200,7 +1074,7 @@ namespace ThermoRawFileParserTest
                     ourInt[o].Add(data.Intensity[i]);
                 }
 
-                var meta = PyArrowEntry(archive, "spectra_metadata.parquet",
+                var meta = PyArrow(archive, "spectra_metadata.parquet",
                     "import pyarrow.parquet as pq, json\n" +
                     "t = pq.read_table(r'{PARQUET}')\n" +
                     "d = t.to_pylist()\n" +
@@ -1275,7 +1149,7 @@ namespace ThermoRawFileParserTest
         // (honoring each array's own 32/64-bit + zlib CV flags), and asserts that, for every emitted
         // spectrum with a bit-exact m/z correspondence, our f32-narrowed spectra_data intensities equal
         // the mzML intensities narrowed to f32. The mzML is an independent re-derivation of the RAW, so
-        // matching intensities certify L2 value-equality beyond the differential suite's profile subset.
+        // matching intensities confirm value-equality beyond the differential suite's profile subset.
         private static void AssertIntensityMatchesIndependentMzml(string dir, string archive,
             Dictionary<ulong, List<double>> ourMz, Dictionary<ulong, List<float>> ourInt)
         {
@@ -1527,16 +1401,16 @@ namespace ThermoRawFileParserTest
             }
         }
 
-        // Known v1 baseline totals for small.RAW (captured from the certified v1 conversion). Asserting
-        // the literal numbers — not just self-consistency — catches self-consistent semantic drift.
-        private const int V1SpectrumCount = 48;
-        private const int V1DataPointCount = 305213;
-        private const int V1PeakSpectrumCount = 7;
-        private const int V1PeakPointCount = 12890;
-        private const int V1TicPointCount = 48;
+        // Known expected totals for small.RAW. Asserting the literal numbers — not just
+        // self-consistency — catches self-consistent semantic drift.
+        private const int ExpectedSpectrumCount = 48;
+        private const int ExpectedDataPointCount = 305213;
+        private const int ExpectedPeakSpectrumCount = 7;
+        private const int ExpectedPeakPointCount = 12890;
+        private const int ExpectedTicPointCount = 48;
 
         [Test]
-        public void SmallRaw_Identical_To_V1_Invariants()
+        public void SmallRaw_Matches_Expected_Invariants()
         {
             var input = new ParseInput(TestRawFile, null, null, OutputFormat.MzPeak);
             var dir = Convert(input, out var archive);
@@ -1556,37 +1430,37 @@ namespace ThermoRawFileParserTest
                 Assert.That(data.Mz.Length, Is.EqualTo(data.PointCount),
                     "footer spectrum_data_point_count == point rows");
 
-                // Known v1 baseline totals on the data facet.
-                Assert.That(data.SpectrumCount, Is.EqualTo(V1SpectrumCount), "v1 baseline spectrum count");
-                Assert.That(data.PointCount, Is.EqualTo(V1DataPointCount), "v1 baseline total data points");
+                // Known expected totals on the data facet.
+                Assert.That(data.SpectrumCount, Is.EqualTo(ExpectedSpectrumCount), "expected spectrum count");
+                Assert.That(data.PointCount, Is.EqualTo(ExpectedDataPointCount), "expected total data points");
 
                 // Footer KV present and correct on the streamed data facet.
                 using (var ms = new MemoryStream(ReadEntry(archive, "spectra_data.parquet")))
                 using (var reader = ParquetReader.CreateAsync(ms).Result)
                 {
                     var kv = reader.CustomMetadata;
-                    Assert.That(kv["spectrum_count"], Is.EqualTo(V1SpectrumCount.ToString()));
-                    Assert.That(kv["spectrum_data_point_count"], Is.EqualTo(V1DataPointCount.ToString()));
+                    Assert.That(kv["spectrum_count"], Is.EqualTo(ExpectedSpectrumCount.ToString()));
+                    Assert.That(kv["spectrum_data_point_count"], Is.EqualTo(ExpectedDataPointCount.ToString()));
                     Assert.That(kv.ContainsKey("spectrum_array_index"), Is.True);
                 }
 
-                // Known v1 baseline totals + footer KV on the streamed peaks facet.
+                // Known expected totals + footer KV on the streamed peaks facet.
                 var peaks = ReadAllRowGroups(ReadEntry(archive, "spectra_peaks.parquet"));
-                Assert.That(peaks.SpectrumCount, Is.EqualTo(V1PeakSpectrumCount), "v1 baseline peak-bearing spectra");
-                Assert.That(peaks.PointCount, Is.EqualTo(V1PeakPointCount), "v1 baseline total peak points");
-                Assert.That(peaks.Mz.Length, Is.EqualTo(V1PeakPointCount), "peak point rows == footer count");
+                Assert.That(peaks.SpectrumCount, Is.EqualTo(ExpectedPeakSpectrumCount), "expected peak-bearing spectra");
+                Assert.That(peaks.PointCount, Is.EqualTo(ExpectedPeakPointCount), "expected total peak points");
+                Assert.That(peaks.Mz.Length, Is.EqualTo(ExpectedPeakPointCount), "peak point rows == footer count");
                 using (var ms = new MemoryStream(ReadEntry(archive, "spectra_peaks.parquet")))
                 using (var reader = ParquetReader.CreateAsync(ms).Result)
                 {
                     var kv = reader.CustomMetadata;
-                    Assert.That(kv["spectrum_count"], Is.EqualTo(V1PeakSpectrumCount.ToString()));
-                    Assert.That(kv["spectrum_data_point_count"], Is.EqualTo(V1PeakPointCount.ToString()));
+                    Assert.That(kv["spectrum_count"], Is.EqualTo(ExpectedPeakSpectrumCount.ToString()));
+                    Assert.That(kv["spectrum_data_point_count"], Is.EqualTo(ExpectedPeakPointCount.ToString()));
                     Assert.That(kv.ContainsKey("spectrum_array_index"), Is.True);
                 }
 
-                // Known v1 baseline TIC point count + footer KV on the streamed chrom-data facet.
+                // Known expected TIC point count + footer KV on the streamed chrom-data facet.
                 var chrom = ReadChromFacet(ReadEntry(archive, "chromatograms_data.parquet"));
-                Assert.That(chrom.Time.Length, Is.EqualTo(V1TicPointCount), "v1 baseline TIC point count");
+                Assert.That(chrom.Time.Length, Is.EqualTo(ExpectedTicPointCount), "expected TIC point count");
                 using (var ms = new MemoryStream(ReadEntry(archive, "chromatograms_data.parquet")))
                 using (var reader = ParquetReader.CreateAsync(ms).Result)
                 {
@@ -1725,7 +1599,7 @@ namespace ThermoRawFileParserTest
                 Assert.That(metaIdx.OrderBy(x => x).ToArray(),
                     Is.EqualTo(Enumerable.Range(0, metaIdx.Length).Select(i => (ulong)i).ToArray()),
                     "metadata ordinals dense 0..N-1 despite the skipped scan");
-                Assert.That(metaIdx.Length, Is.EqualTo(V1SpectrumCount - 1),
+                Assert.That(metaIdx.Length, Is.EqualTo(ExpectedSpectrumCount - 1),
                     "exactly one scan was skipped");
 
                 var (pre, _) = ReadMsnChildMaps(ReadEntry(archive, "spectra_metadata.parquet"));
@@ -1738,10 +1612,10 @@ namespace ThermoRawFileParserTest
                 Directory.Delete(dirA, true);
             }
 
-            // Part B — the C1 isolation guard: drive the real Write loop so that, at the moment an MSn child
+            // Part B — the precursor-isolation guard: drive the real Write loop so that, at the moment an MSn child
             // builds its precursor, its resolved parent has a positive scan number but no emitted ordinal
             // (read-but-not-committed). The child must end with NO precursor_index and NO selected-ion
-            // intensity — it must not read intensity through the absent parent. Before the C1 fix the
+            // intensity — it must not read intensity through the absent parent. Without the guard the
             // intensity was computed from the parent's scan regardless, and this fails.
             const int childScan = 3; // the first MSn child in small.RAW
             var dirB = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
@@ -1759,7 +1633,7 @@ namespace ThermoRawFileParserTest
                 Assert.That(si[childOrdinal], Is.Null,
                     "a child with no emitted parent must not read a selected-ion intensity through it");
 
-                // The universal C1 invariant across all children: intensity present implies parent present.
+                // The universal invariant across all children: intensity present implies parent present.
                 foreach (var child in si.Keys)
                 {
                     bool parentPresent = pre.TryGetValue(child, out var p) && p.HasValue;

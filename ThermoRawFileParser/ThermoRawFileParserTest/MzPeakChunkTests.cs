@@ -10,6 +10,7 @@ using Parquet;
 using Parquet.Schema;
 using ThermoRawFileParser;
 using ThermoRawFileParser.Writer;
+using static ThermoRawFileParserTest.MzPeakTestSupport;
 
 namespace ThermoRawFileParserTest
 {
@@ -438,7 +439,7 @@ namespace ThermoRawFileParserTest
 
         private enum DataMode { Numpress, Lossless, Point }
 
-        // Phase-2 delta-chunk (--lossless) conversion; point=true selects the v1 point layout.
+        // Delta-chunk (--lossless) conversion; point=true selects the point layout.
         private static string Convert(bool point, out string dir) =>
             Convert(point ? DataMode.Point : DataMode.Lossless, out dir);
 
@@ -456,73 +457,6 @@ namespace ThermoRawFileParserTest
             var archive = Path.Combine(dir, "small.mzpeak");
             Assert.That(File.Exists(archive));
             return archive;
-        }
-
-        private static byte[] ReadEntry(string archive, string name)
-        {
-            using (var zip = ZipFile.OpenRead(archive))
-            {
-                var entry = zip.GetEntry(name);
-                if (entry == null) return null;
-                using (var s = entry.Open())
-                using (var ms = new MemoryStream())
-                {
-                    s.CopyTo(ms);
-                    return ms.ToArray();
-                }
-            }
-        }
-
-        private static string ResolvePython()
-        {
-            foreach (var cand in new[] { "python3", "python" })
-            {
-                try
-                {
-                    var psi = new ProcessStartInfo(cand, "-c \"import pyarrow\"")
-                    { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-                    using (var p = Process.Start(psi)) { p.WaitForExit(); if (p.ExitCode == 0) return cand; }
-                }
-                catch { }
-            }
-            return null;
-        }
-
-        private static string ResolveValidator()
-        {
-            try
-            {
-                var psi = new ProcessStartInfo("mzpeak-validate", "--help")
-                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-                using (var p = Process.Start(psi)) { p.WaitForExit(); return "mzpeak-validate"; }
-            }
-            catch { return null; }
-        }
-
-        // Runs a pyarrow snippet against a named parquet entry of an archive ({PARQUET} token) and returns
-        // the printed JSON object. Ignores when python/pyarrow is unavailable.
-        private static JObject PyArrow(string archive, string entry, string snippet)
-        {
-            var python = ResolvePython();
-            if (python == null) Assert.Ignore("python3/pyarrow not available");
-
-            var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".parquet");
-            File.WriteAllBytes(path, ReadEntry(archive, entry));
-            try
-            {
-                var code = snippet.Replace("{PARQUET}", path.Replace("\\", "\\\\"));
-                var psi = new ProcessStartInfo(python, "-c \"" + code.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"")
-                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-                using (var proc = Process.Start(psi))
-                {
-                    var stdout = proc.StandardOutput.ReadToEnd();
-                    var stderr = proc.StandardError.ReadToEnd();
-                    proc.WaitForExit();
-                    Assert.That(proc.ExitCode, Is.EqualTo(0), $"pyarrow failed: {stderr}");
-                    return JObject.Parse(stdout.Trim());
-                }
-            }
-            finally { File.Delete(path); }
         }
 
         [Test]
@@ -628,7 +562,7 @@ namespace ThermoRawFileParserTest
 
                 var pointFooter = PyArrow(pointed, "spectra_data.parquet", footerSnippet);
                 Assert.That((string)pointFooter["prefix"], Is.EqualTo("point"),
-                    "--point mode retains the v1 point array_index");
+                    "--point mode retains the point array_index");
                 Assert.That(((JArray)pointFooter["entries"]).Select(e => (string)e["buffer_format"]).ToArray(),
                     Is.EqualTo(new[] { "point", "point" }));
             }
@@ -647,19 +581,7 @@ namespace ThermoRawFileParserTest
                 var decodeSnippet =
                     "import pyarrow.parquet as pq, json, struct\n" +
                     "from collections import defaultdict\n" +
-                    "def dd(start, arr):\n" +
-                    "    buf=[]; last=start\n" +
-                    "    if not arr: return [start]\n" +
-                    "    if arr[0] is None:\n" +
-                    "        if len(arr)>1 and arr[1] is None: buf.append(last)\n" +
-                    "        last=None\n" +
-                    "    else: buf.append(start)\n" +
-                    "    for it in arr:\n" +
-                    "        if it is not None:\n" +
-                    "            if last is not None: last=it+last; buf.append(last)\n" +
-                    "            else: buf.append(it); last=it\n" +
-                    "        else: buf.append(None); last=None\n" +
-                    "    return buf\n" +
+                    DdFunc +
                     "t = pq.read_table(r'{PARQUET}').column('chunk').combine_chunks()\n" +
                     "si=t.field('spectrum_index').to_pylist(); cs=t.field('mz_chunk_start').to_pylist()\n" +
                     "cv=t.field('mz_chunk_values').to_pylist(); inn=t.field('intensity').to_pylist()\n" +
@@ -701,8 +623,8 @@ namespace ThermoRawFileParserTest
                 }
                 // Intensity is never delta-encoded -> must be bitwise-identical.
                 Assert.That(intMismatch, Is.EqualTo(0), "intensity is bitwise-identical chunked vs point");
-                // Empirical finding (recorded in SUMMARY): f64 delta encode+reconstruct is bit-exact on real
-                // Thermo m/z, so the m/z multiset matches bitwise with zero tolerance (exact / L1).
+                // f64 delta encode+reconstruct is bit-exact on real Thermo m/z, so the m/z multiset
+                // matches bitwise with zero tolerance (exact / L1).
                 Assert.That(mzMismatch, Is.EqualTo(0),
                     "m/z is BITWISE-identical chunked vs point (delta round-trip is bit-exact on Thermo m/z)");
             }
@@ -715,19 +637,7 @@ namespace ThermoRawFileParserTest
         private const string ChunkDecodeSnippet =
             "import pyarrow.parquet as pq, json, struct\n" +
             "from collections import defaultdict\n" +
-            "def dd(start, arr):\n" +
-            "    buf=[]; last=start\n" +
-            "    if not arr: return [start]\n" +
-            "    if arr[0] is None:\n" +
-            "        if len(arr)>1 and arr[1] is None: buf.append(last)\n" +
-            "        last=None\n" +
-            "    else: buf.append(start)\n" +
-            "    for it in arr:\n" +
-            "        if it is not None:\n" +
-            "            if last is not None: last=it+last; buf.append(last)\n" +
-            "            else: buf.append(it); last=it\n" +
-            "        else: buf.append(None); last=None\n" +
-            "    return buf\n" +
+            DdFunc +
             "t = pq.read_table(r'{PARQUET}').column('chunk').combine_chunks()\n" +
             "si=t.field('spectrum_index').to_pylist(); cs=t.field('mz_chunk_start').to_pylist()\n" +
             "cv=t.field('mz_chunk_values').to_pylist(); inn=t.field('intensity').to_pylist()\n" +
@@ -1010,7 +920,7 @@ namespace ThermoRawFileParserTest
             try
             {
                 // Decode numpress m/z per chunk via OUR C# anchor-aligned codec (pyarrow only supplies the
-                // raw bytes / anchors / intensity). Compare positionally to --lossless (Phase-2 bit-exact).
+                // raw bytes / anchors / intensity). Compare positionally to --lossless (bit-exact).
                 var npSnippet =
                     "import pyarrow.parquet as pq, json, struct\n" +
                     "t = pq.read_table(r'{PARQUET}').column('chunk').combine_chunks()\n" +
@@ -1026,19 +936,7 @@ namespace ThermoRawFileParserTest
 
                 var lossSnippet =
                     "import pyarrow.parquet as pq, json, struct\n" +
-                    "def dd(start, arr):\n" +
-                    "    buf=[]; last=start\n" +
-                    "    if not arr: return [start]\n" +
-                    "    if arr[0] is None:\n" +
-                    "        if len(arr)>1 and arr[1] is None: buf.append(last)\n" +
-                    "        last=None\n" +
-                    "    else: buf.append(start)\n" +
-                    "    for it in arr:\n" +
-                    "        if it is not None:\n" +
-                    "            if last is not None: last=it+last; buf.append(last)\n" +
-                    "            else: buf.append(it); last=it\n" +
-                    "        else: buf.append(None); last=None\n" +
-                    "    return buf\n" +
+                    DdFunc +
                     "from collections import defaultdict\n" +
                     "t = pq.read_table(r'{PARQUET}').column('chunk').combine_chunks()\n" +
                     "si=t.field('spectrum_index').to_pylist(); cs=t.field('mz_chunk_start').to_pylist()\n" +
@@ -1054,7 +952,7 @@ namespace ThermoRawFileParserTest
                 var lossMz = (JObject)loss["mz"];
                 var lossIt = (JObject)loss["it"];
 
-                // Anti-vacuity: at least one chunk row.
+                // At least one chunk row must be emitted.
                 Assert.That(npRows.Count, Is.GreaterThan(0), "numpress has at least one chunk row");
 
                 long pointCount = ArchivePointCount(numpress);
@@ -1198,29 +1096,6 @@ namespace ThermoRawFileParserTest
         }
 
         // PyArrow variant that returns a JSON array (the standard PyArrow asserts a JSON object).
-        private static List<JObject> PyArrowArray(string archive, string entry, string snippet)
-        {
-            var python = ResolvePython();
-            if (python == null) Assert.Ignore("python3/pyarrow not available");
-            var path = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".parquet");
-            File.WriteAllBytes(path, ReadEntry(archive, entry));
-            try
-            {
-                var code = snippet.Replace("{PARQUET}", path.Replace("\\", "\\\\"));
-                var psi = new ProcessStartInfo(python, "-c \"" + code.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"")
-                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
-                using (var proc = Process.Start(psi))
-                {
-                    var stdout = proc.StandardOutput.ReadToEnd();
-                    var stderr = proc.StandardError.ReadToEnd();
-                    proc.WaitForExit();
-                    Assert.That(proc.ExitCode, Is.EqualTo(0), $"pyarrow failed: {stderr}");
-                    return JArray.Parse(stdout.Trim()).Cast<JObject>().ToList();
-                }
-            }
-            finally { File.Delete(path); }
-        }
-
         [Test]
         public void Peaks_And_Chromatograms_Unchanged()
         {

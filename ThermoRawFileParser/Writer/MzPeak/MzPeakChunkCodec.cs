@@ -13,7 +13,7 @@ namespace ThermoRawFileParser.Writer
 
         // Delta-encode a window's m/z slice. start/end are the first/last non-null m/z; values holds the
         // consecutive deltas (length k-1 for a gapless slice) and excludes the start, which lives in start.
-        // Mirrors null_delta_encode: a value after a null is stored ABSOLUTE, a leading null is kept as a
+        // Null-aware delta scheme: a value after a null is stored ABSOLUTE, a leading null is kept as a
         // marker. The writer passes all-present slices, so this reduces to plain consecutive deltas.
         public static void DeltaEncode(double?[] mz, out double start, out double end, out double?[] values)
         {
@@ -53,7 +53,7 @@ namespace ThermoRawFileParser.Writer
             values = buffer.ToArray();
         }
 
-        // Reconstruct the m/z array from start + delta values. Mirrors null_delta_decode byte-for-byte:
+        // Reconstruct the m/z array from start + delta values (inverse of DeltaEncode):
         // start is the first reconstructed m/z; cumulative add for present deltas; absolute restart after a
         // null; nulls preserved aligned to intensity. The [None, None] case decodes to a single peak at
         // start; a leading [None, present, ...] treats the present value as an absolute restart.

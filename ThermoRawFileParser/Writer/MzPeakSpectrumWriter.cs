@@ -52,12 +52,8 @@ namespace ThermoRawFileParser.Writer
 
         // The nine chrom-data CURIEs whose prefixes must reach cv_list (finalized inside the metadata
         // facet). Registered via RegisterChromDataPrefixes before BuildMetadataFacet regardless of
-        // whether chrom-data is streamed or buffered.
-        internal static readonly string[] ChromDataAccessions =
-        {
-            "MS:1000523", "MS:1000595", "UO:0000031", "MS:1000521", "MS:1000515",
-            "MS:1000131", "MS:1000522", "MS:1000786", "UO:0000186"
-        };
+        // whether chrom-data is streamed or buffered. Defined once in MzPeakCv.
+        internal static readonly string[] ChromDataAccessions = MzPeakCv.ChromDataAccessions;
 
         // Point spectra_data: the m/z and intensity point arrays carry their per-facet transform CURIEs
         // (MS:1003901 m/z, MS:1003902 intensity) with data_processing_id and sorting_rank, matching the
@@ -83,16 +79,6 @@ namespace ThermoRawFileParser.Writer
             "\"array_name\":\"intensity array\",\"unit\":\"MS:1000131\",\"buffer_format\":\"point\",\"transform\":null," +
             "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":null}" +
             "]}";
-
-        // CURIEs for the chunked spectra_data layout: the m/z delta-encoding (chunk_encoding column
-        // value, MS:1003089) and the m/z + intensity transform CURIEs.
-        private const string ChunkEncodingCurie = "MS:1003089";
-        private const string MzTransformCurie = "MS:1003901";
-        private const string IntensityTransformCurie = "MS:1003902";
-
-        // Numpress-linear chunk_encoding + m/z bytes transform: MS:1002312 marks numpress-linear m/z
-        // bytes, distinct from the MS:1003089 delta encoding.
-        private const string NumpressLinearCurie = "MS:1002312";
 
         private const string ChunkedSpectrumArrayIndex =
             "{\"prefix\":\"chunk\",\"entries\":[" +
@@ -336,9 +322,9 @@ namespace ThermoRawFileParser.Writer
                 var numpress = !ParseInput.MzPeakPointLayout && ParseInput.MzPeakNumpress;
                 if (!ParseInput.MzPeakPointLayout)
                 {
-                    CollectPrefix(numpress ? NumpressLinearCurie : ChunkEncodingCurie);
-                    CollectPrefix(MzTransformCurie);
-                    CollectPrefix(IntensityTransformCurie);
+                    CollectPrefix(numpress ? MzPeakCv.NumpressLinear : MzPeakCv.ChunkEncoding);
+                    CollectPrefix(MzPeakCv.MzTransform);
+                    CollectPrefix(MzPeakCv.IntensityTransform);
                 }
 
                 var dataMeta = ParseInput.MzPeakPointLayout
@@ -451,8 +437,8 @@ namespace ThermoRawFileParser.Writer
                 Polarity = scanFilter.Polarity == PolarityType.Negative
                     ? (sbyte?)-1
                     : (scanFilter.Polarity == PolarityType.Positive ? (sbyte?)1 : null),
-                Representation = mzData.isCentroided ? "MS:1000127" : "MS:1000128",
-                SpectrumType = level == 1 ? "MS:1000579" : "MS:1000580",
+                Representation = mzData.isCentroided ? MzPeakCv.CentroidSpectrum : MzPeakCv.ProfileSpectrum,
+                SpectrumType = level == 1 ? MzPeakCv.Ms1Spectrum : MzPeakCv.MsnSpectrum,
                 LowestMz = mz.Length > 0 ? (double?)mz[0] : null,
                 HighestMz = mz.Length > 0 ? (double?)mz[mz.Length - 1] : null,
                 BasePeakMz = mzData.basePeakMass,
@@ -630,22 +616,22 @@ namespace ThermoRawFileParser.Writer
 
             AddScalar(cols, schema, "chromatogram/index", new ulong[] { 0UL }, present);
             AddScalar(cols, schema, "chromatogram/id", new[] { "TIC" }, present);
-            AddScalar(cols, schema, "chromatogram/" + Cv("MS:1000465", "scan_polarity"),
+            AddScalar(cols, schema, "chromatogram/" + Cv(MzPeakCv.ScanPolarity, "scan_polarity"),
                 new sbyte[] { 0 }, present);
-            CollectPrefix("MS:1000235");
-            AddScalar(cols, schema, "chromatogram/" + Cv("MS:1000626", "chromatogram_type"),
-                new[] { "MS:1000235" }, present);
+            CollectPrefix(MzPeakCv.MzArrayData);
+            AddScalar(cols, schema, "chromatogram/" + Cv(MzPeakCv.ChromatogramType, "chromatogram_type"),
+                new[] { MzPeakCv.MzArrayData }, present);
 
             var dprLeaf = Leaf(schema, "chromatogram/data_processing_ref");
             var dprRows = new[] { MzPeakParquet.AtLevel(dprLeaf.MaxDefinitionLevel - 1, false) };
             var (dprDef, _) = MzPeakParquet.NestedLevels(dprLeaf, dprRows);
             cols[dprLeaf] = (new string[0], dprDef, null);
 
-            AddScalar(cols, schema, "chromatogram/" + Cv("MS:1003060", "number_of_data_points"),
+            AddScalar(cols, schema, "chromatogram/" + Cv(MzPeakCv.NumberOfDataPoints, "number_of_data_points"),
                 new ulong[] { (ulong)n }, present);
 
             AddEmptyList(cols, schema, "chromatogram/parameters");
-            AddEmptyAuxList(cols, schema, "chromatogram/auxiliary_arrays");
+            AddEmptyList(cols, schema, "chromatogram/auxiliary_arrays");
             AddScalar(cols, schema, "chromatogram/number_of_auxiliary_arrays", new uint[] { 0u }, present);
 
             AddNullPrecursor(cols, schema);
@@ -665,10 +651,10 @@ namespace ThermoRawFileParser.Writer
             return new StructField("chromatogram",
                 new DataField<ulong>("index", true),
                 new DataField<string>("id", true),
-                new DataField<sbyte>(Cv("MS:1000465", "scan_polarity"), true),
-                new DataField<string>(Cv("MS:1000626", "chromatogram_type"), true),
+                new DataField<sbyte>(Cv(MzPeakCv.ScanPolarity, "scan_polarity"), true),
+                new DataField<string>(Cv(MzPeakCv.ChromatogramType, "chromatogram_type"), true),
                 new DataField<string>("data_processing_ref", true),
-                new DataField<ulong>(Cv("MS:1003060", "number_of_data_points"), true),
+                new DataField<ulong>(Cv(MzPeakCv.NumberOfDataPoints, "number_of_data_points"), true),
                 new ListField("parameters", MzPeakParquet.BuildParamField("item")),
                 new ListField("auxiliary_arrays", BuildAuxArrayField("item")),
                 new DataField<uint>("number_of_auxiliary_arrays", true));
@@ -687,22 +673,9 @@ namespace ThermoRawFileParser.Writer
         }
 
         // A present-but-empty list on a single-row facet (the list value is defined, no elements).
+        // Every descendant leaf gets the empty-list level, including auxiliary_arrays whose element
+        // struct carries a non-nullable data leaf (data/list/item: uint8 not null).
         private void AddEmptyList(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
-            string listPath)
-        {
-            var list = (ListField)FindField(schema, listPath);
-            foreach (var leaf in schema.GetDataFields())
-            {
-                if (!leaf.Path.ToString().StartsWith(listPath + "/")) continue;
-                var rows = new[] { MzPeakParquet.EmptyList(list) };
-                var (def, rep) = MzPeakParquet.NestedLevels(leaf, rows);
-                cols[leaf] = (EmptyArray(leaf.ClrType), def, rep);
-            }
-        }
-
-        // The auxiliary_arrays list is empty, but its element struct carries a non-nullable data leaf
-        // (data/list/item: uint8 not null); emit the same empty-list level for every descendant leaf.
-        private void AddEmptyAuxList(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
             string listPath)
         {
             var list = (ListField)FindField(schema, listPath);
@@ -800,10 +773,10 @@ namespace ThermoRawFileParser.Writer
             {
                 rec.ActivationParams.Add(new Param
                 {
-                    Accession = "MS:1000045",
+                    Accession = MzPeakCv.CollisionEnergy,
                     Name = "collision energy",
                     Float = reaction.CollisionEnergy,
-                    Unit = "UO:0000266"
+                    Unit = MzPeakCv.ElectronvoltUnit
                 });
             }
 
@@ -857,13 +830,10 @@ namespace ThermoRawFileParser.Writer
                 new DataField<double>("mz"),
                 new DataField<float>("intensity"));
 
-        // The 6-field chunk struct of the spectra_data chunk layout. mz_chunk_values / intensity are
-        // nullable-item lists (the writer emits no nulls; the type stays null-aware for read parity).
-        private static StructField ChunkStructField() => ChunkStructField(false);
-
-        // The chunk struct. In delta mode it is the 6-field reference struct. In numpress mode a 7th
-        // field (mz_numpress_linear_bytes, large_list<uint8 not null>) carries the encoded m/z while
-        // mz_chunk_values is emitted NULL on every row.
+        // The chunk struct. In delta mode it is the 6-field struct (mz_chunk_values / intensity are
+        // nullable-item lists; the writer emits no nulls, the type stays null-aware for read parity).
+        // In numpress mode a 7th field (mz_numpress_linear_bytes, large_list<uint8 not null>) carries
+        // the encoded m/z while mz_chunk_values is emitted NULL on every row.
         private static StructField ChunkStructField(bool numpress)
         {
             if (!numpress)
@@ -1092,7 +1062,7 @@ namespace ThermoRawFileParser.Writer
                         _bIdx.Add(ordinal);
                         _bStart.Add(win[0]);
                         _bEnd.Add(win[k - 1]);
-                        _bEnc.Add(NumpressLinearCurie);
+                        _bEnc.Add(MzPeakCv.NumpressLinear);
 
                         // mz_chunk_values is NULL on every numpress row (parent present, list null).
                         _mzRows.Add(MzPeakParquet.NullList(_mzList));
@@ -1117,7 +1087,7 @@ namespace ThermoRawFileParser.Writer
                         _bIdx.Add(ordinal);
                         _bStart.Add(start);
                         _bEnd.Add(end);
-                        _bEnc.Add(ChunkEncodingCurie);
+                        _bEnc.Add(MzPeakCv.ChunkEncoding);
 
                         if (values.Length == 0)
                         {
@@ -1307,35 +1277,35 @@ namespace ThermoRawFileParser.Writer
             // spectrum facet (present on all N rows)
             AddScalar(cols, schema, "spectrum/index", records.Select(r => r.Ordinal).ToArray(), presentAll);
             AddScalar(cols, schema, "spectrum/id", records.Select(r => r.Id).ToArray(), presentAll);
-            AddScalar(cols, schema, "spectrum/" + Cv("MS:1000511", "ms_level"),
+            AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.MsLevel, "ms_level"),
                 records.Select(r => (byte)r.MsLevel).ToArray(), presentAll);
             AddScalar(cols, schema, "spectrum/time", records.Select(r => r.Time).ToArray(), presentAll);
-            AddNullableScalar(cols, schema, "spectrum/" + Cv("MS:1000465", "scan_polarity"),
+            AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.ScanPolarity, "scan_polarity"),
                 records.Select(r => r.Polarity).ToList());
-            AddScalar(cols, schema, "spectrum/" + Cv("MS:1000525", "spectrum_representation"),
+            AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.SpectrumRepresentation, "spectrum_representation"),
                 records.Select(r => r.Representation).ToArray(), presentAll);
-            AddScalar(cols, schema, "spectrum/" + Cv("MS:1000559", "spectrum_type"),
+            AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.SpectrumType, "spectrum_type"),
                 records.Select(r => r.SpectrumType).ToArray(), presentAll);
-            AddNullableScalar(cols, schema, "spectrum/" + Cv("MS:1000528", "lowest_observed_mz", "MS:1000040"),
+            AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.LowestObservedMz, "lowest_observed_mz", MzPeakCv.MzUnit),
                 records.Select(r => r.LowestMz).ToList());
-            AddNullableScalar(cols, schema, "spectrum/" + Cv("MS:1000527", "highest_observed_mz", "MS:1000040"),
+            AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.HighestObservedMz, "highest_observed_mz", MzPeakCv.MzUnit),
                 records.Select(r => r.HighestMz).ToList());
-            AddScalar(cols, schema, "spectrum/" + Cv("MS:1003060", "number_of_data_points"),
+            AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.NumberOfDataPoints, "number_of_data_points"),
                 records.Select(r => r.DataPointCount).ToArray(), presentAll);
 
             // number_of_peaks: present only where peaks were written (leaf-null otherwise).
-            var npkLeaf = Leaf(schema, "spectrum/" + Cv("MS:1003059", "number_of_peaks"));
+            var npkLeaf = Leaf(schema, "spectrum/" + Cv(MzPeakCv.NumberOfPeaks, "number_of_peaks"));
             var npkRows = records.Select(r => r.PeakCount.HasValue
                 ? MzPeakParquet.Present(npkLeaf)
                 : MzPeakParquet.AtLevel(npkLeaf.MaxDefinitionLevel - 1, false)).ToArray();
             var (npkDef, _) = MzPeakParquet.NestedLevels(npkLeaf, npkRows);
             cols[npkLeaf] = (records.Where(r => r.PeakCount.HasValue).Select(r => r.PeakCount.Value).ToArray(), npkDef, null);
 
-            AddNullableScalar(cols, schema, "spectrum/" + Cv("MS:1000504", "base_peak_mz", "MS:1000040"),
+            AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.BasePeakMz, "base_peak_mz", MzPeakCv.MzUnit),
                 records.Select(r => r.BasePeakMz).ToList());
-            AddNullableScalar(cols, schema, "spectrum/" + Cv("MS:1000505", "base_peak_intensity", "MS:1000131"),
+            AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.BasePeakIntensity, "base_peak_intensity", MzPeakCv.CountsUnit),
                 records.Select(r => r.BasePeakIntensity).ToList());
-            AddScalar(cols, schema, "spectrum/" + Cv("MS:1000285", "total_ion_current", "MS:1000131"),
+            AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.TotalIonCurrent, "total_ion_current", MzPeakCv.CountsUnit),
                 records.Select(r => r.TotalIonCurrent).ToArray(), presentAll);
 
             AddNullLeafScalar(cols, schema, "spectrum/data_processing_ref", n);
@@ -1348,13 +1318,13 @@ namespace ThermoRawFileParser.Writer
             // scan facet (present on all N rows)
             AddScalar(cols, schema, "scan/source_index", records.Select(r => r.Ordinal).ToArray(), presentAll);
             AddScalar(cols, schema, "scan/scan_index", records.Select(r => r.Ordinal).ToArray(), presentAll);
-            AddScalar(cols, schema, "scan/" + Cv("MS:1000016", "scan_start_time", "UO:0000031"),
+            AddScalar(cols, schema, "scan/" + Cv(MzPeakCv.ScanStartTime, "scan_start_time", MzPeakCv.MinuteUnit),
                 records.Select(r => r.ScanStartTime).ToArray(), presentAll);
-            AddNullableScalar(cols, schema, "scan/" + Cv("MS:1000616", "preset_scan_configuration"),
+            AddNullableScalar(cols, schema, "scan/" + Cv(MzPeakCv.PresetScanConfiguration, "preset_scan_configuration"),
                 records.Select(r => r.PresetScanConfiguration).ToList());
-            AddScalar(cols, schema, "scan/" + Cv("MS:1000512", "filter_string"),
+            AddScalar(cols, schema, "scan/" + Cv(MzPeakCv.FilterString, "filter_string"),
                 records.Select(r => r.FilterString).ToArray(), presentAll);
-            AddNullableScalar(cols, schema, "scan/" + Cv("MS:1000927", "ion_injection_time", "UO:0000028"),
+            AddNullableScalar(cols, schema, "scan/" + Cv(MzPeakCv.IonInjectionTime, "ion_injection_time", MzPeakCv.MillisecondUnit),
                 records.Select(r => r.IonInjectionTime).ToList());
             AddNullableScalar(cols, schema, "scan/ion_mobility_value",
                 records.Select(_ => (double?)null).ToList());
@@ -1369,11 +1339,11 @@ namespace ThermoRawFileParser.Writer
             AddMsnScalar(cols, schema, "precursor/source_index", n, msnRecords.Select(r => r.Ordinal).ToArray());
             AddMsnPrecursorIndex(cols, schema, "precursor/precursor_index", n, msnRecords);
             AddMsnString(cols, schema, "precursor/precursor_id", n, msnRecords.Select(r => r.PrecursorId).ToArray());
-            AddMsnNullableFloat(cols, schema, "precursor/isolation_window/" + Cv("MS:1000827", "isolation_window_target_mz"),
+            AddMsnNullable(cols, schema, "precursor/isolation_window/" + Cv(MzPeakCv.IsolationWindowTargetMz, "isolation_window_target_mz"),
                 n, msnRecords.Select(r => r.IsolationTarget).ToArray());
-            AddMsnNullableFloat(cols, schema, "precursor/isolation_window/" + Cv("MS:1000828", "isolation_window_lower_offset", "MS:1000040"),
+            AddMsnNullable(cols, schema, "precursor/isolation_window/" + Cv(MzPeakCv.IsolationWindowLowerOffset, "isolation_window_lower_offset", MzPeakCv.MzUnit),
                 n, msnRecords.Select(r => r.IsolationLowerOffset).ToArray());
-            AddMsnNullableFloat(cols, schema, "precursor/isolation_window/" + Cv("MS:1000829", "isolation_window_upper_offset", "MS:1000040"),
+            AddMsnNullable(cols, schema, "precursor/isolation_window/" + Cv(MzPeakCv.IsolationWindowUpperOffset, "isolation_window_upper_offset", MzPeakCv.MzUnit),
                 n, msnRecords.Select(r => r.IsolationUpperOffset).ToArray());
             AddMsnParamList(cols, schema, "precursor/isolation_window/parameters", n, msnRecords.Select(_ => new List<Param>()).ToList());
             AddMsnParamList(cols, schema, "precursor/activation/parameters", n, msnRecords.Select(r => r.ActivationParams).ToList());
@@ -1381,16 +1351,16 @@ namespace ThermoRawFileParser.Writer
             // selected_ion facet (present on rows 0..M-1, null on M..N-1)
             AddMsnScalar(cols, schema, "selected_ion/source_index", n, msnRecords.Select(r => r.Ordinal).ToArray());
             AddMsnPrecursorIndex(cols, schema, "selected_ion/precursor_index", n, msnRecords);
-            AddMsnNullableDouble(cols, schema, "selected_ion/" + Cv("MS:1000744", "selected_ion_mz", "MS:1000040"),
+            AddMsnNullable(cols, schema, "selected_ion/" + Cv(MzPeakCv.SelectedIonMz, "selected_ion_mz", MzPeakCv.MzUnit),
                 n, msnRecords.Select(r => r.SelectedIonMz).ToArray());
-            AddMsnNullableInt(cols, schema, "selected_ion/" + Cv("MS:1000041", "charge_state"),
+            AddMsnNullable(cols, schema, "selected_ion/" + Cv(MzPeakCv.ChargeState, "charge_state"),
                 n, msnRecords.Select(r => r.ChargeState).ToArray());
-            AddMsnNullableFloat(cols, schema, "selected_ion/" + Cv("MS:1000042", "intensity", "MS:1000131"),
+            AddMsnNullable(cols, schema, "selected_ion/" + Cv(MzPeakCv.SelectedIonIntensity, "intensity", MzPeakCv.CountsUnit),
                 n, msnRecords.Select(r => r.SelectedIonIntensity).ToArray());
 
             // Ion-mobility columns exist to match the selected_ion struct shape; the Thermo RAW path
             // carries no per-selected-ion mobility value, so they stay leaf-null on every MSn row.
-            AddMsnNullableDouble(cols, schema, "selected_ion/ion_mobility_value", n, msnRecords.Select(_ => (double?)null).ToArray());
+            AddMsnNullable(cols, schema, "selected_ion/ion_mobility_value", n, msnRecords.Select(_ => (double?)null).ToArray());
             AddMsnString(cols, schema, "selected_ion/ion_mobility_type", n, msnRecords.Select(_ => (string)null).ToArray());
             AddMsnParamList(cols, schema, "selected_ion/parameters", n, msnRecords.Select(_ => new List<Param>()).ToList());
 
@@ -1414,18 +1384,18 @@ namespace ThermoRawFileParser.Writer
             return new StructField("spectrum",
                 new DataField<ulong>("index", true),
                 new DataField<string>("id", true),
-                new DataField<byte>(Cv("MS:1000511", "ms_level"), true),
+                new DataField<byte>(Cv(MzPeakCv.MsLevel, "ms_level"), true),
                 new DataField<double>("time", true),
-                new DataField<sbyte>(Cv("MS:1000465", "scan_polarity"), true),
-                new DataField<string>(Cv("MS:1000525", "spectrum_representation"), true),
-                new DataField<string>(Cv("MS:1000559", "spectrum_type"), true),
-                new DataField<double>(Cv("MS:1000528", "lowest_observed_mz", "MS:1000040"), true),
-                new DataField<double>(Cv("MS:1000527", "highest_observed_mz", "MS:1000040"), true),
-                new DataField<ulong>(Cv("MS:1003060", "number_of_data_points"), true),
-                new DataField<ulong>(Cv("MS:1003059", "number_of_peaks"), true),
-                new DataField<double>(Cv("MS:1000504", "base_peak_mz", "MS:1000040"), true),
-                new DataField<float>(Cv("MS:1000505", "base_peak_intensity", "MS:1000131"), true),
-                new DataField<float>(Cv("MS:1000285", "total_ion_current", "MS:1000131"), true),
+                new DataField<sbyte>(Cv(MzPeakCv.ScanPolarity, "scan_polarity"), true),
+                new DataField<string>(Cv(MzPeakCv.SpectrumRepresentation, "spectrum_representation"), true),
+                new DataField<string>(Cv(MzPeakCv.SpectrumType, "spectrum_type"), true),
+                new DataField<double>(Cv(MzPeakCv.LowestObservedMz, "lowest_observed_mz", MzPeakCv.MzUnit), true),
+                new DataField<double>(Cv(MzPeakCv.HighestObservedMz, "highest_observed_mz", MzPeakCv.MzUnit), true),
+                new DataField<ulong>(Cv(MzPeakCv.NumberOfDataPoints, "number_of_data_points"), true),
+                new DataField<ulong>(Cv(MzPeakCv.NumberOfPeaks, "number_of_peaks"), true),
+                new DataField<double>(Cv(MzPeakCv.BasePeakMz, "base_peak_mz", MzPeakCv.MzUnit), true),
+                new DataField<float>(Cv(MzPeakCv.BasePeakIntensity, "base_peak_intensity", MzPeakCv.CountsUnit), true),
+                new DataField<float>(Cv(MzPeakCv.TotalIonCurrent, "total_ion_current", MzPeakCv.CountsUnit), true),
                 new DataField<string>("data_processing_ref", true),
                 new ListField("parameters", MzPeakParquet.BuildParamField("item")),
                 new ListField("auxiliary_arrays", BuildAuxArrayField("item")),
@@ -1436,16 +1406,16 @@ namespace ThermoRawFileParser.Writer
         private StructField BuildScanField()
         {
             var window = new StructField("item",
-                new DataField<float>(Cv("MS:1000501", "scan_window_lower_limit", "MS:1000040"), true),
-                new DataField<float>(Cv("MS:1000500", "scan_window_upper_limit", "MS:1000040"), true),
+                new DataField<float>(Cv(MzPeakCv.ScanWindowLowerLimit, "scan_window_lower_limit", MzPeakCv.MzUnit), true),
+                new DataField<float>(Cv(MzPeakCv.ScanWindowUpperLimit, "scan_window_upper_limit", MzPeakCv.MzUnit), true),
                 new ListField("parameters", MzPeakParquet.BuildParamField("item")));
             return new StructField("scan",
                 new DataField<ulong>("source_index", true),
                 new DataField<ulong>("scan_index", true),
-                new DataField<float>(Cv("MS:1000016", "scan_start_time", "UO:0000031"), true),
-                new DataField<uint>(Cv("MS:1000616", "preset_scan_configuration"), true),
-                new DataField<string>(Cv("MS:1000512", "filter_string"), true),
-                new DataField<float>(Cv("MS:1000927", "ion_injection_time", "UO:0000028"), true),
+                new DataField<float>(Cv(MzPeakCv.ScanStartTime, "scan_start_time", MzPeakCv.MinuteUnit), true),
+                new DataField<uint>(Cv(MzPeakCv.PresetScanConfiguration, "preset_scan_configuration"), true),
+                new DataField<string>(Cv(MzPeakCv.FilterString, "filter_string"), true),
+                new DataField<float>(Cv(MzPeakCv.IonInjectionTime, "ion_injection_time", MzPeakCv.MillisecondUnit), true),
                 new DataField<double>("ion_mobility_value", true),
                 new DataField<string>("ion_mobility_type", true),
                 new DataField<uint>("instrument_configuration_ref", true),
@@ -1457,9 +1427,9 @@ namespace ThermoRawFileParser.Writer
         private StructField BuildPrecursorField()
         {
             var isolationWindow = new StructField("isolation_window",
-                new DataField<float>(Cv("MS:1000827", "isolation_window_target_mz"), true),
-                new DataField<float>(Cv("MS:1000828", "isolation_window_lower_offset", "MS:1000040"), true),
-                new DataField<float>(Cv("MS:1000829", "isolation_window_upper_offset", "MS:1000040"), true),
+                new DataField<float>(Cv(MzPeakCv.IsolationWindowTargetMz, "isolation_window_target_mz"), true),
+                new DataField<float>(Cv(MzPeakCv.IsolationWindowLowerOffset, "isolation_window_lower_offset", MzPeakCv.MzUnit), true),
+                new DataField<float>(Cv(MzPeakCv.IsolationWindowUpperOffset, "isolation_window_upper_offset", MzPeakCv.MzUnit), true),
                 new ListField("parameters", MzPeakParquet.BuildParamField("item")));
             var activation = new StructField("activation",
                 new ListField("parameters", MzPeakParquet.BuildParamField("item")));
@@ -1476,9 +1446,9 @@ namespace ThermoRawFileParser.Writer
             return new StructField("selected_ion",
                 new DataField<ulong>("source_index", true),
                 new DataField<ulong>("precursor_index", true),
-                new DataField<double>(Cv("MS:1000744", "selected_ion_mz", "MS:1000040"), true),
-                new DataField<int>(Cv("MS:1000041", "charge_state"), true),
-                new DataField<float>(Cv("MS:1000042", "intensity", "MS:1000131"), true),
+                new DataField<double>(Cv(MzPeakCv.SelectedIonMz, "selected_ion_mz", MzPeakCv.MzUnit), true),
+                new DataField<int>(Cv(MzPeakCv.ChargeState, "charge_state"), true),
+                new DataField<float>(Cv(MzPeakCv.SelectedIonIntensity, "intensity", MzPeakCv.CountsUnit), true),
                 new DataField<double>("ion_mobility_value", true),
                 new DataField<string>("ion_mobility_type", true),
                 new ListField("parameters", MzPeakParquet.BuildParamField("item")));
@@ -1600,47 +1570,15 @@ namespace ThermoRawFileParser.Writer
             cols[leaf] = (present.ToArray(), def, null);
         }
 
-        private static void AddMsnNullableFloat(IDictionary<DataField, (Array, int[], int[])> cols,
-            ParquetSchema schema, string path, int n, float?[] values)
+        // A nullable scalar leaf on the MSn struct (present on the first M rows). Genuine null values
+        // emit leaf-null one level below present; rows past M (i >= M) sit at def-level 0 (struct absent).
+        private static void AddMsnNullable<T>(IDictionary<DataField, (Array, int[], int[])> cols,
+            ParquetSchema schema, string path, int n, T?[] values) where T : struct
         {
             var leaf = Leaf(schema, path);
             int m = values.Length;
             var rows = new List<MzPeakParquet.LeafRow>();
-            var present = new List<float>();
-            for (int i = 0; i < n; i++)
-            {
-                if (i >= m) rows.Add(MzPeakParquet.Absent());
-                else if (values[i].HasValue) { rows.Add(MzPeakParquet.Present(leaf)); present.Add(values[i].Value); }
-                else rows.Add(MzPeakParquet.AtLevel(leaf.MaxDefinitionLevel - 1, false));
-            }
-            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
-            cols[leaf] = (present.ToArray(), def, null);
-        }
-
-        private static void AddMsnNullableDouble(IDictionary<DataField, (Array, int[], int[])> cols,
-            ParquetSchema schema, string path, int n, double?[] values)
-        {
-            var leaf = Leaf(schema, path);
-            int m = values.Length;
-            var rows = new List<MzPeakParquet.LeafRow>();
-            var present = new List<double>();
-            for (int i = 0; i < n; i++)
-            {
-                if (i >= m) rows.Add(MzPeakParquet.Absent());
-                else if (values[i].HasValue) { rows.Add(MzPeakParquet.Present(leaf)); present.Add(values[i].Value); }
-                else rows.Add(MzPeakParquet.AtLevel(leaf.MaxDefinitionLevel - 1, false));
-            }
-            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
-            cols[leaf] = (present.ToArray(), def, null);
-        }
-
-        private static void AddMsnNullableInt(IDictionary<DataField, (Array, int[], int[])> cols,
-            ParquetSchema schema, string path, int n, int?[] values)
-        {
-            var leaf = Leaf(schema, path);
-            int m = values.Length;
-            var rows = new List<MzPeakParquet.LeafRow>();
-            var present = new List<int>();
+            var present = new List<T>();
             for (int i = 0; i < n; i++)
             {
                 if (i >= m) rows.Add(MzPeakParquet.Absent());
@@ -1768,8 +1706,8 @@ namespace ThermoRawFileParser.Writer
         private void AddScanWindows(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
             List<Record> records)
         {
-            var lowerLeaf = Leaf(schema, "scan/scan_windows/list/item/" + Cv("MS:1000501", "scan_window_lower_limit", "MS:1000040"));
-            var upperLeaf = Leaf(schema, "scan/scan_windows/list/item/" + Cv("MS:1000500", "scan_window_upper_limit", "MS:1000040"));
+            var lowerLeaf = Leaf(schema, "scan/scan_windows/list/item/" + Cv(MzPeakCv.ScanWindowLowerLimit, "scan_window_lower_limit", MzPeakCv.MzUnit));
+            var upperLeaf = Leaf(schema, "scan/scan_windows/list/item/" + Cv(MzPeakCv.ScanWindowUpperLimit, "scan_window_upper_limit", MzPeakCv.MzUnit));
 
             var lowerRows = new List<MzPeakParquet.LeafRow>();
             var upperRows = new List<MzPeakParquet.LeafRow>();
@@ -1909,7 +1847,7 @@ namespace ThermoRawFileParser.Writer
                 var configParams = new JArray
                 {
                     CvParam(model.accession, model.name, model.value),
-                    CvParam("MS:1000529", "instrument serial number", _instrumentSerial)
+                    CvParam(MzPeakCv.InstrumentSerialNumber, "instrument serial number", _instrumentSerial)
                 };
                 var components = new JArray
                 {
@@ -1946,7 +1884,7 @@ namespace ThermoRawFileParser.Writer
                 {
                     ["id"] = "ThermoRawFileParser",
                     ["version"] = MainClass.Version,
-                    ["parameters"] = new JArray { CvParam("MS:1003145", "ThermoRawFileParser", null) }
+                    ["parameters"] = new JArray { CvParam(MzPeakCv.ThermoRawFileParser, "ThermoRawFileParser", null) }
                 }
             };
         }
@@ -1959,7 +1897,7 @@ namespace ThermoRawFileParser.Writer
                 {
                     ["order"] = 0,
                     ["software_reference"] = "ThermoRawFileParser",
-                    ["parameters"] = new JArray { CvParam("MS:1000530", "file format conversion", null) }
+                    ["parameters"] = new JArray { CvParam(MzPeakCv.FileFormatConversion, "file format conversion", null) }
                 },
                 new JObject
                 {
@@ -1977,7 +1915,7 @@ namespace ThermoRawFileParser.Writer
                     ["software_reference"] = "ThermoRawFileParser",
                     ["parameters"] = new JArray
                     {
-                        CvParam(NumpressLinearCurie, "MS-Numpress linear prediction compression", null),
+                        CvParam(MzPeakCv.NumpressLinear, "MS-Numpress linear prediction compression", null),
                         JParam("m/z encoding", null, "lossy Numpress-linear (bounded ~5e-7 Th); intensity lossless f32", null)
                     }
                 });
@@ -1997,13 +1935,13 @@ namespace ThermoRawFileParser.Writer
         {
             var contents = new JArray
             {
-                CvParam("MS:1000579", "MS1 spectrum", null),
-                CvParam("MS:1000580", "MSn spectrum", null)
+                CvParam(MzPeakCv.Ms1Spectrum, "MS1 spectrum", null),
+                CvParam(MzPeakCv.MsnSpectrum, "MSn spectrum", null)
             };
             var sourceParams = new JArray
             {
-                CvParam("MS:1000768", "Thermo nativeID format", null),
-                CvParam("MS:1000563", "Thermo RAW format", null)
+                CvParam(MzPeakCv.ThermoNativeIdFormat, "Thermo nativeID format", null),
+                CvParam(MzPeakCv.ThermoRawFormat, "Thermo RAW format", null)
             };
             return new JObject
             {

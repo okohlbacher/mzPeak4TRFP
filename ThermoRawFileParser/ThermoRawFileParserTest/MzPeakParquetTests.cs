@@ -8,17 +8,13 @@ using Parquet;
 using Parquet.Data;
 using Parquet.Schema;
 using ThermoRawFileParser.Writer;
+using static ThermoRawFileParserTest.MzPeakTestSupport;
 
 namespace ThermoRawFileParserTest
 {
     [TestFixture]
     public class MzPeakParquetTests
     {
-        private static DataField Leaf(ParquetSchema schema, string dotPath)
-        {
-            return schema.GetDataFields().First(d => d.Path.ToString() == dotPath);
-        }
-
         [Test]
         public void CvColumn_EmbedsAccessionAndLabel()
         {
@@ -48,7 +44,7 @@ namespace ThermoRawFileParserTest
         }
 
         [Test]
-        public void Column_DefRepLevels_MatchCheatSheet()
+        public void Column_DefRepLevels_MatchExpected()
         {
             var paramItem = new StructField("item",
                 new DataField<string>("name"),
@@ -198,7 +194,7 @@ namespace ThermoRawFileParserTest
         }
 
         [Test]
-        public void NestedLevels_Reproduces_CheatSheet_Levels()
+        public void NestedLevels_Reproduces_Expected_Levels()
         {
             var paramItem = new StructField("item",
                 new DataField<string>("name"), new DataField<double>("val", true));
@@ -234,7 +230,7 @@ namespace ThermoRawFileParserTest
             // list-of-struct leaves: max-def 5; present-elem 5, leaf-null-in-elem 4, empty-list 2, null-list 0
             Assert.That(nameLeaf.MaxDefinitionLevel, Is.EqualTo(5));
             Assert.That(paramsList.MaxDefinitionLevel, Is.EqualTo(3));
-            // empty-list level for these leaves is the cheat-sheet 2 (= list MaxDef - 1)
+            // empty-list level for these leaves is the expected 2 (= list MaxDef - 1)
             Assert.That(MzPeakParquet.EmptyList(paramsList).Cells[0], Is.EqualTo(2));
             // row0: 2 elements (both name present); row1: null list; row2: empty list
             var (nDef, nRep) = MzPeakParquet.NestedLevels(nameLeaf, new[]
@@ -406,7 +402,7 @@ print(json.dumps(out))
                     var actLens = o["activation_lens"].Select(x => x.Type == Newtonsoft.Json.Linq.JTokenType.Null ? (int?)null : (int)x).ToArray();
                     Assert.That(actLens, Is.EqualTo(new int?[] { 2, 0, null, null }));
 
-                    // LEVEL-AWARE null list (H1): row2 has activation PRESENT with a null parameters list,
+                    // LEVEL-AWARE null list: row2 has activation PRESENT with a null parameters list,
                     // row3 has the whole precursor (hence activation) absent. These two must be encoded at
                     // DIFFERENT definition levels so a reader can tell present-struct-null-list from
                     // absent-struct -- not collapsed to a flat def=0.
@@ -467,29 +463,6 @@ print(json.dumps(out))
                 }
             }
             return def;
-        }
-
-        private static string ResolvePython()
-        {
-            foreach (var cand in new[] { "python3", "python" })
-            {
-                try
-                {
-                    var psi = new ProcessStartInfo(cand, "-c \"import pyarrow\"")
-                    {
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false
-                    };
-                    using (var p = Process.Start(psi))
-                    {
-                        p.WaitForExit();
-                        if (p.ExitCode == 0) return cand;
-                    }
-                }
-                catch { }
-            }
-            return null;
         }
 
         private static string Quote(string s) => "\"" + s.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";

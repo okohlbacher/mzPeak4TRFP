@@ -9,17 +9,6 @@ using Parquet.Schema;
 
 namespace ThermoRawFileParser.Writer
 {
-    public struct MzPeakParam
-    {
-        public long? Integer;
-        public double? Float;
-        public string String;
-        public bool? Boolean;
-        public string Accession;
-        public string Name;
-        public string Unit;
-    }
-
     public static class MzPeakParquet
     {
         public static StructField BuildParamField(string name)
@@ -101,14 +90,6 @@ namespace ThermoRawFileParser.Writer
             return (def.ToArray(), rep?.ToArray());
         }
 
-        // Builder helpers expressed against the leaf's own max levels. Definition-level semantics
-        // (measured against Parquet.Net 5.0.1): a present non-null leaf reaches MaxDefinitionLevel;
-        // a leaf that is null inside a present element reaches MaxDefinitionLevel-1; a present-but-
-        // empty list reaches the list-present level (MaxDefinitionLevel minus the element+value
-        // levels); a null list reaches 0.
-        public static int PresentLevel(DataField leaf) => leaf.MaxDefinitionLevel;
-        public static int LeafNullLevel(DataField leaf) => leaf.MaxDefinitionLevel - 1;
-
         // A non-repeated leaf that is present on this row (top struct / nested struct present).
         public static LeafRow Present(DataField leaf) =>
             new LeafRow(false, new[] { leaf.MaxDefinitionLevel }, new[] { true });
@@ -148,10 +129,6 @@ namespace ThermoRawFileParser.Writer
         // apart from "activation absent".
         public static LeafRow NullList(ListField list) =>
             new LeafRow(true, new[] { list.MaxDefinitionLevel - 2 }, new[] { false });
-
-        // A null list at an explicit definition level, for cases where an ancestor above the list's
-        // immediate parent is the one that is null (e.g. grandparent present, parent null).
-        public static LeafRow NullListAt(int level) => new LeafRow(true, new[] { level }, new[] { false });
 
         public static async Task WriteAsync(Stream output, ParquetSchema schema,
             IReadOnlyDictionary<string, string> customMetadata,
