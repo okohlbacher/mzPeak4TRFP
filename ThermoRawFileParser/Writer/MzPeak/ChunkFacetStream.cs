@@ -75,14 +75,14 @@ namespace ThermoRawFileParser.Writer
             _numpress = numpress;
             TempPath = Path.GetTempFileName();
             _schema = new ParquetSchema(ChunkStructField(numpress));
-            _idx = MzPeakSpectrumWriter.Leaf(_schema, "chunk/spectrum_index");
-            _start = MzPeakSpectrumWriter.Leaf(_schema, "chunk/mz_chunk_start");
-            _end = MzPeakSpectrumWriter.Leaf(_schema, "chunk/mz_chunk_end");
-            _enc = MzPeakSpectrumWriter.Leaf(_schema, "chunk/chunk_encoding");
-            _mzItem = MzPeakSpectrumWriter.Leaf(_schema, "chunk/mz_chunk_values/list/item");
-            _mzList = (ListField)MzPeakSpectrumWriter.FindField(_schema, "chunk/mz_chunk_values");
-            _intItem = MzPeakSpectrumWriter.Leaf(_schema, "chunk/intensity/list/item");
-            _npkItem = numpress ? MzPeakSpectrumWriter.Leaf(_schema, "chunk/mz_numpress_linear_bytes/list/item") : null;
+            _idx = MzPeakColumns.Leaf(_schema, "chunk/spectrum_index");
+            _start = MzPeakColumns.Leaf(_schema, "chunk/mz_chunk_start");
+            _end = MzPeakColumns.Leaf(_schema, "chunk/mz_chunk_end");
+            _enc = MzPeakColumns.Leaf(_schema, "chunk/chunk_encoding");
+            _mzItem = MzPeakColumns.Leaf(_schema, "chunk/mz_chunk_values/list/item");
+            _mzList = (ListField)MzPeakColumns.FindField(_schema, "chunk/mz_chunk_values");
+            _intItem = MzPeakColumns.Leaf(_schema, "chunk/intensity/list/item");
+            _npkItem = numpress ? MzPeakColumns.Leaf(_schema, "chunk/mz_numpress_linear_bytes/list/item") : null;
             try
             {
                 _sink = new FileStream(TempPath, FileMode.Create, FileAccess.Write);

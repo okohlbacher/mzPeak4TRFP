@@ -46,58 +46,6 @@ namespace ThermoRawFileParser.Writer
         private int Cap => TestRowGroupRowCap ?? RowGroupRowCap;
         private long ByteCap => TestRowGroupByteCap ?? RowGroupByteCap;
 
-        // One PARAM value, used to collect CV prefixes for the generated cv_list.
-        private sealed class Param
-        {
-            public string Accession;
-            public string Name;
-            public string Unit;
-            public double? Float;
-            public long? Integer;
-            public string String;
-            public bool? Boolean;
-        }
-
-        private sealed class Record
-        {
-            public ulong Ordinal;
-            public int ScanNumber;
-            public int MsLevel;
-            public string Id;
-            public double Time;
-            public sbyte? Polarity;
-            public string Representation;
-            public string SpectrumType;
-            public double? LowestMz;
-            public double? HighestMz;
-            public double? BasePeakMz;
-            public float? BasePeakIntensity;
-            public float TotalIonCurrent;
-            public ulong DataPointCount;
-            public ulong? PeakCount;
-            public List<Param> SpectrumParams = new List<Param>();
-
-            public float ScanStartTime;
-            public uint? PresetScanConfiguration;
-            public string FilterString;
-            public float? IonInjectionTime;
-            public uint InstrumentConfigRef;
-            public float WindowLower;
-            public float WindowUpper;
-
-            public bool IsMsn;
-            public bool HasReaction;
-            public ulong? PrecursorIndex;
-            public string PrecursorId;
-            public float? IsolationTarget;
-            public float? IsolationLowerOffset;
-            public float? IsolationUpperOffset;
-            public List<Param> ActivationParams = new List<Param>();
-            public double? SelectedIonMz;
-            public int? ChargeState;
-            public float? SelectedIonIntensity;
-        }
-
         private readonly HashSet<string> _cvPrefixes = new HashSet<string>();
         private bool _chromFromDeviceTrace;
         private readonly List<MassAnalyzerType> _analyzerOrder = new List<MassAnalyzerType>();
@@ -139,7 +87,7 @@ namespace ThermoRawFileParser.Writer
         {
             public double[] Mz, PeakMz;
             public float[] Inten, PeakInten;
-            public Record Rec;
+            public MzPeakRecord Rec;
             public string FilterKey;
         }
 
@@ -157,7 +105,7 @@ namespace ThermoRawFileParser.Writer
             _sourceName = Path.GetFileName(ParseInput.RawFilePath);
             _sourceLocation = "file://" + (Path.GetDirectoryName(Path.GetFullPath(ParseInput.RawFilePath)) ?? "");
 
-            var records = new List<Record>();
+            var records = new List<MzPeakRecord>();
             var scanNumberToOrdinal = new Dictionary<int, ulong>();
             var dataSpectra = new HashSet<ulong>();
             var peakSpectra = new HashSet<ulong>();
@@ -348,7 +296,7 @@ namespace ThermoRawFileParser.Writer
             // indistinguishable from a real post-key read failure and must leave no trace of this scan.
             AfterFilterKeyStaged?.Invoke(scanNumber);
 
-            var rec = new Record
+            var rec = new MzPeakRecord
             {
                 Ordinal = ordinal,
                 ScanNumber = scanNumber,
@@ -458,7 +406,7 @@ namespace ThermoRawFileParser.Writer
             return (sortedMz, sortedInten);
         }
 
-        private void CaptureTic(IRawDataPlus raw, List<Record> records, List<double> time,
+        private void CaptureTic(IRawDataPlus raw, List<MzPeakRecord> records, List<double> time,
             List<float> intensity, List<long> msLevel)
         {
             ChromatogramSignal[] trace;
@@ -542,28 +490,28 @@ namespace ThermoRawFileParser.Writer
             var cols = new Dictionary<DataField, (Array, int[], int[])>();
             var present = new[] { true };
 
-            AddScalar(cols, schema, "chromatogram/index", new ulong[] { 0UL }, present);
-            AddScalar(cols, schema, "chromatogram/id", new[] { "TIC" }, present);
-            AddScalar(cols, schema, "chromatogram/" + Cv(MzPeakCv.ScanPolarity, "scan_polarity"),
+            MzPeakColumns.AddScalar(cols, schema, "chromatogram/index", new ulong[] { 0UL }, present);
+            MzPeakColumns.AddScalar(cols, schema, "chromatogram/id", new[] { "TIC" }, present);
+            MzPeakColumns.AddScalar(cols, schema, "chromatogram/" + Cv(MzPeakCv.ScanPolarity, "scan_polarity"),
                 new sbyte[] { 0 }, present);
             CollectPrefix(MzPeakCv.MzArrayData);
-            AddScalar(cols, schema, "chromatogram/" + Cv(MzPeakCv.ChromatogramType, "chromatogram_type"),
+            MzPeakColumns.AddScalar(cols, schema, "chromatogram/" + Cv(MzPeakCv.ChromatogramType, "chromatogram_type"),
                 new[] { MzPeakCv.MzArrayData }, present);
 
-            var dprLeaf = Leaf(schema, "chromatogram/data_processing_ref");
+            var dprLeaf = MzPeakColumns.Leaf(schema, "chromatogram/data_processing_ref");
             var dprRows = new[] { MzPeakParquet.AtLevel(dprLeaf.MaxDefinitionLevel - 1, false) };
             var (dprDef, _) = MzPeakParquet.NestedLevels(dprLeaf, dprRows);
             cols[dprLeaf] = (new string[0], dprDef, null);
 
-            AddScalar(cols, schema, "chromatogram/" + Cv(MzPeakCv.NumberOfDataPoints, "number_of_data_points"),
+            MzPeakColumns.AddScalar(cols, schema, "chromatogram/" + Cv(MzPeakCv.NumberOfDataPoints, "number_of_data_points"),
                 new ulong[] { (ulong)n }, present);
 
-            AddEmptyList(cols, schema, "chromatogram/parameters");
-            AddEmptyList(cols, schema, "chromatogram/auxiliary_arrays");
-            AddScalar(cols, schema, "chromatogram/number_of_auxiliary_arrays", new uint[] { 0u }, present);
+            MzPeakColumns.AddEmptyList(cols, schema, "chromatogram/parameters");
+            MzPeakColumns.AddEmptyList(cols, schema, "chromatogram/auxiliary_arrays");
+            MzPeakColumns.AddScalar(cols, schema, "chromatogram/number_of_auxiliary_arrays", new uint[] { 0u }, present);
 
-            AddNullPrecursor(cols, schema);
-            AddNullSelectedIon(cols, schema);
+            MzPeakColumns.AddNullPrecursor(cols, schema);
+            MzPeakColumns.AddNullSelectedIon(cols, schema);
 
             var custom = new Dictionary<string, string>
             {
@@ -571,7 +519,7 @@ namespace ThermoRawFileParser.Writer
                 ["chromatogram_data_point_count"] = "0"
             };
 
-            return WriteFacet(schema, custom, cols);
+            return MzPeakColumns.WriteFacet(schema, custom, cols);
         }
 
         private StructField BuildChromatogramField()
@@ -600,51 +548,6 @@ namespace ThermoRawFileParser.Writer
                 new DataField<string>("data_processing_ref", true));
         }
 
-        // A present-but-empty list on a single-row facet (the list value is defined, no elements).
-        // Every descendant leaf gets the empty-list level, including auxiliary_arrays whose element
-        // struct carries a non-nullable data leaf (data/list/item: uint8 not null).
-        private void AddEmptyList(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
-            string listPath)
-        {
-            var list = (ListField)FindField(schema, listPath);
-            foreach (var leaf in schema.GetDataFields())
-            {
-                if (!leaf.Path.ToString().StartsWith(listPath + "/")) continue;
-                var rows = new[] { MzPeakParquet.EmptyList(list) };
-                var (def, rep) = MzPeakParquet.NestedLevels(leaf, rows);
-                cols[leaf] = (EmptyArray(leaf.ClrType), def, rep);
-            }
-        }
-
-        private void AddNullPrecursor(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema)
-        {
-            foreach (var leaf in schema.GetDataFields())
-            {
-                if (!leaf.Path.ToString().StartsWith("precursor/")) continue;
-                AddNullLeaf(cols, leaf);
-            }
-        }
-
-        private void AddNullSelectedIon(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema)
-        {
-            foreach (var leaf in schema.GetDataFields())
-            {
-                if (!leaf.Path.ToString().StartsWith("selected_ion/")) continue;
-                AddNullLeaf(cols, leaf);
-            }
-        }
-
-        // A single all-null row for a leaf in a present-but-null top-level struct: definition level
-        // sits one below the leaf's own present level (the owning struct is null), no value slot.
-        private static void AddNullLeaf(IDictionary<DataField, (Array, int[], int[])> cols, DataField leaf)
-        {
-            var rows = new[] { MzPeakParquet.AtLevel(0, false) };
-            var (def, rep) = MzPeakParquet.NestedLevels(leaf, rows);
-            cols[leaf] = (EmptyArray(leaf.ClrType), def, rep);
-        }
-
-        private static Array EmptyArray(Type clr) => Array.CreateInstance(clr, 0);
-
         private uint AnalyzerIndex(MassAnalyzerType analyzer, IonizationModeType ionization)
         {
             int idx = _analyzerOrder.IndexOf(analyzer);
@@ -659,7 +562,7 @@ namespace ThermoRawFileParser.Writer
 
         private void BuildPrecursor(IRawDataPlus raw, int scanNumber, IScanEvent scanEvent,
             IScanFilter scanFilter, ScanTrailer trailer, IDictionary<int, ulong> scanNumberToOrdinal,
-            string filterKey, Record rec)
+            string filterKey, MzPeakRecord rec)
         {
             rec.IsMsn = true;
 
@@ -694,12 +597,12 @@ namespace ThermoRawFileParser.Writer
 
             if (OntologyMapping.DissociationTypes.TryGetValue(reaction.ActivationType, out var diss))
             {
-                rec.ActivationParams.Add(new Param { Accession = diss.accession, Name = diss.name });
+                rec.ActivationParams.Add(new MzPeakParam { Accession = diss.accession, Name = diss.name });
             }
 
             if (reaction.CollisionEnergyValid)
             {
-                rec.ActivationParams.Add(new Param
+                rec.ActivationParams.Add(new MzPeakParam
                 {
                     Accession = MzPeakCv.CollisionEnergy,
                     Name = "collision energy",
@@ -758,7 +661,7 @@ namespace ThermoRawFileParser.Writer
             foreach (var curie in MzPeakLayout.ChromDataAccessions) CollectPrefix(curie);
         }
 
-        private byte[] BuildMetadataFacet(List<Record> records)
+        private byte[] BuildMetadataFacet(List<MzPeakRecord> records)
         {
             int n = records.Count;
 
@@ -776,94 +679,94 @@ namespace ThermoRawFileParser.Writer
             var msnRecords = records.Where(r => r.IsMsn).OrderBy(r => r.Ordinal).ToList();
 
             // spectrum facet (present on all N rows)
-            AddScalar(cols, schema, "spectrum/index", records.Select(r => r.Ordinal).ToArray(), presentAll);
-            AddScalar(cols, schema, "spectrum/id", records.Select(r => r.Id).ToArray(), presentAll);
-            AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.MsLevel, "ms_level"),
+            MzPeakColumns.AddScalar(cols, schema, "spectrum/index", records.Select(r => r.Ordinal).ToArray(), presentAll);
+            MzPeakColumns.AddScalar(cols, schema, "spectrum/id", records.Select(r => r.Id).ToArray(), presentAll);
+            MzPeakColumns.AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.MsLevel, "ms_level"),
                 records.Select(r => (byte)r.MsLevel).ToArray(), presentAll);
-            AddScalar(cols, schema, "spectrum/time", records.Select(r => r.Time).ToArray(), presentAll);
-            AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.ScanPolarity, "scan_polarity"),
+            MzPeakColumns.AddScalar(cols, schema, "spectrum/time", records.Select(r => r.Time).ToArray(), presentAll);
+            MzPeakColumns.AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.ScanPolarity, "scan_polarity"),
                 records.Select(r => r.Polarity).ToList());
-            AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.SpectrumRepresentation, "spectrum_representation"),
+            MzPeakColumns.AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.SpectrumRepresentation, "spectrum_representation"),
                 records.Select(r => r.Representation).ToArray(), presentAll);
-            AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.SpectrumType, "spectrum_type"),
+            MzPeakColumns.AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.SpectrumType, "spectrum_type"),
                 records.Select(r => r.SpectrumType).ToArray(), presentAll);
-            AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.LowestObservedMz, "lowest_observed_mz", MzPeakCv.MzUnit),
+            MzPeakColumns.AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.LowestObservedMz, "lowest_observed_mz", MzPeakCv.MzUnit),
                 records.Select(r => r.LowestMz).ToList());
-            AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.HighestObservedMz, "highest_observed_mz", MzPeakCv.MzUnit),
+            MzPeakColumns.AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.HighestObservedMz, "highest_observed_mz", MzPeakCv.MzUnit),
                 records.Select(r => r.HighestMz).ToList());
-            AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.NumberOfDataPoints, "number_of_data_points"),
+            MzPeakColumns.AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.NumberOfDataPoints, "number_of_data_points"),
                 records.Select(r => r.DataPointCount).ToArray(), presentAll);
 
             // number_of_peaks: present only where peaks were written (leaf-null otherwise).
-            var npkLeaf = Leaf(schema, "spectrum/" + Cv(MzPeakCv.NumberOfPeaks, "number_of_peaks"));
+            var npkLeaf = MzPeakColumns.Leaf(schema, "spectrum/" + Cv(MzPeakCv.NumberOfPeaks, "number_of_peaks"));
             var npkRows = records.Select(r => r.PeakCount.HasValue
                 ? MzPeakParquet.Present(npkLeaf)
                 : MzPeakParquet.AtLevel(npkLeaf.MaxDefinitionLevel - 1, false)).ToArray();
             var (npkDef, _) = MzPeakParquet.NestedLevels(npkLeaf, npkRows);
             cols[npkLeaf] = (records.Where(r => r.PeakCount.HasValue).Select(r => r.PeakCount.Value).ToArray(), npkDef, null);
 
-            AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.BasePeakMz, "base_peak_mz", MzPeakCv.MzUnit),
+            MzPeakColumns.AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.BasePeakMz, "base_peak_mz", MzPeakCv.MzUnit),
                 records.Select(r => r.BasePeakMz).ToList());
-            AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.BasePeakIntensity, "base_peak_intensity", MzPeakCv.CountsUnit),
+            MzPeakColumns.AddNullableScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.BasePeakIntensity, "base_peak_intensity", MzPeakCv.CountsUnit),
                 records.Select(r => r.BasePeakIntensity).ToList());
-            AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.TotalIonCurrent, "total_ion_current", MzPeakCv.CountsUnit),
+            MzPeakColumns.AddScalar(cols, schema, "spectrum/" + Cv(MzPeakCv.TotalIonCurrent, "total_ion_current", MzPeakCv.CountsUnit),
                 records.Select(r => r.TotalIonCurrent).ToArray(), presentAll);
 
-            AddNullLeafScalar(cols, schema, "spectrum/data_processing_ref", n);
-            AddParamList(cols, schema, "spectrum/parameters", records.Select(r => r.SpectrumParams).ToList(), presentAll);
-            AddEmptyListEveryRow(cols, schema, "spectrum/auxiliary_arrays", n);
-            AddScalar(cols, schema, "spectrum/number_of_auxiliary_arrays",
+            MzPeakColumns.AddNullLeafScalar(cols, schema, "spectrum/data_processing_ref", n);
+            MzPeakColumns.AddParamList(cols, schema, "spectrum/parameters", records.Select(r => r.SpectrumParams).ToList(), presentAll, CollectPrefix);
+            MzPeakColumns.AddEmptyListEveryRow(cols, schema, "spectrum/auxiliary_arrays", n);
+            MzPeakColumns.AddScalar(cols, schema, "spectrum/number_of_auxiliary_arrays",
                 records.Select(_ => 0u).ToArray(), presentAll);
-            AddEmptyListEveryRow(cols, schema, "spectrum/mz_delta_model", n);
+            MzPeakColumns.AddEmptyListEveryRow(cols, schema, "spectrum/mz_delta_model", n);
 
             // scan facet (present on all N rows)
-            AddScalar(cols, schema, "scan/source_index", records.Select(r => r.Ordinal).ToArray(), presentAll);
-            AddScalar(cols, schema, "scan/scan_index", records.Select(r => r.Ordinal).ToArray(), presentAll);
-            AddScalar(cols, schema, "scan/" + Cv(MzPeakCv.ScanStartTime, "scan_start_time", MzPeakCv.MinuteUnit),
+            MzPeakColumns.AddScalar(cols, schema, "scan/source_index", records.Select(r => r.Ordinal).ToArray(), presentAll);
+            MzPeakColumns.AddScalar(cols, schema, "scan/scan_index", records.Select(r => r.Ordinal).ToArray(), presentAll);
+            MzPeakColumns.AddScalar(cols, schema, "scan/" + Cv(MzPeakCv.ScanStartTime, "scan_start_time", MzPeakCv.MinuteUnit),
                 records.Select(r => r.ScanStartTime).ToArray(), presentAll);
-            AddNullableScalar(cols, schema, "scan/" + Cv(MzPeakCv.PresetScanConfiguration, "preset_scan_configuration"),
+            MzPeakColumns.AddNullableScalar(cols, schema, "scan/" + Cv(MzPeakCv.PresetScanConfiguration, "preset_scan_configuration"),
                 records.Select(r => r.PresetScanConfiguration).ToList());
-            AddScalar(cols, schema, "scan/" + Cv(MzPeakCv.FilterString, "filter_string"),
+            MzPeakColumns.AddScalar(cols, schema, "scan/" + Cv(MzPeakCv.FilterString, "filter_string"),
                 records.Select(r => r.FilterString).ToArray(), presentAll);
-            AddNullableScalar(cols, schema, "scan/" + Cv(MzPeakCv.IonInjectionTime, "ion_injection_time", MzPeakCv.MillisecondUnit),
+            MzPeakColumns.AddNullableScalar(cols, schema, "scan/" + Cv(MzPeakCv.IonInjectionTime, "ion_injection_time", MzPeakCv.MillisecondUnit),
                 records.Select(r => r.IonInjectionTime).ToList());
-            AddNullableScalar(cols, schema, "scan/ion_mobility_value",
+            MzPeakColumns.AddNullableScalar(cols, schema, "scan/ion_mobility_value",
                 records.Select(_ => (double?)null).ToList());
-            AddNullLeafScalar(cols, schema, "scan/ion_mobility_type", n);
-            AddScalar(cols, schema, "scan/instrument_configuration_ref",
+            MzPeakColumns.AddNullLeafScalar(cols, schema, "scan/ion_mobility_type", n);
+            MzPeakColumns.AddScalar(cols, schema, "scan/instrument_configuration_ref",
                 records.Select(r => r.InstrumentConfigRef).ToArray(), presentAll);
-            AddNullLeafScalar(cols, schema, "scan/spectrum_reference", n);
-            AddParamList(cols, schema, "scan/parameters", records.Select(_ => new List<Param>()).ToList(), presentAll);
-            AddScanWindows(cols, schema, records);
+            MzPeakColumns.AddNullLeafScalar(cols, schema, "scan/spectrum_reference", n);
+            MzPeakColumns.AddParamList(cols, schema, "scan/parameters", records.Select(_ => new List<MzPeakParam>()).ToList(), presentAll, CollectPrefix);
+            MzPeakColumns.AddScanWindows(cols, schema, records, Cv);
 
             // precursor facet (present on rows 0..M-1, null on M..N-1)
-            AddMsnScalar(cols, schema, "precursor/source_index", n, msnRecords.Select(r => r.Ordinal).ToArray());
-            AddMsnPrecursorIndex(cols, schema, "precursor/precursor_index", n, msnRecords);
-            AddMsnString(cols, schema, "precursor/precursor_id", n, msnRecords.Select(r => r.PrecursorId).ToArray());
-            AddMsnNullable(cols, schema, "precursor/isolation_window/" + Cv(MzPeakCv.IsolationWindowTargetMz, "isolation_window_target_mz"),
+            MzPeakColumns.AddMsnScalar(cols, schema, "precursor/source_index", n, msnRecords.Select(r => r.Ordinal).ToArray());
+            MzPeakColumns.AddMsnPrecursorIndex(cols, schema, "precursor/precursor_index", n, msnRecords);
+            MzPeakColumns.AddMsnString(cols, schema, "precursor/precursor_id", n, msnRecords.Select(r => r.PrecursorId).ToArray());
+            MzPeakColumns.AddMsnNullable(cols, schema, "precursor/isolation_window/" + Cv(MzPeakCv.IsolationWindowTargetMz, "isolation_window_target_mz"),
                 n, msnRecords.Select(r => r.IsolationTarget).ToArray());
-            AddMsnNullable(cols, schema, "precursor/isolation_window/" + Cv(MzPeakCv.IsolationWindowLowerOffset, "isolation_window_lower_offset", MzPeakCv.MzUnit),
+            MzPeakColumns.AddMsnNullable(cols, schema, "precursor/isolation_window/" + Cv(MzPeakCv.IsolationWindowLowerOffset, "isolation_window_lower_offset", MzPeakCv.MzUnit),
                 n, msnRecords.Select(r => r.IsolationLowerOffset).ToArray());
-            AddMsnNullable(cols, schema, "precursor/isolation_window/" + Cv(MzPeakCv.IsolationWindowUpperOffset, "isolation_window_upper_offset", MzPeakCv.MzUnit),
+            MzPeakColumns.AddMsnNullable(cols, schema, "precursor/isolation_window/" + Cv(MzPeakCv.IsolationWindowUpperOffset, "isolation_window_upper_offset", MzPeakCv.MzUnit),
                 n, msnRecords.Select(r => r.IsolationUpperOffset).ToArray());
-            AddMsnParamList(cols, schema, "precursor/isolation_window/parameters", n, msnRecords.Select(_ => new List<Param>()).ToList());
-            AddMsnParamList(cols, schema, "precursor/activation/parameters", n, msnRecords.Select(r => r.ActivationParams).ToList());
+            MzPeakColumns.AddMsnParamList(cols, schema, "precursor/isolation_window/parameters", n, msnRecords.Select(_ => new List<MzPeakParam>()).ToList(), CollectPrefix);
+            MzPeakColumns.AddMsnParamList(cols, schema, "precursor/activation/parameters", n, msnRecords.Select(r => r.ActivationParams).ToList(), CollectPrefix);
 
             // selected_ion facet (present on rows 0..M-1, null on M..N-1)
-            AddMsnScalar(cols, schema, "selected_ion/source_index", n, msnRecords.Select(r => r.Ordinal).ToArray());
-            AddMsnPrecursorIndex(cols, schema, "selected_ion/precursor_index", n, msnRecords);
-            AddMsnNullable(cols, schema, "selected_ion/" + Cv(MzPeakCv.SelectedIonMz, "selected_ion_mz", MzPeakCv.MzUnit),
+            MzPeakColumns.AddMsnScalar(cols, schema, "selected_ion/source_index", n, msnRecords.Select(r => r.Ordinal).ToArray());
+            MzPeakColumns.AddMsnPrecursorIndex(cols, schema, "selected_ion/precursor_index", n, msnRecords);
+            MzPeakColumns.AddMsnNullable(cols, schema, "selected_ion/" + Cv(MzPeakCv.SelectedIonMz, "selected_ion_mz", MzPeakCv.MzUnit),
                 n, msnRecords.Select(r => r.SelectedIonMz).ToArray());
-            AddMsnNullable(cols, schema, "selected_ion/" + Cv(MzPeakCv.ChargeState, "charge_state"),
+            MzPeakColumns.AddMsnNullable(cols, schema, "selected_ion/" + Cv(MzPeakCv.ChargeState, "charge_state"),
                 n, msnRecords.Select(r => r.ChargeState).ToArray());
-            AddMsnNullable(cols, schema, "selected_ion/" + Cv(MzPeakCv.SelectedIonIntensity, "intensity", MzPeakCv.CountsUnit),
+            MzPeakColumns.AddMsnNullable(cols, schema, "selected_ion/" + Cv(MzPeakCv.SelectedIonIntensity, "intensity", MzPeakCv.CountsUnit),
                 n, msnRecords.Select(r => r.SelectedIonIntensity).ToArray());
 
             // Ion-mobility columns exist to match the selected_ion struct shape; the Thermo RAW path
             // carries no per-selected-ion mobility value, so they stay leaf-null on every MSn row.
-            AddMsnNullable(cols, schema, "selected_ion/ion_mobility_value", n, msnRecords.Select(_ => (double?)null).ToArray());
-            AddMsnString(cols, schema, "selected_ion/ion_mobility_type", n, msnRecords.Select(_ => (string)null).ToArray());
-            AddMsnParamList(cols, schema, "selected_ion/parameters", n, msnRecords.Select(_ => new List<Param>()).ToList());
+            MzPeakColumns.AddMsnNullable(cols, schema, "selected_ion/ion_mobility_value", n, msnRecords.Select(_ => (double?)null).ToArray());
+            MzPeakColumns.AddMsnString(cols, schema, "selected_ion/ion_mobility_type", n, msnRecords.Select(_ => (string)null).ToArray());
+            MzPeakColumns.AddMsnParamList(cols, schema, "selected_ion/parameters", n, msnRecords.Select(_ => new List<MzPeakParam>()).ToList(), CollectPrefix);
 
             var numpress = !ParseInput.MzPeakPointLayout && ParseInput.MzPeakNumpress;
             var arrayIndex = ParseInput.MzPeakPointLayout
@@ -877,7 +780,7 @@ namespace ThermoRawFileParser.Writer
             };
             AddMetadataBlocks(custom, records);
 
-            return WriteFacet(schema, custom, cols);
+            return MzPeakColumns.WriteFacet(schema, custom, cols);
         }
 
         private StructField BuildSpectrumField()
@@ -969,306 +872,12 @@ namespace ThermoRawFileParser.Writer
             if (i > 0) _cvPrefixes.Add(curie.Substring(0, i));
         }
 
-        private static void AddScalar(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
-            string path, Array values, bool[] present)
-        {
-            var leaf = Leaf(schema, path);
-            var rows = present.Select(p => p ? MzPeakParquet.Present(leaf) : MzPeakParquet.Absent()).ToArray();
-            var (def, _r) = MzPeakParquet.NestedLevels(leaf, rows);
-            cols[leaf] = (values, def, null);
-        }
-
-        // A scalar leaf present on every row's owning struct but whose VALUE may be absent: a null
-        // value emits the leaf-null definition level (one below the present level) and contributes no
-        // value slot, so a genuinely-absent value is encoded as null rather than zero.
-        private static void AddNullableScalar<T>(IDictionary<DataField, (Array, int[], int[])> cols,
-            ParquetSchema schema, string path, IReadOnlyList<T?> values) where T : struct
-        {
-            var leaf = Leaf(schema, path);
-            var rows = new List<MzPeakParquet.LeafRow>();
-            var present = new List<T>();
-            foreach (var v in values)
-            {
-                if (v.HasValue) { rows.Add(MzPeakParquet.Present(leaf)); present.Add(v.Value); }
-                else rows.Add(MzPeakParquet.AtLevel(leaf.MaxDefinitionLevel - 1, false));
-            }
-            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
-            cols[leaf] = (present.ToArray(), def, null);
-        }
-
-        // A scalar leaf whose owning struct is present on every row but whose value is null on every
-        // row (leaf-null def level, no value slot).
-        private static void AddNullLeafScalar(IDictionary<DataField, (Array, int[], int[])> cols,
-            ParquetSchema schema, string path, int n)
-        {
-            var leaf = Leaf(schema, path);
-            var rows = Enumerable.Range(0, n)
-                .Select(_ => MzPeakParquet.AtLevel(leaf.MaxDefinitionLevel - 1, false)).ToArray();
-            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
-            cols[leaf] = (EmptyArray(leaf.ClrType), def, null);
-        }
-
-        // A present-but-empty list on every row of a multi-row facet (the owning struct is present,
-        // the list value is defined, no elements). Used for spectrum auxiliary_arrays / mz_delta_model.
-        private void AddEmptyListEveryRow(IDictionary<DataField, (Array, int[], int[])> cols,
-            ParquetSchema schema, string listPath, int n)
-        {
-            var list = (ListField)FindField(schema, listPath);
-            foreach (var leaf in schema.GetDataFields())
-            {
-                if (!leaf.Path.ToString().StartsWith(listPath + "/")) continue;
-                var rows = Enumerable.Range(0, n).Select(_ => MzPeakParquet.EmptyList(list)).ToArray();
-                var (def, rep) = MzPeakParquet.NestedLevels(leaf, rows);
-                cols[leaf] = (EmptyArray(leaf.ClrType), def, rep);
-            }
-        }
-
-        // A scalar leaf inside a top-level struct present only on the first M rows (the MSn count),
-        // null on rows M..N-1. values has length M (one per MSn).
-        private static void AddMsnScalar(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
-            string path, int n, Array values)
-        {
-            var leaf = Leaf(schema, path);
-            int m = values.Length;
-            var rows = Enumerable.Range(0, n)
-                .Select(i => i < m ? MzPeakParquet.Present(leaf) : MzPeakParquet.Absent()).ToArray();
-            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
-            cols[leaf] = (values, def, null);
-        }
-
-        private static void AddMsnString(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
-            string path, int n, string[] values)
-        {
-            var leaf = Leaf(schema, path);
-            int m = values.Length;
-            var rows = new List<MzPeakParquet.LeafRow>();
-            var present = new List<string>();
-            for (int i = 0; i < n; i++)
-            {
-                if (i >= m) rows.Add(MzPeakParquet.Absent());
-                else if (values[i] != null) { rows.Add(MzPeakParquet.Present(leaf)); present.Add(values[i]); }
-                else rows.Add(MzPeakParquet.AtLevel(leaf.MaxDefinitionLevel - 1, false));
-            }
-            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
-            cols[leaf] = (present.ToArray(), def, null);
-        }
-
-        private static void AddMsnPrecursorIndex(IDictionary<DataField, (Array, int[], int[])> cols,
-            ParquetSchema schema, string path, int n, List<Record> msn)
-        {
-            var leaf = Leaf(schema, path);
-            int m = msn.Count;
-            var rows = new List<MzPeakParquet.LeafRow>();
-            var present = new List<ulong>();
-            for (int i = 0; i < n; i++)
-            {
-                if (i >= m) rows.Add(MzPeakParquet.Absent());
-                else if (msn[i].PrecursorIndex.HasValue)
-                { rows.Add(MzPeakParquet.Present(leaf)); present.Add(msn[i].PrecursorIndex.Value); }
-                else rows.Add(MzPeakParquet.AtLevel(leaf.MaxDefinitionLevel - 1, false));
-            }
-            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
-            cols[leaf] = (present.ToArray(), def, null);
-        }
-
-        // A nullable scalar leaf on the MSn struct (present on the first M rows). Genuine null values
-        // emit leaf-null one level below present; rows past M (i >= M) sit at def-level 0 (struct absent).
-        private static void AddMsnNullable<T>(IDictionary<DataField, (Array, int[], int[])> cols,
-            ParquetSchema schema, string path, int n, T?[] values) where T : struct
-        {
-            var leaf = Leaf(schema, path);
-            int m = values.Length;
-            var rows = new List<MzPeakParquet.LeafRow>();
-            var present = new List<T>();
-            for (int i = 0; i < n; i++)
-            {
-                if (i >= m) rows.Add(MzPeakParquet.Absent());
-                else if (values[i].HasValue) { rows.Add(MzPeakParquet.Present(leaf)); present.Add(values[i].Value); }
-                else rows.Add(MzPeakParquet.AtLevel(leaf.MaxDefinitionLevel - 1, false));
-            }
-            var (def, _) = MzPeakParquet.NestedLevels(leaf, rows);
-            cols[leaf] = (present.ToArray(), def, null);
-        }
-
-        // PARAM list inside a top-level struct present only on the first M rows. perRow has length M.
-        private void AddMsnParamList(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
-            string listPath, int n, List<List<Param>> perRow)
-        {
-            int m = perRow.Count;
-            var structPresent = Enumerable.Range(0, n).Select(i => i < m).ToArray();
-            var padded = new List<List<Param>>();
-            for (int i = 0; i < n; i++) padded.Add(i < m ? perRow[i] : new List<Param>());
-            AddParamList(cols, schema, listPath, padded, structPresent);
-        }
-
-        private void AddParamList(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
-            string listPath, List<List<Param>> perRow, bool[] structPresent)
-        {
-            var list = (ListField)FindField(schema, listPath);
-            var accLeaf = Leaf(schema, listPath + "/list/item/accession");
-            var nameLeaf = Leaf(schema, listPath + "/list/item/name");
-            var unitLeaf = Leaf(schema, listPath + "/list/item/unit");
-            var intLeaf = Leaf(schema, listPath + "/list/item/value/integer");
-            var fltLeaf = Leaf(schema, listPath + "/list/item/value/float");
-            var strLeaf = Leaf(schema, listPath + "/list/item/value/string");
-            var boolLeaf = Leaf(schema, listPath + "/list/item/value/boolean");
-
-            var accRows = new List<MzPeakParquet.LeafRow>();
-            var nameRows = new List<MzPeakParquet.LeafRow>();
-            var unitRows = new List<MzPeakParquet.LeafRow>();
-            var intRows = new List<MzPeakParquet.LeafRow>();
-            var fltRows = new List<MzPeakParquet.LeafRow>();
-            var strRows = new List<MzPeakParquet.LeafRow>();
-            var boolRows = new List<MzPeakParquet.LeafRow>();
-
-            var accVals = new List<string>();
-            var nameVals = new List<string>();
-            var unitVals = new List<string>();
-            var intVals = new List<long>();
-            var fltVals = new List<double>();
-            var strVals = new List<string>();
-            var boolVals = new List<bool>();
-
-            for (int row = 0; row < perRow.Count; row++)
-            {
-                if (!structPresent[row])
-                {
-                    accRows.Add(MzPeakParquet.NullList()); nameRows.Add(MzPeakParquet.NullList());
-                    unitRows.Add(MzPeakParquet.NullList()); intRows.Add(MzPeakParquet.NullList());
-                    fltRows.Add(MzPeakParquet.NullList()); strRows.Add(MzPeakParquet.NullList());
-                    boolRows.Add(MzPeakParquet.NullList());
-                    continue;
-                }
-
-                var items = perRow[row];
-                if (items.Count == 0)
-                {
-                    accRows.Add(MzPeakParquet.EmptyList(list)); nameRows.Add(MzPeakParquet.EmptyList(list));
-                    unitRows.Add(MzPeakParquet.EmptyList(list)); intRows.Add(MzPeakParquet.EmptyList(list));
-                    fltRows.Add(MzPeakParquet.EmptyList(list)); strRows.Add(MzPeakParquet.EmptyList(list));
-                    boolRows.Add(MzPeakParquet.EmptyList(list));
-                    continue;
-                }
-
-                foreach (var it in items) { CollectPrefix(it.Accession); CollectPrefix(it.Unit); }
-                AddListLeaf(accRows, accVals, accLeaf, items, p => p.Accession);
-                AddListLeaf(nameRows, nameVals, nameLeaf, items, p => p.Name);
-                AddListLeaf(unitRows, unitVals, unitLeaf, items, p => p.Unit);
-                AddListLeafNumStruct(intRows, intVals, intLeaf, items, p => p.Integer);
-                AddListLeafNumStruct(fltRows, fltVals, fltLeaf, items, p => p.Float);
-                AddListLeaf(strRows, strVals, strLeaf, items, p => p.String);
-                AddListLeafNumStruct(boolRows, boolVals, boolLeaf, items, p => p.Boolean);
-            }
-
-            Emit(cols, accLeaf, accVals.ToArray(), accRows);
-            Emit(cols, nameLeaf, nameVals.ToArray(), nameRows);
-            Emit(cols, unitLeaf, unitVals.ToArray(), unitRows);
-            Emit(cols, intLeaf, intVals.ToArray(), intRows);
-            Emit(cols, fltLeaf, fltVals.ToArray(), fltRows);
-            Emit(cols, strLeaf, strVals.ToArray(), strRows);
-            Emit(cols, boolLeaf, boolVals.ToArray(), boolRows);
-        }
-
-        private static void AddListLeaf(List<MzPeakParquet.LeafRow> rows, List<string> vals, DataField leaf,
-            List<Param> items, Func<Param, string> sel)
-        {
-            var levels = new int[items.Count];
-            var has = new bool[items.Count];
-            for (int i = 0; i < items.Count; i++)
-            {
-                var v = sel(items[i]);
-                if (v != null) { vals.Add(v); levels[i] = leaf.MaxDefinitionLevel; has[i] = true; }
-                else { levels[i] = leaf.MaxDefinitionLevel - 1; has[i] = false; }
-            }
-            rows.Add(MzPeakParquet.ListOf(levels, has));
-        }
-
-        private static void AddListLeafNumStruct<T>(List<MzPeakParquet.LeafRow> rows, List<T> vals, DataField leaf,
-            List<Param> items, Func<Param, T?> sel) where T : struct
-        {
-            var levels = new int[items.Count];
-            var has = new bool[items.Count];
-            for (int i = 0; i < items.Count; i++)
-            {
-                var v = sel(items[i]);
-                if (v.HasValue) { vals.Add(v.Value); levels[i] = leaf.MaxDefinitionLevel; has[i] = true; }
-                else { levels[i] = leaf.MaxDefinitionLevel - 1; has[i] = false; }
-            }
-            rows.Add(MzPeakParquet.ListOf(levels, has));
-        }
-
-        private static void Emit(IDictionary<DataField, (Array, int[], int[])> cols, DataField leaf,
-            Array values, List<MzPeakParquet.LeafRow> rows)
-        {
-            var (def, rep) = MzPeakParquet.NestedLevels(leaf, rows);
-            cols[leaf] = (values, def, rep);
-        }
-
-        private void AddScanWindows(IDictionary<DataField, (Array, int[], int[])> cols, ParquetSchema schema,
-            List<Record> records)
-        {
-            var lowerLeaf = Leaf(schema, "scan/scan_windows/list/item/" + Cv(MzPeakCv.ScanWindowLowerLimit, "scan_window_lower_limit", MzPeakCv.MzUnit));
-            var upperLeaf = Leaf(schema, "scan/scan_windows/list/item/" + Cv(MzPeakCv.ScanWindowUpperLimit, "scan_window_upper_limit", MzPeakCv.MzUnit));
-
-            var lowerRows = new List<MzPeakParquet.LeafRow>();
-            var upperRows = new List<MzPeakParquet.LeafRow>();
-            var lowerVals = new List<float>();
-            var upperVals = new List<float>();
-
-            for (int row = 0; row < records.Count; row++)
-            {
-                lowerRows.Add(MzPeakParquet.ListOf(new[] { lowerLeaf.MaxDefinitionLevel }, new[] { true }));
-                upperRows.Add(MzPeakParquet.ListOf(new[] { upperLeaf.MaxDefinitionLevel }, new[] { true }));
-                lowerVals.Add(records[row].WindowLower);
-                upperVals.Add(records[row].WindowUpper);
-            }
-
-            Emit(cols, lowerLeaf, lowerVals.ToArray(), lowerRows);
-            Emit(cols, upperLeaf, upperVals.ToArray(), upperRows);
-
-            // The per-window parameters list is present-but-empty: one window element per row, its
-            // parameters list defined with no entries.
-            const string winParams = "scan/scan_windows/list/item/parameters";
-            var scanWindows = (ListField)FindField(schema, "scan/scan_windows");
-            var windowItem = (StructField)scanWindows.Item;
-            var winParamsList = (ListField)windowItem.Fields.First(f => f.Name == "parameters");
-            foreach (var leaf in schema.GetDataFields())
-            {
-                if (!leaf.Path.ToString().StartsWith(winParams + "/")) continue;
-                var rows = Enumerable.Range(0, records.Count)
-                    .Select(_ => MzPeakParquet.EmptyList(winParamsList))
-                    .ToList();
-                Emit(cols, leaf, EmptyArray(leaf.ClrType), rows);
-            }
-        }
-
-        internal static Field FindField(ParquetSchema schema, string path)
-        {
-            var parts = path.Split('/');
-            Field current = schema.Fields.First(f => f.Name == parts[0]);
-            for (int i = 1; i < parts.Length; i++)
-            {
-                current = ((StructField)current).Fields.First(f => f.Name == parts[i]);
-            }
-            return current;
-        }
-
-        private static byte[] WriteFacet(ParquetSchema schema, IReadOnlyDictionary<string, string> meta,
-            IDictionary<DataField, (Array, int[], int[])> cols)
-        {
-            using (var ms = new MemoryStream())
-            {
-                MzPeakParquet.WriteAsync(ms, schema, meta, cols).GetAwaiter().GetResult();
-                return ms.ToArray();
-            }
-        }
-
         // File-level metadata blocks shared verbatim between the parquet footer KV and the index
         // metadata{}. Built once after all CV-named columns/params are emitted so the generated
         // cv_list covers exactly the collected CV-prefix set.
         private JObject _metadataBlocks;
 
-        private void AddMetadataBlocks(IDictionary<string, string> custom, List<Record> records)
+        private void AddMetadataBlocks(IDictionary<string, string> custom, List<MzPeakRecord> records)
         {
             var instruments = BuildInstrumentConfigurations();
             var software = BuildSoftwareList();
@@ -1432,7 +1041,7 @@ namespace ThermoRawFileParser.Writer
             };
         }
 
-        private JObject BuildFileDescription(List<Record> records)
+        private JObject BuildFileDescription(List<MzPeakRecord> records)
         {
             var contents = new JArray
             {
@@ -1550,13 +1159,6 @@ namespace ThermoRawFileParser.Writer
             };
 
             return new UTF8Encoding(false).GetBytes(index.ToString());
-        }
-
-        internal static DataField Leaf(ParquetSchema schema, string path)
-        {
-            foreach (var d in schema.GetDataFields())
-                if (d.Path.ToString() == path) return d;
-            throw new RawFileParserException($"Leaf not found: {path}");
         }
     }
 }

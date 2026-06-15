@@ -40,9 +40,9 @@ namespace ThermoRawFileParser.Writer
             _byteCap = byteCap;
             TempPath = Path.GetTempFileName();
             _schema = new ParquetSchema(PointStructField());
-            _idx = MzPeakSpectrumWriter.Leaf(_schema, "point/spectrum_index");
-            _mz = MzPeakSpectrumWriter.Leaf(_schema, "point/mz");
-            _int = MzPeakSpectrumWriter.Leaf(_schema, "point/intensity");
+            _idx = MzPeakColumns.Leaf(_schema, "point/spectrum_index");
+            _mz = MzPeakColumns.Leaf(_schema, "point/mz");
+            _int = MzPeakColumns.Leaf(_schema, "point/intensity");
             try
             {
                 _sink = new FileStream(TempPath, FileMode.Create, FileAccess.Write);

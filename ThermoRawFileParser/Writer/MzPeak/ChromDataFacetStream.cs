@@ -42,10 +42,10 @@ namespace ThermoRawFileParser.Writer
             _byteCap = byteCap;
             TempPath = Path.GetTempFileName();
             _schema = new ParquetSchema(ChromDataStructField());
-            _idx = MzPeakSpectrumWriter.Leaf(_schema, "point/chromatogram_index");
-            _time = MzPeakSpectrumWriter.Leaf(_schema, "point/time");
-            _int = MzPeakSpectrumWriter.Leaf(_schema, "point/intensity");
-            _lvl = MzPeakSpectrumWriter.Leaf(_schema, "point/ms_level");
+            _idx = MzPeakColumns.Leaf(_schema, "point/chromatogram_index");
+            _time = MzPeakColumns.Leaf(_schema, "point/time");
+            _int = MzPeakColumns.Leaf(_schema, "point/intensity");
+            _lvl = MzPeakColumns.Leaf(_schema, "point/ms_level");
             try
             {
                 _sink = new FileStream(TempPath, FileMode.Create, FileAccess.Write);
