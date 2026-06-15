@@ -119,10 +119,12 @@ namespace ThermoRawFileParser.Writer
             var arrayIndex = ParseInput.MzPeakPointLayout
                 ? MzPeakLayout.PointDataArrayIndex
                 : (numpress ? MzPeakLayout.NumpressSpectrumArrayIndex : MzPeakLayout.ChunkedSpectrumArrayIndex);
+            ulong totalDataPoints = 0;
+            foreach (var r in records) totalDataPoints += r.DataPointCount;
             var custom = new Dictionary<string, string>
             {
                 ["spectrum_count"] = n.ToString(),
-                ["spectrum_data_point_count"] = "0",
+                ["spectrum_data_point_count"] = totalDataPoints.ToString(),
                 ["spectrum_array_index"] = arrayIndex
             };
             AddMetadataBlocks(custom, records);

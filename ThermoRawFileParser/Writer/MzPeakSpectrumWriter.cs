@@ -184,7 +184,7 @@ namespace ThermoRawFileParser.Writer
                 var peaksMeta = PointFooter(peakSpectra.Count, peaksFacet.PointCount, true);
                 var chromMeta = new Dictionary<string, string>
                 {
-                    ["chromatogram_data_point_count"] = "0",
+                    ["chromatogram_data_point_count"] = chromTime.Count.ToString(),
                     ["chromatogram_array_index"] = MzPeakLayout.ChromatogramArrayIndex,
                     ["chromatogram_tic_source"] = _chromFromDeviceTrace ? "device" : "summed"
                 };
@@ -193,7 +193,7 @@ namespace ThermoRawFileParser.Writer
                 peaksFacet.Close(peaksMeta);
                 chromFacet.Close(chromMeta);
 
-                var chromMetaBytes = BuildChromatogramMetadataFacet(records.Count);
+                var chromMetaBytes = BuildChromatogramMetadataFacet(records.Count, chromTime.Count);
                 var metaBytes = BuildMetadataFacet(records);
                 var indexBytes = BuildIndex(hasPeaks, true);
 

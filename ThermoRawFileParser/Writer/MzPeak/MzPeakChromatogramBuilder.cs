@@ -7,7 +7,7 @@ namespace ThermoRawFileParser.Writer
 {
     public partial class MzPeakSpectrumWriter
     {
-        private byte[] BuildChromatogramMetadataFacet(int n)
+        private byte[] BuildChromatogramMetadataFacet(int n, int chromPointCount)
         {
             var chromatogram = BuildChromatogramField();
             var precursor = BuildPrecursorField();
@@ -43,7 +43,7 @@ namespace ThermoRawFileParser.Writer
             var custom = new Dictionary<string, string>
             {
                 ["chromatogram_count"] = "1",
-                ["chromatogram_data_point_count"] = "0"
+                ["chromatogram_data_point_count"] = chromPointCount.ToString()
             };
 
             return MzPeakColumns.WriteFacet(schema, custom, cols);
