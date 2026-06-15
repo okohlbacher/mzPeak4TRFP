@@ -47,6 +47,8 @@ Progress: [██████░░░░] 60% (v2)
 - Phase 2: `chromatograms_data` stays POINT as a deliberate documented deviation; the reference CHUNKS it → full chromatogram chunking deferred to Phase 5.
 - Phase 3 input: chunk struct stays 6 fields in delta mode; `mz_numpress_linear_bytes` (7th field) is added ONLY for the Numpress encoding, not present-but-empty.
 - Phase 3: numpress-linear m/z (MS:1002312, NOT MS:1003089 which is delta) is the new default; `mz_chunk_values` null, intensity stays lossless f32 (m/z-only numpress; intensity-SLOF deferred to backlog). `--lossless`/`--point` opt-outs; numpress spectra_data ~19% smaller than delta on small.RAW (the ~63% headline needs intensity SLOF).
+- Large-file fix (post-Phase-3): row-group flush is now BYTE-aware (~64MB cap), not row-count-only — chunk/list rows are fat, so the old 1M-row cap made one ~400MB unreadable row group for files >~250MB (pyarrow 'Unexpected end of stream'; validator blind spot). Byte cap → many readable row groups. Large-file chunked read-back NUnit gate added.
+- Corpus E2E (v2, post-fix): 95/95 Thermo files convert + validate (0/0); 8.4GB Astral converts+validates+reads back (68 row groups, 12.9GB peak RSS — metadata still buffered). DIFFs are the SLOF-intensity+zero-strip confound, not errors. Bruker `S4_5foldGHRP.raw` removed (Thermo-only; both readers fail; byte-identical to source). Comparator (pure-Python) times out >900s on the 2.1GB file — harness speed limit (VER2-04).
 - Phase 3: C# MSNumpress port accumulates `ints` in int64 (canonical uses uint32 wraparound) so m/z*fp values > 2^32 decode correctly; on-wire bytes stay byte-identical to pynumpress.
 
 ### Key Artifacts

@@ -24,12 +24,6 @@
     "raw_mb": 73.05
   },
   {
-    "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/bruker-impact-sub__PXD076459/S4_5foldGHRP.raw",
-    "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/bruker-impact-sub__PXD076459/local.mzpeak",
-    "match": "sibling",
-    "raw_mb": 437.86
-  },
-  {
     "raw": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/bruker-timstof-sub__PXD049028/2024_LRS_Ascend_WT_C_03.raw",
     "ref_mzpeak": "/Users/kohlbach/Claude/mzML2mzPeak/data/raw-replacements/bruker-timstof-sub__PXD049028/local.mzpeak",
     "match": "sibling",
