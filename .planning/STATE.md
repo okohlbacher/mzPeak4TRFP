@@ -1,7 +1,7 @@
 ---
 gsd_state_version: 1.0
 milestone: v2
-milestone_name: milestone
+milestone_name: compression-fidelity-scale
 status: in-progress
 last_updated: "2026-06-14T21:23:42.853Z"
 last_activity: 2026-06-14 — Phase 3 (Numpress-Linear m/z) executed: numpress is the new default m/z encoding (MS:1002312), validator 0/0 in all three modes, full suite 86/86 green native arm64.

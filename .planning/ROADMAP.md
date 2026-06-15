@@ -159,6 +159,6 @@ Phases execute in numeric order: 1 → 2 → 3 → 4 → 5
 |-------|----------------|--------|-----------|
 | 1. Streaming Writer + Per-Scan Robustness | 1/1 | Certified | - |
 | 2. Chunked Layout | 1/1 | Complete   | 2026-06-14 |
-| 3. Numpress-Linear m/z | 0/1 | Planned | - |
+| 3. Numpress-Linear m/z | 1/1 | Certified | - |
 | 4. Profile Compaction + Ion Mobility | 0/0 | Not started | - |
 | 5. CLI/Docs + Conformance & Corpus Re-Verification | 0/0 | Not started | - |
