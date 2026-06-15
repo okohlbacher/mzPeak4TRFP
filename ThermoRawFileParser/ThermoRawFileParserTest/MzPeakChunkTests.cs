@@ -563,6 +563,37 @@ namespace ThermoRawFileParserTest
         }
 
         [Test]
+        public void Metadata_SchemaParity_vs_Reference()
+        {
+            var root = RepoRoot();
+            if (root == null) Assert.Ignore("reference archive not found");
+            var refArchive = Path.Combine(root, "refs/mzPeak/small.numpress.mzpeak");
+            if (!File.Exists(refArchive)) Assert.Ignore("small.numpress.mzpeak not present");
+
+            var archive = Convert(DataMode.Numpress, out var dir);
+            try
+            {
+                var snippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "s = pq.read_table(r'{PARQUET}').schema\n" +
+                    "out = {'spectrum':[f.name for f in s.field('spectrum').type],\n" +
+                    "       'scan':[f.name for f in s.field('scan').type]}\n" +
+                    "print(json.dumps(out))\n";
+                var ours = PyArrow(archive, "spectra_metadata.parquet", snippet);
+                var refs = PyArrow(refArchive, "spectra_metadata.parquet", snippet);
+
+                foreach (var top in new[] { "spectrum", "scan" })
+                {
+                    var oc = ours[top].Select(x => (string)x).OrderBy(x => x).ToArray();
+                    var rc = refs[top].Select(x => (string)x).OrderBy(x => x).ToArray();
+                    Assert.That(oc, Is.EqualTo(rc),
+                        $"{top} struct column name set must equal the reference small.numpress.mzpeak set");
+                }
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Test]
         public void Footer_ArrayIndex_Lock()
         {
             var root = RepoRoot();

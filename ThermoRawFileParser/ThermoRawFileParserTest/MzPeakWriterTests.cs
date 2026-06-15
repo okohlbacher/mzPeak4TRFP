@@ -274,10 +274,16 @@ namespace ThermoRawFileParserTest
                 var metaIdx = ReadMetadataIndices(ReadEntry(archive, "spectra_metadata.parquet"));
 
                 int distinct = data.SpectrumIndex.Distinct().Count();
-                Assert.That(metaIdx.Length, Is.EqualTo(data.SpectrumCount));
-                Assert.That(distinct, Is.EqualTo(data.SpectrumCount));
+                // The data-facet distinct spectrum set is a SUBSET of the metadata spectrum set: an empty
+                // in-range spectrum emits a metadata row but no data rows. The data footer spectrum_count
+                // equals the distinct data spectra; metadata ordinals stay dense across every emitted
+                // spectrum.
+                Assert.That(distinct, Is.EqualTo(data.SpectrumCount), "data spectrum_count == distinct data spectra");
+                Assert.That(data.SpectrumIndex.Distinct().ToHashSet().IsSubsetOf(metaIdx.ToHashSet()), Is.True,
+                    "data spectrum set is a subset of the metadata spectrum set");
                 Assert.That(metaIdx.OrderBy(x => x).ToArray(),
-                    Is.EqualTo(Enumerable.Range(0, data.SpectrumCount).Select(i => (ulong)i).ToArray()));
+                    Is.EqualTo(Enumerable.Range(0, metaIdx.Length).Select(i => (ulong)i).ToArray()),
+                    "metadata ordinals dense 0..N-1");
             }
             finally
             {
@@ -1541,12 +1547,12 @@ namespace ThermoRawFileParserTest
 
                 int distinct = data.SpectrumIndex.Distinct().Count();
                 Assert.That(distinct, Is.EqualTo(data.SpectrumCount),
-                    "distinct spectrum_index == spectrum_count");
-                Assert.That(metaIdx.Length, Is.EqualTo(data.SpectrumCount),
-                    "metadata spectrum rows == spectrum_count");
+                    "distinct spectrum_index == data spectrum_count");
+                Assert.That(data.SpectrumIndex.Distinct().ToHashSet().IsSubsetOf(metaIdx.ToHashSet()), Is.True,
+                    "data spectrum set is a subset of the metadata spectrum set");
                 Assert.That(metaIdx.OrderBy(x => x).ToArray(),
-                    Is.EqualTo(Enumerable.Range(0, data.SpectrumCount).Select(i => (ulong)i).ToArray()),
-                    "ordinals dense 0..N-1");
+                    Is.EqualTo(Enumerable.Range(0, metaIdx.Length).Select(i => (ulong)i).ToArray()),
+                    "metadata ordinals dense 0..N-1");
                 Assert.That(data.Mz.Length, Is.EqualTo(data.PointCount),
                     "footer spectrum_data_point_count == point rows");
 
@@ -1714,17 +1720,17 @@ namespace ThermoRawFileParserTest
                 var data = ReadAllRowGroups(ReadEntry(archive, "spectra_data.parquet"));
                 var metaIdx = ReadMetadataIndices(ReadEntry(archive, "spectra_metadata.parquet"));
 
-                Assert.That(data.SpectrumCount, Is.EqualTo(metaIdx.Length),
-                    "metadata rows == data spectrum_count after the skip");
+                Assert.That(data.SpectrumIndex.Distinct().ToHashSet().IsSubsetOf(metaIdx.ToHashSet()), Is.True,
+                    "data spectrum set is a subset of the metadata spectrum set after the skip");
                 Assert.That(metaIdx.OrderBy(x => x).ToArray(),
-                    Is.EqualTo(Enumerable.Range(0, data.SpectrumCount).Select(i => (ulong)i).ToArray()),
-                    "ordinals dense 0..N-1 despite the skipped scan");
-                Assert.That(data.SpectrumCount, Is.EqualTo(V1SpectrumCount - 1),
+                    Is.EqualTo(Enumerable.Range(0, metaIdx.Length).Select(i => (ulong)i).ToArray()),
+                    "metadata ordinals dense 0..N-1 despite the skipped scan");
+                Assert.That(metaIdx.Length, Is.EqualTo(V1SpectrumCount - 1),
                     "exactly one scan was skipped");
 
                 var (pre, _) = ReadMsnChildMaps(ReadEntry(archive, "spectra_metadata.parquet"));
                 foreach (var v in pre.Values.Where(v => v.HasValue))
-                    Assert.That(v.Value, Is.LessThan((ulong)data.SpectrumCount),
+                    Assert.That(v.Value, Is.LessThan((ulong)metaIdx.Length),
                         "no precursor_index may dangle past the emitted set");
             }
             finally
@@ -1800,11 +1806,12 @@ namespace ThermoRawFileParserTest
                     var metaIdx = ReadMetadataIndices(ReadEntry(archive, "spectra_metadata.parquet"));
 
                     int distinct = data.SpectrumIndex.Distinct().Count();
-                    Assert.That(distinct, Is.EqualTo(data.SpectrumCount), "distinct spectrum_index == spectrum_count");
-                    Assert.That(metaIdx.Length, Is.EqualTo(data.SpectrumCount), "metadata rows == spectrum_count");
+                    Assert.That(distinct, Is.EqualTo(data.SpectrumCount), "distinct spectrum_index == data spectrum_count");
+                    Assert.That(data.SpectrumIndex.Distinct().ToHashSet().IsSubsetOf(metaIdx.ToHashSet()), Is.True,
+                        "data spectrum set is a subset of the metadata spectrum set");
                     Assert.That(metaIdx.OrderBy(x => x).ToArray(),
-                        Is.EqualTo(Enumerable.Range(0, data.SpectrumCount).Select(i => (ulong)i).ToArray()),
-                        "ordinals dense 0..N-1 despite the skips");
+                        Is.EqualTo(Enumerable.Range(0, metaIdx.Length).Select(i => (ulong)i).ToArray()),
+                        "metadata ordinals dense 0..N-1 despite the skips");
                 }
                 else
                 {
