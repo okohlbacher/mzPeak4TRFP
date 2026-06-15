@@ -8,7 +8,7 @@ Run: TRFP v2 (chunked + Numpress-linear default) over the mzML2mzPeak Thermo cor
 |--------|--------|
 | **Convert (no crash, archive produced)** | **95 / 95 (100%)** |
 | **`mzpeak-validate` PASS (0/0)** | **95 / 95 (100%)** |
-| Comparator ran without error | 94 / 95 (1 timeout — harness limitation, not the writer) |
+| Comparator ran without error | **96 / 96 (100%)** — the lone 2.1 GB timeout resolved by the vectorized comparator (see VER2-04 below) |
 | **8.4 GB Astral extreme-scale** | convert + validate + pyarrow read-back **PASS** (68 row groups, 7.79M chunk rows, readable; peak RSS 12.9 GB) |
 
 ## The large-file bug this run found and fixed
@@ -34,10 +34,25 @@ byte-identical to the published PRIDE file (same `Content-Length` 437862917 + sa
 download/corruption issue — the source file is unreadable. **Removed from `corpus_pairs.json`.** TRFP handled
 it correctly (graceful per-scan skip, no crash, no bogus archive).
 
-## Remaining harness limitation (VER2-04, Phase 5)
-`compare_mzpeak.py` is pure-Python and CPU-bound; it timed out (>900 s) on the 2.1 GB file. The
-`iter_batches` change fixed its *memory* (no more COMPARE_ERROR from OOM/unreadability), not its *speed*.
-Future: vectorize decode/compare with NumPy or compare at the Arrow level.
+## VER2-04 RESOLVED — comparator vectorized (full corpus now completes)
+`compare_mzpeak.py` was pure-Python and CPU-bound; it **timed out (>900 s)** on the 2.1 GB
+`2024_LRS_Ascend_WT_C_03.raw` (the lone `COMPARE_ERROR`). Rewritten to read facets via Arrow columns
+and key each spectrum's multiset with NumPy (`np.unique`) instead of per-point Python loops. Output is
+**byte-identical** to the old comparator (verified across default / `--lossless` / `--point`), and it is
+**~11× faster** (141 MB file: 258 s → 23.7 s). The 2.1 GB file now completes end-to-end: convert 101 s,
+`mzpeak-validate` PASS (0 errors), compare **775 s** (< the 900 s budget). **All 96 pairs now resolve**
+(0 `COMPARE_ERROR`). Headroom on the largest file is ~14%; an Arrow-native/Cython pass is the next lever
+if a larger file is ever added.
+
+## VER2-02 — differential re-run (honest framing, not a regression)
+Re-run over all 96 Thermo pairs (chunked+Numpress default): **100% structural alignment on every file**
+(spectrum count, ms_level, polarity, RT all match). The strict **exact-(m/z,intensity)-multiset rate is
+low (≈0–0.67)** — NOT converter error, but because the **reference is lossy** (Numpress-SLOF intensity +
+interior zero-run stripping) while TRFP keeps **lossless f32 intensity and all points**. On every
+mismatch example `ours_pts > ref_pts` (we keep more, exact, points). The Phase-5 "exact-match rises vs v1"
+hope is therefore not achievable against a lossy reference *by design* (Phase-5 key-risk #3 anticipated
+exactly this); the honest result is that our output is **more accurate** than the reference on intensity.
+Matching the reference's zero-stripping was the dropped ZRS work, now backlog BL-02.
 
 ## Stage timing (measured)
 - **Convert (the writer):** linear ~49 ms/MB (~20 MB/s, R²=0.985). Not a bottleneck.

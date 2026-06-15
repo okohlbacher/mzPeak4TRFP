@@ -5,10 +5,14 @@ Aligns spectra by nativeID, unions each spectrum's signal across spectra_data + 
 (decoding point, delta-chunk, and numpress-linear chunk layouts), and reports per-spectrum
 (m/z, intensity) multiset agreement plus ms_level / polarity / RT agreement.
 
+The signal decode/keying is NumPy-vectorized (Arrow column access, per-spectrum np.unique multiset
+keys) so multi-GB facets complete; the per-point Python path it replaced timed out on the 2.1 GB file.
+
 Usage:  compare_mzpeak.py OURS.mzpeak REFERENCE.mzpeak [--mz-dp 5] [--json]
 Exit 0 = equivalent within tolerance, 1 = differences, 2 = engine error.
 """
 import sys, json, zipfile, io, struct, collections, argparse
+import numpy as np
 
 def _read(zp, name):
     import pyarrow.parquet as pq
@@ -16,21 +20,17 @@ def _read(zp, name):
         return None
     return pq.read_table(io.BytesIO(zp.read(name))).to_pylist()
 
-def _rows(zp, name):
-    """Memory-bounded row iterator for large facets (avoids materializing the whole facet)."""
+def _batches(zp, name):
+    """Arrow RecordBatches for a facet (column access avoids per-row Python materialization)."""
     import pyarrow.parquet as pq
     if name not in zp.namelist():
         return
     pf = pq.ParquetFile(io.BytesIO(zp.read(name)))
     for b in pf.iter_batches(batch_size=65536):
-        for r in b.to_pylist():
-            yield r
-
-def _f32(x):
-    return struct.unpack("f", struct.pack("f", float(x)))[0]
+        yield b
 
 def _np_decode(buf, kind):
-    import pynumpress, numpy as np
+    import pynumpress
     b = bytes(buf)
     if kind == "linear" and len(b) <= 16:
         # pynumpress 0.0.9 rejects short (<=2-value) linear streams; decode them per canonical:
@@ -41,68 +41,78 @@ def _np_decode(buf, kind):
             out.append(struct.unpack("<i", b[8:12])[0] / fp)
         if len(b) >= 16:
             out.append(struct.unpack("<i", b[12:16])[0] / fp)
-        return out
+        return np.array(out, dtype=np.float64)
     a = np.frombuffer(b, dtype=np.uint8)
-    return list((pynumpress.decode_linear if kind == "linear" else pynumpress.decode_slof)(a))
+    dec = pynumpress.decode_linear if kind == "linear" else pynumpress.decode_slof
+    return np.asarray(dec(a), dtype=np.float64)
 
-def _chunk_mz(c):
+def _struct_fields(col):
+    return {f.name for f in col.type}
+
+def _chunk_mz(npb, vals, start):
     """m/z values for one chunk row: numpress-linear bytes, else delta from start, else absolute."""
-    npb = c.get("mz_numpress_linear_bytes")
     if npb:                                            # numpress-linear (CURIE MS:1002312)
         return _np_decode(npb, "linear")
-    vals = c.get("mz_chunk_values")
-    start = c.get("mz_chunk_start")
     if vals:                                           # delta: start + consecutive (non-null) deltas
-        out, mz = ([start] if start is not None else []), start
-        for d in vals:
-            if d is None:                              # null-marked (zero-stripped)
-                continue
-            mz += d
-            out.append(mz)
-        return out
-    return [start] if start is not None else []
+        d = np.fromiter((x for x in vals if x is not None), dtype=np.float64)
+        if start is None:
+            return np.empty(0, dtype=np.float64)
+        return np.concatenate(([start], start + np.cumsum(d)))
+    return np.array([start], dtype=np.float64) if start is not None else np.empty(0, dtype=np.float64)
 
-def _chunk_intensity(c):
+def _chunk_intensity(inten, slof):
     """intensity values for one chunk row: plain list, else SLOF bytes (reference)."""
-    inten = c.get("intensity")
     if inten:
-        return [x for x in inten if x is not None]
-    slof = c.get("intensity_numpress_slof_bytes")
+        return np.fromiter((x for x in inten if x is not None), dtype=np.float64)
     if slof:                                           # reference Numpress-SLOF intensity (MS:1002314)
         return _np_decode(slof, "slof")
-    return []
+    return np.empty(0, dtype=np.float64)
 
-def _decode_chunk_row(c):
-    """Yield (mz, intensity) for one chunk row across point/delta/numpress (linear m/z, SLOF intensity)."""
-    mzs = _chunk_mz(c)
-    inten = _chunk_intensity(c)
-    if len(mzs) == len(inten) + 1:                   # pynumpress decode can prepend a phantom anchor
-        mzs = mzs[1:]
-    elif len(inten) == len(mzs) + 1:
-        inten = inten[1:]
-    for i in range(min(len(mzs), len(inten))):
-        yield float(mzs[i]), inten[i]
+def _decode_chunk_row(npb, vals, start, inten, slof):
+    """(mz, intensity) arrays for one chunk row across point/delta/numpress (linear m/z, SLOF intensity)."""
+    mz = _chunk_mz(npb, vals, start)
+    it = _chunk_intensity(inten, slof)
+    if mz.size == it.size + 1:                         # pynumpress decode can prepend a phantom anchor
+        mz = mz[1:]
+    elif it.size == mz.size + 1:
+        it = it[1:]
+    n = min(mz.size, it.size)
+    return mz[:n], it[:n]
 
-def _signal_by_index(rows_data, rows_peaks):
-    """index -> Counter[(mz_key, f32_intensity)] over nonzero points, unioning data + peaks."""
-    sig = collections.defaultdict(collections.Counter)
-    raw = collections.defaultdict(list)   # index -> [(mz,intensity)]
-    if rows_data:
-        for r in rows_data:
-            if "point" in r and r["point"] is not None:
-                p = r["point"]
-                raw[p["spectrum_index"]].append((p["mz"], p["intensity"]))
-            elif "chunk" in r and r["chunk"] is not None:
-                c = r["chunk"]
-                raw[c["spectrum_index"]].extend(_decode_chunk_row(c))
-    if rows_peaks:
-        for r in rows_peaks:
-            if r.get("point") is not None:
-                p = r["point"]
-                raw[p["spectrum_index"]].append((p["mz"], p["intensity"]))
-            elif r.get("chunk") is not None:
-                c = r["chunk"]
-                raw[c["spectrum_index"]].extend(_decode_chunk_row(c))
+def _accumulate(batches, raw):
+    """Append (mz_array, intensity_array) signal segments per spectrum_index from a facet's batches."""
+    for b in batches:
+        names = set(b.schema.names)
+        if "point" in names:
+            col = b.column(b.schema.get_field_index("point"))
+            si = col.field("spectrum_index").to_numpy(zero_copy_only=False)
+            mz = col.field("mz").to_numpy(zero_copy_only=False)
+            it = col.field("intensity").to_numpy(zero_copy_only=False)
+            order = np.argsort(si, kind="stable")
+            si_s, mz_s, it_s = si[order], mz[order], it[order]
+            cuts = np.flatnonzero(np.diff(si_s)) + 1
+            for smz, sit, ssi in zip(np.split(mz_s, cuts), np.split(it_s, cuts), np.split(si_s, cuts)):
+                if ssi.size:
+                    raw[int(ssi[0])].append((smz.astype(np.float64), sit.astype(np.float64)))
+        elif "chunk" in names:
+            col = b.column(b.schema.get_field_index("chunk"))
+            fields = _struct_fields(col)
+            si = col.field("spectrum_index").to_numpy(zero_copy_only=False)
+            start = col.field("mz_chunk_start").to_pylist()
+            npb = col.field("mz_numpress_linear_bytes").to_pylist() if "mz_numpress_linear_bytes" in fields else [None] * len(si)
+            vals = col.field("mz_chunk_values").to_pylist() if "mz_chunk_values" in fields else [None] * len(si)
+            inten = col.field("intensity").to_pylist() if "intensity" in fields else [None] * len(si)
+            slof = col.field("intensity_numpress_slof_bytes").to_pylist() if "intensity_numpress_slof_bytes" in fields else [None] * len(si)
+            for i in range(len(si)):
+                mz_a, it_a = _decode_chunk_row(npb[i], vals[i], start[i], inten[i], slof[i])
+                if mz_a.size:
+                    raw[int(si[i])].append((mz_a, it_a))
+
+def _signal_by_index(zp):
+    """index -> list of (mz_array, intensity_array) segments, unioning spectra_data + spectra_peaks."""
+    raw = collections.defaultdict(list)
+    _accumulate(_batches(zp, "spectra_data.parquet"), raw)
+    _accumulate(_batches(zp, "spectra_peaks.parquet"), raw)
     return raw
 
 def _meta(rows):
@@ -120,19 +130,29 @@ def _meta(rows):
         }
     return out
 
-def _key_counter(pairs, mz_dp):
-    c = collections.Counter()
-    for mz, it in pairs:
-        if it == 0:
-            continue
-        c[(round(float(mz), mz_dp), _f32(it))] += 1
-    return c
+def _key_counter(segments, mz_dp):
+    """Multiset Counter of (round(mz,mz_dp), f32(intensity)) over nonzero points, NumPy-vectorized."""
+    if not segments:
+        return collections.Counter()
+    mz = np.concatenate([s[0] for s in segments]) if len(segments) > 1 else segments[0][0]
+    it = np.concatenate([s[1] for s in segments]) if len(segments) > 1 else segments[0][1]
+    nz = it != 0.0
+    if not nz.any():
+        return collections.Counter()
+    mz = np.round(mz[nz], mz_dp)
+    it32 = it[nz].astype(np.float32)
+    pairs = np.empty(mz.size, dtype=[("mz", "f8"), ("it", "f4")])
+    pairs["mz"] = mz
+    pairs["it"] = it32
+    uniq, cnt = np.unique(pairs, return_counts=True)
+    return collections.Counter(dict(zip(
+        ((float(u["mz"]), float(u["it"])) for u in uniq), cnt.tolist())))
 
 def compare(ours_path, ref_path, mz_dp=5):
     zo, zr = zipfile.ZipFile(ours_path), zipfile.ZipFile(ref_path)
     om, rm = _meta(_read(zo, "spectra_metadata.parquet")), _meta(_read(zr, "spectra_metadata.parquet"))
-    osig = _signal_by_index(_rows(zo, "spectra_data.parquet"), _rows(zo, "spectra_peaks.parquet"))
-    rsig = _signal_by_index(_rows(zr, "spectra_data.parquet"), _rows(zr, "spectra_peaks.parquet"))
+    osig = _signal_by_index(zo)
+    rsig = _signal_by_index(zr)
 
     # align by nativeID where present, else by index
     def id2idx(m):
