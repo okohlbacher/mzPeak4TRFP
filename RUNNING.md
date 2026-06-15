@@ -27,6 +27,31 @@ dotnet ThermoRawFileParser/bin/x64/Release/net8.0/ThermoRawFileParser.dll \
 `spectra_data`/`spectra_peaks`/`spectra_metadata` + `chromatograms_data`/`chromatograms_metadata`
 Parquet facets and `mzpeak_index.json`.
 
+## Encoding options (mzPeak only)
+
+The default output is the reference **chunked layout** with **lossy Numpress-linear m/z** (bounded
+~5e-7 Th; intensity stays lossless `f32`). The chosen encodings are self-described in the archive's
+`data_processing_method_list`, so the output records its own transforms. Flags:
+
+| Flag | Effect | Fidelity |
+|------|--------|----------|
+| *(none)* | Chunked layout, Numpress-linear m/z (default) | L2: m/z bounded ~5e-7 Th, intensity exact |
+| `--lossless` (alias `--no-numpress`) | Chunked layout, delta-encoded m/z (`MS:1003089`) instead of Numpress | L1: exact (m/z, intensity) multiset |
+| `--point` | v1 point layout (`spectra_data` as `point<spectrum_index, mz, intensity>`); overrides Numpress | L1: exact (m/z, intensity) multiset |
+| `--chunk-size=<Th>` | m/z window width for chunked layouts (default `50.0`) | — |
+
+The default lossy mode prints a one-line warning at startup; `--lossless` or `--point` silence it.
+`--chunk-size` applies only to the chunked layouts (ignored under `--point`).
+
+```bash
+# exact (lossless) chunked output
+dotnet ThermoRawFileParser/bin/x64/Release/net8.0/ThermoRawFileParser.dll \
+  -i input.raw -b output.mzpeak -f mzpeak --lossless
+
+# v1 point layout, 25 Th would-be windows ignored (point layout has no windows)
+dotnet ... -f mzpeak --point
+```
+
 ## Apple Silicon (arm64) — runs natively
 
 With RawFileReader **8.0.37** (AnyCPU) the writer runs **natively on arm64** — no Rosetta needed.

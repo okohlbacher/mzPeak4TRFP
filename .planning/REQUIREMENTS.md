@@ -57,8 +57,8 @@ RAW files and is robust to imperfect scans — without regressing v1 conformance
 
 ### CLI & docs
 
-- [ ] **CLI2-01**: New flags — `--point`, `--no-numpress`/`--lossless`, chunk-size, null-marking toggle — documented in `--format` help + `RUNNING.md`; sensible defaults (chunked+numpress)
-- [ ] **CLI2-02**: Provenance: chosen encodings recorded in `data_processing_method_list` so the output self-describes its transforms
+- [x] **CLI2-01**: New flags — `--point`, `--no-numpress`/`--lossless`, `--chunk-size` — documented in option `--help` + `RUNNING.md`; sensible defaults (chunked+numpress). (Null-marking toggle dropped with ZRS → BL-02.)
+- [x] **CLI2-02**: Provenance: chosen encodings recorded in `data_processing_method_list` (file format conversion + intensity narrowing + Numpress-linear m/z step when lossy) so the output self-describes its transforms
 
 ### Conformance & corpus re-verification
 
