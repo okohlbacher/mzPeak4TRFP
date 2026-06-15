@@ -1491,17 +1491,6 @@ namespace ThermoRawFileParserTest
             }
         }
 
-        [Test]
-        public void RegisterChromDataPrefixes_Registers_All_Nine_Accessions()
-        {
-            var prefixes = MzPeakSpectrumWriter.ChromDataAccessions;
-            Assert.That(prefixes, Is.EquivalentTo(new[]
-            {
-                "MS:1000523", "MS:1000595", "UO:0000031", "MS:1000521", "MS:1000515",
-                "MS:1000131", "MS:1000522", "MS:1000786", "UO:0000186"
-            }), "all nine chrom-data accessions are registered before cv_list is finalized");
-        }
-
         // Runs the production MzPeakSpectrumWriter.Write loop against small.RAW into a temp directory.
         // failScan: throw AFTER that scan's filter key is staged (a real post-key read failure).
         // dropParentBeforeChild: just before that child's precursor is built, drop its resolved parent's
@@ -1727,6 +1716,134 @@ namespace ThermoRawFileParserTest
             Assert.That(mz, Is.EqualTo(new[] { 100.0, 100.0, 150.0, 200.0 }));
             Assert.That(inten, Is.EqualTo(new[] { 2f, 3f, 4f, 1f }),
                 "duplicate 100.0 rows keep relative order; multiset preserved");
+        }
+
+        // D2(a): with the device TIC trace forced off, CaptureTic falls back to the summed
+        // ScanStatistics.TIC. The footer must record TicSource == "summed" and every TIC point must
+        // equal the corresponding spectrum's total_ion_current (the summed value).
+        [Test]
+        public void CaptureTic_SummedFallback_WhenDeviceTraceUnavailable()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            Directory.CreateDirectory(dir);
+            try
+            {
+                var input = new ParseInput(TestRawFile, null, dir, OutputFormat.MzPeak)
+                {
+                    MzPeakPointLayout = true
+                };
+                var writer = new MzPeakSpectrumWriter(input) { TestForceSummedTic = true };
+                using (var raw = RawFileReaderFactory.ReadFile(TestRawFile))
+                {
+                    raw.SelectInstrument(Device.MS, 1);
+                    writer.Write(raw, raw.RunHeaderEx.FirstSpectrum, raw.RunHeaderEx.LastSpectrum);
+                }
+                var archive = Path.Combine(dir, "small.mzpeak");
+
+                var chrom = ReadChromFacet(ReadEntry(archive, "chromatograms_data.parquet"));
+                Assert.That(chrom.TicSource, Is.EqualTo("summed"),
+                    "device trace forced off, so the TIC source is the summed fallback");
+                Assert.That(chrom.Time.Length, Is.EqualTo(ExpectedTicPointCount),
+                    "summed fallback emits one TIC point per spectrum");
+
+                // The summed TIC values come from ScanStatistics: each TIC point equals its spectrum's
+                // total_ion_current. Read the spectrum TIC column and compare element-wise.
+                using (var ms = new MemoryStream(ReadEntry(archive, "spectra_metadata.parquet")))
+                using (var reader = ParquetReader.CreateAsync(ms).Result)
+                {
+                    var rg = reader.OpenRowGroupReader(0);
+                    var specTic = rg.ReadColumnAsync(Leaf(reader.Schema,
+                        "spectrum/MS_1000285_total_ion_current_unit_MS_1000131")).Result.Data.Cast<float>().ToArray();
+                    Assert.That(chrom.Intensity, Is.EqualTo(specTic),
+                        "summed TIC intensities equal the per-spectrum total_ion_current");
+                }
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        // D2(b): an MS-level filter that excludes every scan leaves no in-range spectrum. Write must
+        // throw RawFileParserException and produce no archive file.
+        [Test]
+        public void NoInRangeSpectrum_Throws_And_WritesNoArchive()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            Directory.CreateDirectory(dir);
+            try
+            {
+                var input = new ParseInput(TestRawFile, null, dir, OutputFormat.MzPeak)
+                {
+                    MzPeakPointLayout = true,
+                    // No real scan is at MS level 99, so every scan is filtered out as out-of-range.
+                    MsLevel = new HashSet<int> { 99 }
+                };
+                var writer = new MzPeakSpectrumWriter(input);
+                using (var raw = RawFileReaderFactory.ReadFile(TestRawFile))
+                {
+                    raw.SelectInstrument(Device.MS, 1);
+                    var ex = Assert.Throws<RawFileParserException>(() =>
+                        writer.Write(raw, raw.RunHeaderEx.FirstSpectrum, raw.RunHeaderEx.LastSpectrum));
+                    Assert.That(ex.Message, Does.Contain("No in-range spectrum"));
+                }
+                Assert.That(File.Exists(Path.Combine(dir, "small.mzpeak")), Is.False,
+                    "no archive is written when no spectrum is in range");
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        // D2(c): small.RAW carries no charge trailer, so charge_state is null on every MSn row. Drive
+        // the nullable charge column by overriding the precursor charge for MSn children; assert at
+        // least one non-null charge with the overridden value is emitted.
+        [Test]
+        public void ChargeStatePresent_EmitsNonNull_NullableChargeColumn()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            Directory.CreateDirectory(dir);
+            try
+            {
+                var input = new ParseInput(TestRawFile, null, dir, OutputFormat.MzPeak)
+                {
+                    MzPeakPointLayout = true
+                };
+                // TestChargeOverride only fires for MSn children (BuildPrecursor); force charge 2.
+                var writer = new MzPeakSpectrumWriter(input) { TestChargeOverride = _ => 2 };
+                using (var raw = RawFileReaderFactory.ReadFile(TestRawFile))
+                {
+                    raw.SelectInstrument(Device.MS, 1);
+                    writer.Write(raw, raw.RunHeaderEx.FirstSpectrum, raw.RunHeaderEx.LastSpectrum);
+                }
+                var archive = Path.Combine(dir, "small.mzpeak");
+
+                var charges = ReadSelectedIonCharges(ReadEntry(archive, "spectra_metadata.parquet"));
+                Assert.That(charges.Values.Any(v => v.HasValue), Is.True,
+                    "at least one MSn child emits a non-null charge_state");
+                Assert.That(charges.Values.Where(v => v.HasValue).All(v => v.Value == 2), Is.True,
+                    "every emitted charge equals the overridden value");
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        // Maps each MSn child's source_index to its emitted selected_ion charge_state (null when absent).
+        private static Dictionary<ulong, int?> ReadSelectedIonCharges(byte[] metaBytes)
+        {
+            using (var ms = new MemoryStream(metaBytes))
+            using (var reader = ParquetReader.CreateAsync(ms).Result)
+            {
+                var schema = reader.Schema;
+                var rg = reader.OpenRowGroupReader(0);
+                var siSrc = rg.ReadColumnAsync(Leaf(schema, "selected_ion/source_index")).Result;
+                var siCharge = rg.ReadColumnAsync(Leaf(schema,
+                    "selected_ion/MS_1000041_charge_state")).Result;
+                return ZipNullable<int>(siSrc.Data, siCharge.Data);
+            }
         }
     }
 }

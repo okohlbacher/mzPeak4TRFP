@@ -212,6 +212,15 @@ namespace ThermoRawFileParser.Writer
         // not read a selected-ion intensity through that absent parent. Left null in normal operation.
         internal Action<int, IDictionary<int, ulong>> BeforeBuildPrecursor;
 
+        // When set, CaptureTic skips the device TIC trace and uses the summed ScanStatistics TIC,
+        // exercising the fallback path (TicSource == "summed"). Left false in normal operation.
+        internal bool TestForceSummedTic;
+
+        // Optional per-MSn override of the precursor charge state, keyed by child scan number. Returns
+        // the charge to record (which may differ from the trailer's "Charge State:"), exercising the
+        // non-null charge column on inputs whose trailer carries no charge. Left null in normal operation.
+        internal Func<int, int?> TestChargeOverride;
+
         // Everything staged from a single scan, held in locals until the scan fully succeeds. A read/build
         // failure discards the whole struct: no ordinal, no rows, no precursor-map entry are committed.
         private sealed class StagedScan
@@ -541,17 +550,24 @@ namespace ThermoRawFileParser.Writer
             List<float> intensity, List<long> msLevel)
         {
             ChromatogramSignal[] trace;
-            try
+            if (TestForceSummedTic)
             {
-                raw.SelectInstrument(Device.MS, 1);
-                var settings = new ChromatogramTraceSettings(TraceType.TIC);
-                var data = raw.GetChromatogramData(new IChromatogramSettings[] { settings }, -1, -1);
-                trace = ChromatogramSignal.FromChromatogramData(data);
-            }
-            catch (Exception ex)
-            {
-                Log.Warn($"Device TIC trace unavailable, falling back to summed TIC: {ex.Message}");
                 trace = Array.Empty<ChromatogramSignal>();
+            }
+            else
+            {
+                try
+                {
+                    raw.SelectInstrument(Device.MS, 1);
+                    var settings = new ChromatogramTraceSettings(TraceType.TIC);
+                    var data = raw.GetChromatogramData(new IChromatogramSettings[] { settings }, -1, -1);
+                    trace = ChromatogramSignal.FromChromatogramData(data);
+                }
+                catch (Exception ex)
+                {
+                    Log.Warn($"Device TIC trace unavailable, falling back to summed TIC: {ex.Message}");
+                    trace = Array.Empty<ChromatogramSignal>();
+                }
             }
 
             if (trace.Length == 0)
@@ -781,6 +797,7 @@ namespace ThermoRawFileParser.Writer
             }
 
             int? charge = trailer.AsPositiveInt("Charge State:");
+            if (TestChargeOverride != null) charge = TestChargeOverride(scanNumber);
             double? monoisotopicMz = trailer.AsDouble("Monoisotopic M/Z:");
             rec.SelectedIonMz = CalculateSelectedIonMz(reaction, monoisotopicMz, isolationWidth);
             rec.ChargeState = charge;
