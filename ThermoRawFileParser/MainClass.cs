@@ -803,6 +803,7 @@ namespace ThermoRawFileParser
                 {
                     Log.Warn("mzPeak: default m/z encoding is lossy Numpress-linear (bounded ~5e-7 Th); " +
                              "use --lossless for exact m/z or --point for the v1 point layout");
+                    parseInput.NewWarn();
                 }
 
                 parseInput.MaxLevel = parseInput.MsLevel.Max();

@@ -1029,6 +1029,7 @@ namespace ThermoRawFileParserTest
                 long pointCount = ArchivePointCount(numpress);
 
                 var npMz = new Dictionary<string, List<double>>();
+                var npBound = new Dictionary<string, List<double>>();
                 var npIt = new Dictionary<string, List<int>>();
                 long totalCompared = 0;
 
@@ -1045,19 +1046,24 @@ namespace ThermoRawFileParserTest
                     Assert.That(dec.Length, Is.EqualTo(inten.Count),
                         "decoded m/z length == chunk intensity length");
 
-                    // The numpress half-step bound is 0.5/fp; allow a small relative slack for the
-                    // round-half quantization and the floating-point division on reconstruction.
+                    // This chunk's OWN half-step bound is 0.5/fp; a high-fp chunk is held to its own
+                    // tighter bound. Allow a small relative slack for round-half quantization and the
+                    // floating-point division on reconstruction.
                     double bound = (0.5 / fp) * (1.0 + 1e-6);
                     // start anchor (always); end anchor when >= 1 value; 1/2-value chunks guarded.
                     Assert.That(Math.Abs(dec[0] - cs), Is.LessThanOrEqualTo(bound), "start anchor within 0.5/fp");
                     Assert.That(Math.Abs(dec[dec.Length - 1] - ce), Is.LessThanOrEqualTo(bound), "end anchor within 0.5/fp");
 
                     var key = ((ulong)(double)row["si"]).ToString();
-                    if (!npMz.ContainsKey(key)) { npMz[key] = new List<double>(); npIt[key] = new List<int>(); }
-                    foreach (var m in dec) npMz[key].Add(m);
+                    if (!npMz.ContainsKey(key))
+                    {
+                        npMz[key] = new List<double>();
+                        npBound[key] = new List<double>();
+                        npIt[key] = new List<int>();
+                    }
+                    foreach (var m in dec) { npMz[key].Add(m); npBound[key].Add(bound); }
                     npIt[key].AddRange(inten);
 
-                    // per-chunk: numpress m/z within 0.5/fp of the SAME-position lossless m/z handled below.
                     totalCompared += dec.Length;
                 }
 
@@ -1068,22 +1074,31 @@ namespace ThermoRawFileParserTest
                     "same spectrum_index set as --lossless");
 
                 int intMismatch = 0;
-                double worstAbs = 0;
+                double worstRel = 0;
                 foreach (var kv in npMz)
                 {
                     var lm = ((JArray)lossMz[kv.Key]).Select(x => (double)x).ToArray();
                     var li = ((JArray)lossIt[kv.Key]).Select(x => (int)x).ToArray();
+                    var bounds = npBound[kv.Key];
                     Assert.That(kv.Value.Count, Is.EqualTo(lm.Length),
                         $"spectrum {kv.Key} decoded length == lossless length");
                     for (int i = 0; i < lm.Length; i++)
-                        worstAbs = Math.Max(worstAbs, Math.Abs(kv.Value[i] - lm[i]));
+                    {
+                        double err = Math.Abs(kv.Value[i] - lm[i]);
+                        // Each decoded m/z is held to ITS OWN chunk's 0.5/fp bound against the
+                        // same-position lossless m/z, so a tight high-fp chunk cannot hide behind a
+                        // loose low-fp chunk's bound.
+                        Assert.That(err, Is.LessThanOrEqualTo(bounds[i]),
+                            $"spectrum {kv.Key} value {i}: numpress m/z within its own chunk 0.5/fp bound " +
+                            $"({err} > {bounds[i]})");
+                        worstRel = Math.Max(worstRel, err / bounds[i]);
+                    }
                     if (!npIt[kv.Key].SequenceEqual(li)) intMismatch++;
                 }
 
                 Assert.That(intMismatch, Is.EqualTo(0), "intensity bit-exact f32 vs --lossless");
-                // Worst case across small.RAW with smallest fp ~ 1e6 => ~5e-7 Th.
-                Assert.That(worstAbs, Is.LessThanOrEqualTo(5e-7),
-                    $"numpress m/z within the numpress-linear bound vs lossless (worst {worstAbs})");
+                Assert.That(worstRel, Is.LessThanOrEqualTo(1.0),
+                    $"every numpress m/z within its own per-chunk bound (worst ratio {worstRel})");
             }
             finally { Directory.Delete(ndir, true); Directory.Delete(ldir, true); }
         }

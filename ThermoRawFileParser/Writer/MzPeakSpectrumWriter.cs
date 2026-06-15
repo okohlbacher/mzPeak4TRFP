@@ -67,14 +67,14 @@ namespace ThermoRawFileParser.Writer
             "\"array_name\":\"intensity array\",\"unit\":\"MS:1000131\",\"buffer_format\":\"point\",\"buffer_priority\":\"primary\"}" +
             "]}";
 
-        // CURIEs for the chunked spectra_data layout, read verbatim from refs/mzPeak/small.chunked.mzpeak:
-        // the m/z delta-encoding (chunk_encoding column value) and the m/z + intensity transform CURIEs.
+        // CURIEs for the chunked spectra_data layout: the m/z delta-encoding (chunk_encoding column
+        // value, MS:1003089) and the m/z + intensity transform CURIEs.
         private const string ChunkEncodingCurie = "MS:1003089";
         private const string MzTransformCurie = "MS:1003901";
         private const string IntensityTransformCurie = "MS:1003902";
 
-        // Numpress-linear chunk_encoding + m/z bytes transform (verified against the reference
-        // numpress archive). The reference dump proves numpress = MS:1002312; MS:1003089 is delta.
+        // Numpress-linear chunk_encoding + m/z bytes transform: MS:1002312 marks numpress-linear m/z
+        // bytes, distinct from the MS:1003089 delta encoding.
         private const string NumpressLinearCurie = "MS:1002312";
 
         private const string ChunkedSpectrumArrayIndex =
@@ -96,8 +96,8 @@ namespace ThermoRawFileParser.Writer
             "\"data_processing_id\":null,\"buffer_priority\":\"primary\",\"sorting_rank\":null}" +
             "]}";
 
-        // Option B (m/z-only numpress): the four m/z anchor entries (MS:1003901) and the plain
-        // intensity entry (chunk_secondary, MS:1003902) are unchanged; the m/z values live in
+        // m/z-only numpress layout: the four m/z anchor entries (MS:1003901) and the plain intensity
+        // entry (chunk_secondary, MS:1003902) are unchanged; the m/z values live in
         // mz_numpress_linear_bytes (chunk_transform, MS:1002312, sorting_rank 0). 6 entries.
         private const string NumpressSpectrumArrayIndex =
             "{\"prefix\":\"chunk\",\"entries\":[" +
@@ -291,8 +291,9 @@ namespace ThermoRawFileParser.Writer
                 }
 
                 // Device TIC over the whole run (minutes, one value per scan in scan order), paired with
-                // the per-scan (RT, ms_level) records. The device-trace value is the reference TIC; the
-                // summed ScanStatistics.TIC differs for MS1 and is used only when the trace is unavailable.
+                // the per-scan (RT, ms_level) records. The device-trace value is the authoritative TIC;
+                // the summed ScanStatistics.TIC differs for MS1 and is used only when the trace is
+                // unavailable.
                 var chromTime = new List<double>();
                 var chromIntensity = new List<float>();
                 var chromMsLevel = new List<long>();
@@ -825,8 +826,8 @@ namespace ThermoRawFileParser.Writer
                 new DataField<double>("mz"),
                 new DataField<float>("intensity"));
 
-        // The 6-field chunk struct of the reference spectra_data chunk layout. mz_chunk_values / intensity
-        // are nullable-item lists (the writer emits no nulls; the type stays null-aware for read parity).
+        // The 6-field chunk struct of the spectra_data chunk layout. mz_chunk_values / intensity are
+        // nullable-item lists (the writer emits no nulls; the type stays null-aware for read parity).
         private static StructField ChunkStructField() => ChunkStructField(false);
 
         // The chunk struct. In delta mode it is the 6-field reference struct. In numpress mode a 7th
@@ -1344,7 +1345,7 @@ namespace ThermoRawFileParser.Writer
             AddMsnNullableFloat(cols, schema, "selected_ion/" + Cv("MS:1000042", "intensity", "MS:1000131"),
                 n, msnRecords.Select(r => r.SelectedIonIntensity).ToArray());
 
-            // Ion-mobility columns exist to match the ground-truth struct shape; the Thermo RAW path
+            // Ion-mobility columns exist to match the selected_ion struct shape; the Thermo RAW path
             // carries no per-selected-ion mobility value, so they stay leaf-null on every MSn row.
             AddMsnNullableDouble(cols, schema, "selected_ion/ion_mobility_value", n, msnRecords.Select(_ => (double?)null).ToArray());
             AddMsnString(cols, schema, "selected_ion/ion_mobility_type", n, msnRecords.Select(_ => (string)null).ToArray());
