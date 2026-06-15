@@ -1304,11 +1304,23 @@ namespace ThermoRawFileParserTest
                 // child of MS:1000559, which a single packed column cannot express). They are not a
                 // converter defect, so the gate ignores them while still failing on any other warning.
                 var advisory = new[] { "cv_term_placement_tables", "cv_term_placement_imaging" };
-                var warnings = findings.Where(f => (string)f["level"] == "warning")
+                var warningFindings = findings.Where(f => (string)f["level"] == "warning").ToArray();
+                var warnings = warningFindings
                     .Select(f => (string)f["ruleId"]).Where(r => !advisory.Contains(r)).ToArray();
 
                 Assert.That(errors, Is.Empty, $"0 errors required; got {string.Join(",", errors)}");
                 Assert.That(warnings, Is.Empty, $"0 non-advisory warnings required; got {string.Join(",", warnings)}");
+
+                // The advisory exclusion must not mask a real ion-mobility placement regression: a
+                // suppressed cv_mapping warning that mentions FAIMS / ion_mobility / MS:1001581 would be
+                // a genuine FAIMS finding hiding behind the advisory ruleId, so fail on it explicitly.
+                var maskedImFindings = warningFindings
+                    .Where(f => advisory.Contains((string)f["ruleId"]))
+                    .Select(f => (string)f["message"])
+                    .Where(m => m != null && (m.Contains("ion_mobility") || m.Contains("FAIMS") || m.Contains("MS:1001581")))
+                    .ToArray();
+                Assert.That(maskedImFindings, Is.Empty,
+                    $"advisory exclusion must not hide an ion-mobility placement finding: {string.Join(";", maskedImFindings)}");
 
                 var chromRules = findings.Select(f => (string)f["ruleId"])
                     .Where(r => r != null && r.Contains("chromatogram")).ToArray();
