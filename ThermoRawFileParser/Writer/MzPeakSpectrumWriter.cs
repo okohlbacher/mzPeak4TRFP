@@ -27,16 +27,28 @@ namespace ThermoRawFileParser.Writer
         private const string MsCvVersion = "4.1.254";
         private const string UoCvVersion = "2026-01-16";
 
-        // Row-group flush cap for the streamed data facets. Matches ParquetSpectrumWriter.ParquetSliceSize.
-        // Point rows are ~20 bytes, so one row-group buffer per open facet is bounded and predictable.
+        // Row-count flush cap for the streamed data facets, a secondary guard against unbounded buffers
+        // when individual rows are tiny. Point rows are ~20 bytes; fat chunk rows (lists of m/z values +
+        // numpress bytes + intensities) are bounded primarily by RowGroupByteCap below.
         private const int RowGroupRowCap = 1_048_576;
 
-        // Optional override of the streamed flush cap. When set, the streamed flush path uses this value
-        // instead of RowGroupRowCap, lowering the per-row-group bound so a small input still emits
-        // multiple row groups through the writer. Left null in normal operation.
+        // Primary flush cap: approximate uncompressed bytes accumulated in the current row-group buffer.
+        // Chunk rows carry variable-length lists, so a row-count cap alone produces a single multi-hundred-
+        // megabyte row group on large inputs that standard readers cannot load. Flushing at a healthy
+        // Parquet row-group size keeps every row group readable.
+        private const long RowGroupByteCap = 64L * 1024 * 1024;
+
+        // Optional override of the streamed row-count flush cap. When set, the streamed flush path uses
+        // this value instead of RowGroupRowCap, lowering the per-row-group bound so a small input still
+        // emits multiple row groups through the writer. Left null in normal operation.
         internal static int? TestRowGroupRowCap;
 
+        // Optional override of the streamed byte flush cap, lowered by tests so a small input crosses the
+        // byte budget and emits multiple row groups. Left null in normal operation.
+        internal static long? TestRowGroupByteCap;
+
         private int Cap => TestRowGroupRowCap ?? RowGroupRowCap;
+        private long ByteCap => TestRowGroupByteCap ?? RowGroupByteCap;
 
         // The nine chrom-data CURIEs whose prefixes must reach cv_list (finalized inside the metadata
         // facet). Registered via RegisterChromDataPrefixes before BuildMetadataFacet regardless of
@@ -234,10 +246,10 @@ namespace ThermoRawFileParser.Writer
             try
             {
                 dataFacet = ParseInput.MzPeakPointLayout
-                    ? (ISpectraDataFacet)new PointFacetStream(Cap)
-                    : new ChunkFacetStream(Cap, ParseInput.MzPeakChunkSize, ParseInput.MzPeakNumpress);
-                peaksFacet = new PointFacetStream(Cap);
-                chromFacet = new ChromDataFacetStream(Cap);
+                    ? (ISpectraDataFacet)new PointFacetStream(Cap, ByteCap)
+                    : new ChunkFacetStream(Cap, ByteCap, ParseInput.MzPeakChunkSize, ParseInput.MzPeakNumpress);
+                peaksFacet = new PointFacetStream(Cap, ByteCap);
+                chromFacet = new ChromDataFacetStream(Cap, ByteCap);
 
                 for (var scanNumber = firstScanNumber; scanNumber <= lastScanNumber; scanNumber++)
                 {
@@ -873,17 +885,23 @@ namespace ThermoRawFileParser.Writer
             private readonly ParquetSchema _schema;
             private readonly DataField _idx, _mz, _int;
             private readonly int _cap;
+            private readonly long _byteCap;
+            private long _bufferedBytes;
             private FileStream _sink;
             private MzPeakParquet.Handle _handle;
             private readonly List<ulong> _bIdx = new List<ulong>();
             private readonly List<double> _bMz = new List<double>();
             private readonly List<float> _bInt = new List<float>();
 
+            // Approximate uncompressed bytes per point row: u64 spectrum_index + f64 mz + f32 intensity.
+            private const int PointRowBytes = 8 + 8 + 4;
+
             public long PointCount { get; private set; }
 
-            public PointFacetStream(int cap)
+            public PointFacetStream(int cap, long byteCap)
             {
                 _cap = cap;
+                _byteCap = byteCap;
                 TempPath = Path.GetTempFileName();
                 _schema = new ParquetSchema(PointStructField());
                 _idx = Leaf(_schema, "point/spectrum_index");
@@ -905,21 +923,26 @@ namespace ThermoRawFileParser.Writer
                 }
             }
 
-            // The cap is a HARD upper bound on the in-memory buffer: a single scan's points are split
-            // across as many row groups as needed (a scan MAY span row groups in the point layout),
-            // filling the remaining capacity, flushing at the cap, then continuing with the same ordinal.
+            // The row + byte caps are HARD upper bounds on the in-memory buffer: a single scan's points
+            // are split across as many row groups as needed (a scan MAY span row groups in the point
+            // layout), filling the remaining capacity, flushing at whichever cap is reached first, then
+            // continuing with the same ordinal.
             public void Append(ulong ordinal, double[] mz, float[] intensity)
             {
                 int i = 0;
                 while (i < mz.Length)
                 {
-                    int room = _cap - _bIdx.Count;
-                    int take = Math.Min(room, mz.Length - i);
+                    int byteRoom = _bufferedBytes >= _byteCap
+                        ? 0
+                        : (int)Math.Min(int.MaxValue, (_byteCap - _bufferedBytes) / PointRowBytes);
+                    int room = Math.Min(_cap - _bIdx.Count, byteRoom);
+                    int take = Math.Min(Math.Max(room, 1), mz.Length - i);
                     for (int j = 0; j < take; j++, i++)
                     {
                         _bIdx.Add(ordinal); _bMz.Add(mz[i]); _bInt.Add(intensity[i]);
                     }
-                    if (_bIdx.Count >= _cap) Flush();
+                    _bufferedBytes += (long)take * PointRowBytes;
+                    if (_bIdx.Count >= _cap || _bufferedBytes >= _byteCap) Flush();
                 }
                 PointCount += mz.Length;
             }
@@ -935,6 +958,7 @@ namespace ThermoRawFileParser.Writer
                 };
                 _handle.WriteRowGroupAsync(_schema, cols).GetAwaiter().GetResult();
                 _bIdx.Clear(); _bMz.Clear(); _bInt.Clear();
+                _bufferedBytes = 0;
             }
 
             // Finalize order: flush residual buffer -> CloseAsync(final KV) disposes the writer -> dispose
@@ -966,6 +990,8 @@ namespace ThermoRawFileParser.Writer
             private readonly DataField _idx, _start, _end, _enc, _mzItem, _intItem, _npkItem;
             private readonly ListField _mzList;
             private readonly int _cap;
+            private readonly long _byteCap;
+            private long _bufferedBytes;
             private readonly double _chunkSize;
             private readonly bool _numpress;
             private FileStream _sink;
@@ -982,11 +1008,16 @@ namespace ThermoRawFileParser.Writer
             private readonly List<MzPeakParquet.LeafRow> _npkRows = new List<MzPeakParquet.LeafRow>();
             private readonly List<byte> _npkVals = new List<byte>();
 
+            // Approximate uncompressed bytes for a chunk row: the four scalars (~40 B with the encoding
+            // string) + 8 B per delta-encoded m/z value + 4 B per intensity + 1 B per numpress byte.
+            private const int ChunkRowOverheadBytes = 40;
+
             public long PointCount { get; private set; }
 
-            public ChunkFacetStream(int cap, double chunkSize, bool numpress)
+            public ChunkFacetStream(int cap, long byteCap, double chunkSize, bool numpress)
             {
                 _cap = cap;
+                _byteCap = byteCap;
                 _chunkSize = chunkSize;
                 _numpress = numpress;
                 TempPath = Path.GetTempFileName();
@@ -1019,6 +1050,7 @@ namespace ThermoRawFileParser.Writer
                 foreach (var (s, e) in MzPeakChunkCodec.Chunk(mz, _chunkSize))
                 {
                     int k = e - s;
+                    long rowBytes = ChunkRowOverheadBytes + 4L * k;
 
                     if (_numpress)
                     {
@@ -1042,6 +1074,7 @@ namespace ThermoRawFileParser.Writer
                             _npkVals.Add(bytes[i]);
                         }
                         _npkRows.Add(MzPeakParquet.ListOf(nLevels, nHas));
+                        rowBytes += bytes.Length;
                     }
                     else
                     {
@@ -1069,6 +1102,7 @@ namespace ThermoRawFileParser.Writer
                             }
                             _mzRows.Add(MzPeakParquet.ListOf(levels, has));
                         }
+                        rowBytes += 8L * values.Length;
                     }
 
                     var iLevels = new int[k];
@@ -1081,7 +1115,8 @@ namespace ThermoRawFileParser.Writer
                     _intRows.Add(MzPeakParquet.ListOf(iLevels, iHas));
 
                     PointCount += k;
-                    if (_bIdx.Count >= _cap) Flush();
+                    _bufferedBytes += rowBytes;
+                    if (_bIdx.Count >= _cap || _bufferedBytes >= _byteCap) Flush();
                 }
             }
 
@@ -1115,6 +1150,7 @@ namespace ThermoRawFileParser.Writer
                 _bIdx.Clear(); _bStart.Clear(); _bEnd.Clear(); _bEnc.Clear();
                 _mzRows.Clear(); _mzVals.Clear(); _intRows.Clear(); _intVals.Clear();
                 _npkRows.Clear(); _npkVals.Clear();
+                _bufferedBytes = 0;
             }
 
             public void Close(IReadOnlyDictionary<string, string> finalMetadata)
@@ -1141,6 +1177,8 @@ namespace ThermoRawFileParser.Writer
             private readonly ParquetSchema _schema;
             private readonly DataField _idx, _time, _int, _lvl;
             private readonly int _cap;
+            private readonly long _byteCap;
+            private long _bufferedBytes;
             private FileStream _sink;
             private MzPeakParquet.Handle _handle;
             private readonly List<ulong> _bIdx = new List<ulong>();
@@ -1148,11 +1186,16 @@ namespace ThermoRawFileParser.Writer
             private readonly List<float> _bInt = new List<float>();
             private readonly List<long> _bLvl = new List<long>();
 
+            // Approximate uncompressed bytes per chrom-data row: u64 index + f64 time + f32 intensity +
+            // i64 ms_level.
+            private const int ChromRowBytes = 8 + 8 + 4 + 8;
+
             public long PointCount { get; private set; }
 
-            public ChromDataFacetStream(int cap)
+            public ChromDataFacetStream(int cap, long byteCap)
             {
                 _cap = cap;
+                _byteCap = byteCap;
                 TempPath = Path.GetTempFileName();
                 _schema = new ParquetSchema(ChromDataStructField());
                 _idx = Leaf(_schema, "point/chromatogram_index");
@@ -1177,7 +1220,8 @@ namespace ThermoRawFileParser.Writer
             {
                 _bIdx.Add(0UL); _bTime.Add(time); _bInt.Add(intensity); _bLvl.Add(msLevel);
                 PointCount++;
-                if (_bIdx.Count >= _cap) Flush();
+                _bufferedBytes += ChromRowBytes;
+                if (_bIdx.Count >= _cap || _bufferedBytes >= _byteCap) Flush();
             }
 
             private void Flush()
@@ -1192,6 +1236,7 @@ namespace ThermoRawFileParser.Writer
                 };
                 _handle.WriteRowGroupAsync(_schema, cols).GetAwaiter().GetResult();
                 _bIdx.Clear(); _bTime.Clear(); _bInt.Clear(); _bLvl.Clear();
+                _bufferedBytes = 0;
             }
 
             public void Close(IReadOnlyDictionary<string, string> finalMetadata)

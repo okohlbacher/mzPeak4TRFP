@@ -761,6 +761,112 @@ namespace ThermoRawFileParserTest
         }
 
         [Test]
+        public void ChunkFacet_ByteCap_MultiRowGroup_Equals_SingleRowGroup()
+        {
+            // Single-row-group chunked run (production caps): one row group for small.RAW.
+            var single = Convert(false, out var sdir);
+            try
+            {
+                Assert.That(RowGroupCount(single, "spectra_data.parquet"), Is.EqualTo(1),
+                    "production caps yield a single chunk row group for small.RAW");
+                var singleKeys = PyArrow(single, "spectra_data.parquet", ChunkDecodeSnippet);
+
+                // Lowered BYTE cap (row cap left at production) through the REAL writer flush path: the
+                // accumulated chunk-row bytes must drive >=2 row groups, proving the byte budget alone
+                // splits fat chunk rows that the row-count cap would leave in one giant row group.
+                string mdir = null, multi = null;
+                try
+                {
+                    MzPeakSpectrumWriter.TestRowGroupByteCap = 4096;
+                    multi = Convert(false, out mdir);
+                    Assert.That(RowGroupCount(multi, "spectra_data.parquet"), Is.GreaterThan(1),
+                        "lowered byte cap must split the chunk facet into multiple row groups");
+
+                    var multiKeys = PyArrow(multi, "spectra_data.parquet", ChunkDecodeSnippet);
+
+                    Assert.That(multiKeys.Properties().Select(p => p.Name).OrderBy(x => x),
+                        Is.EqualTo(singleKeys.Properties().Select(p => p.Name).OrderBy(x => x)),
+                        "same spectrum_index set across caps");
+
+                    foreach (var prop in singleKeys.Properties())
+                    {
+                        var s = ((JArray)prop.Value).Select(a => ((long)a[0], (int)a[1]))
+                            .OrderBy(x => x).ToArray();
+                        var m = ((JArray)multiKeys[prop.Name]).Select(a => ((long)a[0], (int)a[1]))
+                            .OrderBy(x => x).ToArray();
+                        Assert.That(m, Is.EqualTo(s),
+                            $"spectrum {prop.Name}: (mz,intensity) multiset BITWISE-identical across byte caps");
+                    }
+                }
+                finally
+                {
+                    MzPeakSpectrumWriter.TestRowGroupByteCap = null;
+                    if (mdir != null) Directory.Delete(mdir, true);
+                }
+            }
+            finally { Directory.Delete(sdir, true); }
+        }
+
+        // Large raw file that previously produced one ~400 MB chunk row group pyarrow could not read.
+        private const string LargeRawFile =
+            "/Users/kohlbach/Claude/mzML2mzPeak/data/sdrf-examples/PXD011799/raw/" +
+            "20170424_Lumos_RSLC3_Maurer_Hartl_UW_MFPL_shotgun_TMT1_TiO2_Fr2.raw";
+
+        [Test]
+        public void LargeFile_Chunked_Numpress_PyArrowReadable_MultiRowGroup()
+        {
+            if (!File.Exists(LargeRawFile))
+                Assert.Ignore($"large raw file not present: {LargeRawFile}");
+            var python = ResolvePython();
+            if (python == null) Assert.Ignore("python3/pyarrow not available");
+
+            var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            Directory.CreateDirectory(dir);
+            var parquet = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName() + ".parquet");
+            try
+            {
+                var input = new ParseInput(LargeRawFile, null, dir, OutputFormat.MzPeak)
+                {
+                    MzPeakPointLayout = false,
+                    MzPeakNumpress = true
+                };
+                RawFileParser.Parse(input);
+                Assert.That(input.Errors, Is.EqualTo(0));
+
+                var archive = Directory.GetFiles(dir, "*.mzpeak").Single();
+                File.WriteAllBytes(parquet, ReadEntry(archive, "spectra_data.parquet"));
+
+                // Fully stream every batch (forces all row groups to be read) and report row-group count
+                // and total rows. A regression reproduces as "Unexpected end of stream" here.
+                var snippet =
+                    "import pyarrow.parquet as pq, json\n" +
+                    "pf = pq.ParquetFile(r'{PARQUET}')\n" +
+                    "rows = 0\n" +
+                    "for b in pf.iter_batches(): rows += b.num_rows\n" +
+                    "print(json.dumps({'row_groups': pf.num_row_groups, 'rows': rows}))\n";
+                var code = snippet.Replace("{PARQUET}", parquet.Replace("\\", "\\\\"));
+                var psi = new ProcessStartInfo(python, "-c \"" + code.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"")
+                { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+                using (var proc = Process.Start(psi))
+                {
+                    var stdout = proc.StandardOutput.ReadToEnd();
+                    var stderr = proc.StandardError.ReadToEnd();
+                    proc.WaitForExit();
+                    Assert.That(proc.ExitCode, Is.EqualTo(0), $"pyarrow could not read large-file spectra_data: {stderr}");
+                    var o = JObject.Parse(stdout.Trim());
+                    Assert.That((int)o["row_groups"], Is.GreaterThan(1),
+                        "byte-aware flush must split the large-file chunk facet into multiple row groups");
+                    Assert.That((long)o["rows"], Is.GreaterThan(0), "large-file spectra_data must have rows");
+                }
+            }
+            finally
+            {
+                if (File.Exists(parquet)) File.Delete(parquet);
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Test]
         public void Validator_Chunked_And_Point_ZeroErrors()
         {
             var validator = ResolveValidator();
