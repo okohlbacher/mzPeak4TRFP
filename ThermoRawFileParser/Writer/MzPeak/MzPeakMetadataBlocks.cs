@@ -25,7 +25,7 @@ namespace ThermoRawFileParser.Writer
             var run = BuildRun();
 
             // cv_list is generated LAST: every accession/unit routed through Cv() or a param helper
-            // has been recorded in _cvPrefixes by this point.
+            // has been recorded in the CvCollector by this point.
             var cvList = BuildCvList();
 
             _metadataBlocks = new JObject
@@ -64,7 +64,7 @@ namespace ThermoRawFileParser.Writer
             };
 
             var list = new JArray();
-            foreach (var prefix in _cvPrefixes.OrderBy(p => p))
+            foreach (var prefix in _cv.OrderedPrefixes())
             {
                 defs.TryGetValue(prefix, out var d);
                 list.Add(new JObject

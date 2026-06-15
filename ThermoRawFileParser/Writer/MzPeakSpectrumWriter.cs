@@ -38,7 +38,7 @@ namespace ThermoRawFileParser.Writer
         private int Cap => TestRowGroupRowCap ?? RowGroupRowCap;
         private long ByteCap => TestRowGroupByteCap ?? RowGroupByteCap;
 
-        private readonly HashSet<string> _cvPrefixes = new HashSet<string>();
+        private readonly CvCollector _cv = new CvCollector();
         private bool _chromFromDeviceTrace;
         private readonly List<MassAnalyzerType> _analyzerOrder = new List<MassAnalyzerType>();
         private readonly List<IonizationModeType> _ionizationOrder = new List<IonizationModeType>();
@@ -282,18 +282,9 @@ namespace ThermoRawFileParser.Writer
             foreach (var curie in MzPeakLayout.ChromDataAccessions) CollectPrefix(curie);
         }
 
-        private string Cv(string accession, string label, string unit = null)
-        {
-            CollectPrefix(accession);
-            if (unit != null) CollectPrefix(unit);
-            return MzPeakParquet.CvColumn(accession, label, unit);
-        }
+        private string Cv(string accession, string label, string unit = null) =>
+            _cv.Cv(accession, label, unit);
 
-        private void CollectPrefix(string curie)
-        {
-            if (string.IsNullOrEmpty(curie)) return;
-            var i = curie.IndexOf(':');
-            if (i > 0) _cvPrefixes.Add(curie.Substring(0, i));
-        }
+        private void CollectPrefix(string curie) => _cv.Collect(curie);
     }
 }
