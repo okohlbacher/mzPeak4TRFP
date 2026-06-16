@@ -69,6 +69,18 @@ instruments/methods, and concatenates trivially for cross-run QC. These facets a
 trfp -i input.raw -b output.mzpeak -f mzpeak --vendor-metadata
 ```
 
+`--vendor-metadata-json[=FILE]` additionally dumps the **file-level** vendor metadata (instrument,
+sample, run header, tune, status-log header, instrument method, trailer schema) to a readable JSON
+sidecar — defaults to `<output>.vendor.json`, or give an explicit path. It is independent of
+`--vendor-metadata` (you can dump the JSON without embedding the parquet facets). Per-scan trailers are
+not in the JSON (at ~85 fields × hundreds of thousands of scans they belong in the
+`vendor_scan_trailers` parquet facet).
+
+```bash
+trfp -i input.raw -b output.mzpeak -f mzpeak --vendor-metadata-json            # → output.vendor.json
+trfp -i input.raw -b output.mzpeak -f mzpeak --vendor-metadata-json=meta.json   # explicit path
+```
+
 ```bash
 # exact (lossless) chunked output
 dotnet ThermoRawFileParser/bin/x64/Release/net8.0/ThermoRawFileParser.dll \

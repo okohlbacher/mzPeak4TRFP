@@ -216,6 +216,23 @@ namespace ThermoRawFileParser.Writer
                     Log.Info($"Vendor metadata: {trailerRows} scan-trailer rows + file metadata + trailer schema");
                 }
 
+                // Optional readable JSON sidecar of the file-level vendor metadata (independent of the
+                // embedded parquet facets above).
+                if (ParseInput.MzPeakVendorMetadataJson != null)
+                {
+                    string jsonPath = ParseInput.MzPeakVendorMetadataJson;
+                    if (string.IsNullOrEmpty(jsonPath))
+                    {
+                        var baseOut = ParseInput.OutputFile
+                            ?? Path.Combine(ParseInput.OutputDirectory ?? ".", ParseInput.RawFileNameWithoutExtension);
+                        foreach (var ext in new[] { ".gz", ".mzpeak" })
+                            if (baseOut.ToLower().EndsWith(ext)) baseOut = baseOut.Substring(0, baseOut.Length - ext.Length).TrimEnd('.');
+                        jsonPath = baseOut + ".vendor.json";
+                    }
+                    File.WriteAllText(jsonPath, BuildVendorMetadataJson(raw, _sourceName));
+                    Log.Info($"Vendor metadata JSON → {jsonPath}");
+                }
+
                 var indexBytes = BuildIndex(hasPeaks, true, vendorOn);
 
                 ConfigureWriter(".mzpeak");

@@ -116,6 +116,9 @@ namespace ThermoRawFileParser
 
         public bool MzPeakVendorMetadata { get; set; }
 
+        // null = off; "" = write to the default <output>.vendor.json; non-empty = explicit path.
+        public string MzPeakVendorMetadataJson { get; set; }
+
         private S3Loader S3Loader { get; set; }
 
         public string S3AccessKeyId { get; set; }

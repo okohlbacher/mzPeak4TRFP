@@ -623,6 +623,14 @@ namespace ThermoRawFileParser
                     v => parseInput.MzPeakVendorMetadata = v != null
                 },
                 {
+                    "vendor-metadata-json:",
+                    "mzPeak: also dump the file-level vendor metadata (instrument, sample, run header, " +
+                    "tune, status-log header, instrument method, trailer schema) to a readable JSON " +
+                    "sidecar. Optional path; defaults to <output>.vendor.json. (Per-scan trailers are in " +
+                    "the vendor_scan_trailers parquet facet via --vendor-metadata.)",
+                    v => parseInput.MzPeakVendorMetadataJson = v ?? ""
+                },
+                {
                     "u:|s3_url:",
                     "Optional property to write directly the data into S3 Storage.",
                     v => parseInput.S3Url = v

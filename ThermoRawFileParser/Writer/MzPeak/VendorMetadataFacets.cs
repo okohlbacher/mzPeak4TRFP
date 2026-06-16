@@ -4,6 +4,8 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using Newtonsoft.Json;
+using Newtonsoft.Json.Linq;
 using Parquet;
 using Parquet.Data;
 using Parquet.Schema;
@@ -120,6 +122,62 @@ namespace ThermoRawFileParser.Writer
                 ((DataField)schema[2], dtype.ToArray())
             };
             return WriteFlatFacet(schema, cols);
+        }
+
+        // Readable JSON sidecar of the FILE-LEVEL vendor metadata (instrument/sample/run-header/tune/
+        // status-log header/method/trailer schema). Per-scan trailers are NOT included — at 85 fields ×
+        // hundreds of thousands of scans they belong in the vendor_scan_trailers parquet facet, not JSON.
+        internal static string BuildVendorMetadataJson(IRawDataPlus raw, string sourceName)
+        {
+            JObject Props(object o)
+            {
+                var j = new JObject();
+                if (o == null) return j;
+                foreach (var p in o.GetType().GetProperties().Where(p => p.GetIndexParameters().Length == 0).OrderBy(p => p.Name))
+                {
+                    object v; try { v = p.GetValue(o); } catch { continue; }
+                    if (v is IEnumerable && !(v is string)) continue;
+                    j[p.Name] = v?.ToString();
+                }
+                return j;
+            }
+            JArray Entries(ILogEntryAccess log)
+            {
+                var a = new JArray();
+                if (log == null) return a;
+                for (int i = 0; i < log.Length; i++)
+                    a.Add(new JObject { ["label"] = log.Labels[i], ["value"] = log.Values[i] });
+                return a;
+            }
+
+            var tune = new JArray();
+            for (int t = 0; t < Try(() => raw.GetTuneDataCount()); t++)
+                tune.Add(new JObject { ["segment"] = t, ["entries"] = Entries(Try(() => raw.GetTuneData(t))) });
+
+            var methods = new JArray();
+            try { for (int m = 0; m < raw.InstrumentMethodsCount; m++) methods.Add(raw.GetInstrumentMethod(m)); } catch { }
+
+            var schema = new JArray();
+            try
+            {
+                var h = raw.GetTrailerExtraHeaderInformation();
+                for (int i = 0; i < h.Length; i++)
+                    schema.Add(new JObject { ["ordinal"] = i, ["label"] = h[i].Label, ["data_type"] = h[i].DataType.ToString() });
+            }
+            catch { }
+
+            var root = new JObject
+            {
+                ["source_file"] = sourceName,
+                ["instrument"] = Props(Try(() => (object)raw.GetInstrumentData())),
+                ["sample"] = Props(Try(() => (object)raw.SampleInformation)),
+                ["run_header"] = Props(Try(() => (object)raw.RunHeaderEx)),
+                ["tune"] = tune,
+                ["status_log_header"] = Entries(Try(() => raw.GetStatusLogForRetentionTime(raw.RunHeaderEx.StartTime))),
+                ["instrument_methods"] = methods,
+                ["trailer_schema"] = schema
+            };
+            return root.ToString(Formatting.Indented);
         }
 
         private static byte[] WriteFlatFacet(ParquetSchema schema, (DataField field, Array values)[] cols)

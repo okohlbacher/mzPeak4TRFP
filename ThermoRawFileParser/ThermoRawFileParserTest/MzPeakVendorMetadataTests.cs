@@ -69,6 +69,36 @@ namespace ThermoRawFileParserTest
         }
 
         [Test]
+        public void VendorMetadataJson_Sidecar_WrittenAndWellFormed()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            Directory.CreateDirectory(dir);
+            // JSON sidecar requested (default path) WITHOUT the parquet facet flag — they are independent.
+            var input = new ParseInput(TestRawFile, null, dir, OutputFormat.MzPeak) { MzPeakVendorMetadataJson = "" };
+            RawFileParser.Parse(input);
+            Assert.That(input.Errors, Is.EqualTo(0));
+            try
+            {
+                var jsonPath = Path.Combine(dir, "small.vendor.json");
+                Assert.That(File.Exists(jsonPath), "default <output>.vendor.json sidecar must be written");
+
+                var o = JObject.Parse(File.ReadAllText(jsonPath));   // must be well-formed JSON
+                foreach (var k in new[] { "source_file", "instrument", "sample", "run_header", "tune",
+                                          "status_log_header", "instrument_methods", "trailer_schema" })
+                    Assert.That(o[k], Is.Not.Null, $"vendor json must contain '{k}'");
+
+                Assert.That((string)o["instrument"]["Model"], Is.Not.Empty);
+                Assert.That(((JArray)o["trailer_schema"]).Count, Is.GreaterThan(0));
+                Assert.That(((JArray)o["instrument_methods"]).Count, Is.GreaterThan(0));
+
+                // The parquet facets were NOT requested, so they must be absent (independence).
+                var archive = Path.Combine(dir, "small.mzpeak");
+                Assert.That(ReadEntry(archive, "vendor_scan_trailers.parquet"), Is.Null);
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Test]
         public void VendorMetadata_ScanTrailers_AreTall_And_Verbatim()
         {
             var archive = Convert(true, out var dir);
