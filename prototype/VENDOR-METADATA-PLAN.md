@@ -50,7 +50,26 @@ No correctness defects in the emitted bytes themselves (verified: verbatim strin
 - Typed `value_float` correctness; tall→wide pivot equivalence; multi-segment tune; status-log presence; large-file smoke; `--vendor-metadata=wide`.
 - RUNNING.md already documents tall; extend for status-log + wide + the ordinal/scan_number keys.
 
-## Open questions for RESEARCH to settle (folding in when the workflow completes)
-- Does the mzPeak spec define a sanctioned home for verbatim vendor metadata (so we don't need a bespoke `entity_type:"vendor"`)?
-- Do rawrr/rawDiag/AlphaRaw expose trailers tall or wide, and with which key (scan number vs index)? Align conventions where sensible.
-- Does ProteoWizard emit any trailer-extra as mzML `<userParam>` (i.e., is any of this already partially preserved elsewhere)?
+## RESEARCH outcomes (deep-research, 103 agents, adversarially verified) — folded in
+
+- **Tall is confirmed by prior art (HIGH).** "Best layout is split/tall plus a per-scan key/value table
+  and a file-level block." **TRFP issue #116 favors the long (tall) format**; **AlphaRaw uses split
+  tables**; rawrr/rawDiag read trailers by literal label. → keep tall default + the file-level block;
+  our design matches the field's consensus.
+- **The data is genuinely lost in RAW→mzML (HIGH).** msConvert/ProteoWizard **drops** sld sequence,
+  instrument method, and status/error logs as "too verbose"; only a few trailer labels map to PSI-MS
+  (injection time MS:1000927, FAIMS CV MS:1001581), and `<userParam>` is the *only* standards path
+  (and can't scale to 63 M rows). → the vendor facets add real, otherwise-lost information.
+- **Trailer labels are firmware-dependent (HIGH).** Reinforces tall (schema-stable) over wide and the
+  `vendor_trailer_schema` sidecar; wide must tolerate per-firmware label drift.
+- **Keying:** prior art reads by literal scan number/label. → Phase A's decision to emit **both**
+  `ordinal` (archive-join) **and** `scan_number` (verbatim instrument identity) is the right reconcile.
+- **UNVERIFIED by research:** the mzPeak spec's sanctioned home for vendor/auxiliary metadata, and the
+  fuller IRawDataPlus surface (tune/status/run-header/error/auto-sampler). → I verified the latter
+  empirically (the Astral probe). For the former, keep `entity_type:"vendor"` as a **documented
+  extension** in `mzpeak_index.json` and check the HUPO-PSI/mzPeak spec directly in Phase D before
+  finalizing (do not block on it).
+
+Sources: ProteoWizard `RawFile.cpp` + issue #371, TRFP `MzMlSpectrumWriter.cs` + README + issue #116,
+AlphaRaw, mzML 1.1 XSD (userParam/cvParam), PNNL Thermo-Raw-File-Reader. Net: **no plan change** — the
+recommendation (tall + file-level block + schema sidecar) is corroborated; Phase A/B/C/D/E stand.
