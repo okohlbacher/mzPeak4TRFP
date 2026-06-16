@@ -1,0 +1,32 @@
+name: build-and-test
+
+# Build + run the NUnit suite on every push/PR. Thermo's RawFileReader is
+# vendored under vendor/thermo-nuget (wired via nuget.config), so restore needs
+# no extra setup. Tests that require external tools not present on the runner
+# (mzpeak-validate, the reference mzML2mzPeak converter, python/pyarrow) detect
+# their absence and self-Assert.Ignore, so the suite stays green in CI.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Build (Release)
+        run: dotnet build ThermoRawFileParser/ThermoRawFileParserTest/ThermoRawFileParserTest.csproj -c Release
+
+      - name: Test (Release)
+        run: dotnet test ThermoRawFileParser/ThermoRawFileParserTest/ThermoRawFileParserTest.csproj -c Release --no-build --logger "console;verbosity=normal"

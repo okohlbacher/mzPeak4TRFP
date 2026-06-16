@@ -1,0 +1,73 @@
+name: publish
+
+# Cross-publishes every target from a single Linux runner. .NET cross-compiles
+# per RID, so the Windows .exe, the Linux binary, and the macOS (x64 + arm64)
+# binaries are independent `dotnet publish -r <rid>` outputs — none impacts the
+# others. Thermo's RawFileReader is vendored under vendor/thermo-nuget and wired
+# via the repo's nuget.config, so no extra package checkout is needed.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}   # allow manual runs from the Actions tab
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Publish all targets and zip
+        env:
+          PROJ: ThermoRawFileParser/ThermoRawFileParser.csproj
+          VER: ${{ github.event_name == 'release' && github.ref_name || format('manual-{0}', github.run_number) }}
+        run: |
+          set -euo pipefail
+          # rid -> release-asset suffix (matches the upstream naming)
+          declare -A RIDMAP=( [linux-x64]=linux [win-x64]=win [osx-x64]=osx [osx-arm64]=osx-arm64 )
+          mkdir -p publish
+          for rid in "${!RIDMAP[@]}"; do
+            dotnet publish "$PROJ" -c Release -r "$rid" --self-contained true -o "publish/$rid"
+            ( cd "publish/$rid" && zip -r -q "../ThermoRawFileParser-$VER-${RIDMAP[$rid]}.zip" . )
+          done
+          # framework-dependent build (runs on any OS with a .NET 8+ runtime)
+          dotnet publish "$PROJ" -c Release -f net8.0 -o publish/net8
+          ( cd publish/net8 && zip -r -q "../ThermoRawFileParser-$VER-net8.zip" . )
+          ls -lh publish/*.zip
+
+      - name: Upload build artifacts (always)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ThermoRawFileParser-builds
+          path: publish/*.zip
+          retention-days: 14
+
+      - name: Attach to GitHub release
+        if: ${{ github.event_name == 'release' }}
+        uses: svenstaro/upload-release-action@v2
+        with:
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          file: publish/ThermoRawFileParser-*.zip
+          file_glob: true
+          tag: ${{ github.ref }}
+
+# ---------------------------------------------------------------------------
+# Signing (optional; NOT required for .NET binaries to run). Add only if you
+# distribute to non-technical users or hit OS gatekeepers. Signing CANNOT run
+# on this Linux runner — it needs platform-specific tooling:
+#
+#   * Windows Authenticode: signtool (windows-latest) or osslsigncode (Linux),
+#     with an OV/EV code-signing certificate, over publish/win-x64/*.exe.
+#   * macOS Gatekeeper:     a SEPARATE macos-latest job running
+#       codesign --deep --options runtime --sign "Developer ID Application: …"
+#       then notarytool submit --wait + xcrun stapler staple,
+#     over the publish/osx-x64 and publish/osx-arm64 outputs (needs an Apple
+#     Developer ID, ~$99/yr). .NET ad-hoc-signs the arm64 apphost at publish
+#     time so it runs locally, but downloads still need Developer ID + notarize.
+# ---------------------------------------------------------------------------

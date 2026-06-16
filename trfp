@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# trfp — ThermoRawFileParser launcher for macOS.
+#
+# Runs the net8.0 build of ThermoRawFileParser, rolling forward onto a newer
+# installed .NET runtime (9/10) when no net8 runtime is present, and forcing
+# native arm64 on Apple Silicon. All arguments are passed straight through to
+# ThermoRawFileParser (e.g. -i in.raw -b out.mzpeak -f mzpeak --lossless).
+#
+# DLL resolution order:
+#   1) $TRFP_DLL                       (explicit override)
+#   2) path relative to this script    (repo root, a publish dir, or a symlink)
+set -euo pipefail
+
+REL="ThermoRawFileParser/bin/Release/net8.0/ThermoRawFileParser.dll"
+
+DLL="${TRFP_DLL:-}"
+
+if [[ -z "$DLL" || ! -f "$DLL" ]]; then
+  # Resolve the real location of this script (following symlinks) and look for
+  # the build next to it (a publish dir), one dir up, or in a repo checkout.
+  src="${BASH_SOURCE[0]}"
+  while [[ -h "$src" ]]; do
+    dir="$(cd -P "$(dirname "$src")" && pwd)"
+    src="$(readlink "$src")"
+    [[ "$src" != /* ]] && src="$dir/$src"
+  done
+  here="$(cd -P "$(dirname "$src")" && pwd)"
+  for cand in "$here/ThermoRawFileParser.dll" "$here/$REL" "$here/../$REL"; do
+    [[ -f "$cand" ]] && { DLL="$cand"; break; }
+  done
+fi
+
+if [[ ! -f "$DLL" ]]; then
+  cat >&2 <<EOF
+trfp: ThermoRawFileParser.dll not found.
+  Looked for: $DLL
+  Build it:   (cd <repo> && DOTNET_ROLL_FORWARD=LatestMajor DOTNET_ROLL_FORWARD_TO_PRERELEASE=1 \\
+                 dotnet build ThermoRawFileParser/ThermoRawFileParser.csproj -c Release)
+  Or point at a build:  export TRFP_DLL=/path/to/ThermoRawFileParser.dll
+EOF
+  exit 1
+fi
+
+if ! command -v dotnet >/dev/null 2>&1; then
+  echo "trfp: 'dotnet' not found on PATH (install the .NET SDK)." >&2
+  exit 1
+fi
+
+# Let the net8 build run on a newer installed runtime; respect any caller override.
+export DOTNET_ROLL_FORWARD="${DOTNET_ROLL_FORWARD:-LatestMajor}"
+export DOTNET_ROLL_FORWARD_TO_PRERELEASE="${DOTNET_ROLL_FORWARD_TO_PRERELEASE:-1}"
+
+# Prefer native arm64 on Apple Silicon; harmless when dotnet is already arm64.
+if [[ "$(uname -m)" == "arm64" ]] && command -v arch >/dev/null 2>&1; then
+  exec arch -arm64 dotnet "$DLL" "$@"
+fi
+exec dotnet "$DLL" "$@"

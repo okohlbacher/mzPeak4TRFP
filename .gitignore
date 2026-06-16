@@ -7,3 +7,4 @@ refs/mzPeak/
 refs/mzML2mzPeak/
 # Large local mzpeak example artifacts
 *.mzpeak
+publish/
