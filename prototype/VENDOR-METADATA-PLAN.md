@@ -1,8 +1,20 @@
 # Vendor metadata: adversarial review + implementation plan
 
-Status: `--vendor-metadata` is implemented prototype-grade on branch `raw-verbatim-metadata`
-(commit 222b6d7): tall `vendor_scan_trailers` + `vendor_file_metadata` + `vendor_trailer_schema`,
-0-error validate, 100/100 tests. This document hardens it to production.
+Status: **Phases A–E delivered** on branch `raw-verbatim-metadata`. The adversarial-review findings and
+the phased plan below are all addressed:
+
+- **A (correctness)** ✓ — `VendorTrailerFacetStream` captures trailers in the single main-loop pass over
+  committed scans, keyed by both `ordinal` and `scan_number`; `value_float` from the TYPED
+  `GetTrailerExtraValues` (no culture parsing). Second pass removed.
+- **B (completeness)** ✓ — `vendor_status_log` (per-RT timeseries) + `vendor_error_log` facets added.
+- **C (wide opt-in)** ✓ — `--vendor-metadata=tall|wide|both`; typed wide columns; `vendor_trailer_schema`
+  carries `column_name` + `value_kind` for the tall→wide mapping.
+- **D (conformance & scale)** ✓ — index `entity_type` switched to the spec-sanctioned `proprietary`
+  (research-confirmed open enum; validator ignores it); multi-GB end-to-end verified.
+- **E (tests & docs)** ✓ — 6 vendor tests; RUNNING.md documents all facets/modes/JSON sidecar.
+
+Original prototype-grade baseline was commit 222b6d7 (tall only). The sections below are retained as the
+record of the review and plan that drove the work.
 
 ## Adversarial review of the current implementation
 
