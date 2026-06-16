@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <AssemblyName>rawmetaexport</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="ThermoFisher.CommonCore.Data" Version="8.0.37" />
+    <PackageReference Include="ThermoFisher.CommonCore.RawFileReader" Version="8.0.37" />
+    <PackageReference Include="Parquet.Net" Version="5.0.1" />
+  </ItemGroup>
+</Project>
