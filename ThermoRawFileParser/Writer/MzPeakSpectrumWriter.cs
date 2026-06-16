@@ -99,7 +99,8 @@ namespace ThermoRawFileParser.Writer
             ISpectraDataFacet dataFacet = null;
             PointFacetStream peaksFacet = null;
             IChromDataFacet chromFacet = null;
-            string vendorTrailersTemp = null;
+            var vendorOn = ParseInput.MzPeakVendorMetadata;
+            VendorTrailerFacetStream vendorTrailers = null;
 
             try
             {
@@ -112,6 +113,8 @@ namespace ThermoRawFileParser.Writer
                 chromFacet = ParseInput.MzPeakPointLayout
                     ? (IChromDataFacet)new ChromDataFacetStream(Cap, ByteCap)
                     : new ChromChunkFacetStream(ParseInput.MzPeakNumpress);
+                // Vendor scan-trailers are captured DURING the loop (single pass, committed scans only).
+                if (vendorOn) vendorTrailers = new VendorTrailerFacetStream();
 
                 for (var scanNumber = firstScanNumber; scanNumber <= lastScanNumber; scanNumber++)
                 {
@@ -149,6 +152,7 @@ namespace ThermoRawFileParser.Writer
                     }
                     records.Add(staged.Rec);
                     scanNumberToOrdinal[scanNumber] = ordinal;
+                    if (vendorOn) vendorTrailers.Append(ordinal, scanNumber, raw);
                     _precursorScanNumbers[staged.FilterKey] = scanNumber;
                     ordinal++;
                 }
@@ -204,16 +208,18 @@ namespace ThermoRawFileParser.Writer
                 var chromMetaBytes = BuildChromatogramMetadataFacet(records.Count, chromTime.Count);
                 var metaBytes = BuildMetadataFacet(records);
 
-                // Optional verbatim vendor-metadata facets (additive, non-CV).
-                byte[] vendorFileMeta = null, vendorSchema = null;
-                var vendorOn = ParseInput.MzPeakVendorMetadata;
+                // Optional verbatim vendor-metadata facets (additive, non-CV). The scan-trailers facet was
+                // streamed during the loop; the file-level facets are built here.
+                byte[] vendorFileMeta = null, vendorSchema = null, vendorStatusLog = null, vendorErrorLog = null;
                 if (vendorOn)
                 {
-                    vendorTrailersTemp = Path.GetTempFileName();
-                    var trailerRows = WriteVendorScanTrailers(raw, firstScanNumber, lastScanNumber, vendorTrailersTemp);
+                    vendorTrailers.Close();
                     vendorFileMeta = BuildVendorFileMetadata(raw);
                     vendorSchema = BuildVendorTrailerSchema(raw);
-                    Log.Info($"Vendor metadata: {trailerRows} scan-trailer rows + file metadata + trailer schema");
+                    vendorStatusLog = BuildVendorStatusLog(raw);
+                    vendorErrorLog = BuildVendorErrorLog(raw);
+                    Log.Info($"Vendor metadata: {vendorTrailers.RowCount} scan-trailer rows + file metadata + " +
+                             "status log + trailer schema");
                 }
 
                 // Optional readable JSON sidecar of the file-level vendor metadata (independent of the
@@ -248,9 +254,11 @@ namespace ThermoRawFileParser.Writer
                         AddStoredFromFile(zip, "chromatograms_data.parquet", chromFacet.TempPath);
                         if (vendorOn)
                         {
-                            AddStoredFromFile(zip, "vendor_scan_trailers.parquet", vendorTrailersTemp);
+                            AddStoredFromFile(zip, "vendor_scan_trailers.parquet", vendorTrailers.TempPath);
                             AddStored(zip, "vendor_file_metadata.parquet", vendorFileMeta);
                             AddStored(zip, "vendor_trailer_schema.parquet", vendorSchema);
+                            AddStored(zip, "vendor_status_log.parquet", vendorStatusLog);
+                            AddStored(zip, "vendor_error_log.parquet", vendorErrorLog);
                         }
                     }
 
@@ -272,7 +280,8 @@ namespace ThermoRawFileParser.Writer
                 TryDelete(dataFacet?.TempPath);
                 TryDelete(peaksFacet?.TempPath);
                 TryDelete(chromFacet?.TempPath);
-                TryDelete(vendorTrailersTemp);
+                vendorTrailers?.Dispose();
+                TryDelete(vendorTrailers?.TempPath);
             }
         }
 

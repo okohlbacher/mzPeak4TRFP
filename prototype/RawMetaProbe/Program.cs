@@ -61,6 +61,34 @@ class Program
         }
         catch (Exception e) { Console.WriteLine("  (unavailable: " + e.Message + ")"); }
 
+        H($"Trailer Extra TYPED values (scan {scan})");
+        try
+        {
+            var vals = raw.GetTrailerExtraValues(scan);
+            for (int i = 0; i < Math.Min(vals.Length, 8); i++)
+                Console.WriteLine($"  [{i:00}] {vals[i]} :: {vals[i]?.GetType().Name ?? "null"}");
+            Console.WriteLine($"  ...({vals.Length} typed values)");
+        }
+        catch (Exception e) { Console.WriteLine("  err: " + e.Message); }
+
+        H("Status log API surface (signatures) + count");
+        try { Console.WriteLine("  GetStatusLogEntriesCount() = " + raw.GetStatusLogEntriesCount()); } catch (Exception e) { Console.WriteLine("  count err: " + e.Message); }
+        foreach (var m in raw.GetType().GetMethods().Where(x => x.Name.Contains("StatusLog")).Distinct())
+            Console.WriteLine($"  {m.ReturnType.Name} {m.Name}(" + string.Join(", ", m.GetParameters().Select(p => p.ParameterType.Name + " " + p.Name)) + ")");
+        H("IStatusLogEntry shape (props) + sample");
+        try
+        {
+            var e0 = raw.GetStatusLogEntry(0);
+            foreach (var p in e0.GetType().GetProperties()) Console.WriteLine($"  prop {p.PropertyType.Name} {p.Name}");
+            var hdr = raw.GetStatusLogHeaderInformation();
+            Console.WriteLine($"  header labels: {hdr.Length}; [0]={hdr[0].Label} :: {hdr[0].DataType}");
+        }
+        catch (Exception e) { Console.WriteLine("  err: " + e.Message); }
+
+        H("Error log");
+        try { int n = raw.RunHeaderEx.ErrorLogCount; Console.WriteLine($"  ErrorLogCount={n}"); for (int i = 0; i < Math.Min(n, 3); i++) { var el = raw.GetErrorLogItem(i); Console.WriteLine($"  [{i}] {el}"); } }
+        catch (Exception e) { Console.WriteLine("  err: " + e.Message); }
+
         raw.Dispose();
     }
 

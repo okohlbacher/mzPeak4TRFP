@@ -21,45 +21,75 @@ namespace ThermoRawFileParser.Writer
     // and preserves the exact labels; vendor_trailer_schema lets a consumer pivot to a typed wide view.
     public partial class MzPeakSpectrumWriter
     {
-        // vendor_scan_trailers (tall): one row per (scan, trailer label), streamed to a temp file.
-        internal static long WriteVendorScanTrailers(IRawDataPlus raw, int first, int last, string tempPath)
+        // A typed trailer/status value (GetTrailerExtraValues / IStatusLogEntry.Values) as a double, or
+        // null when non-numeric (bool/string/section-header) — avoids culture-dependent string parsing.
+        internal static double? NumericOrNull(object o)
         {
-            var schema = new ParquetSchema(
-                new DataField<ulong>("scan_index"), new DataField<string>("label"),
-                new DataField<string>("value"), new DataField<double?>("value_float"));
+            if (o == null || o is bool || o is string) return null;
+            try { return Convert.ToDouble(o, CultureInfo.InvariantCulture); } catch { return null; }
+        }
 
-            using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write))
-            using (var w = ParquetWriter.CreateAsync(schema, fs).GetAwaiter().GetResult())
+        // vendor_status_log (tall): the per-RT status-log timeseries (sensor voltages/temps/pressures),
+        // one row per (timepoint position, label). value is verbatim; value_float is the typed value.
+        internal static byte[] BuildVendorStatusLog(IRawDataPlus raw)
+        {
+            var pos = new List<int>(); var rt = new List<double>();
+            var lab = new List<string>(); var val = new List<string>(); var flt = new List<double?>();
+            try
             {
-                const int flushRows = 1_000_000;
-                var si = new List<ulong>(); var lab = new List<string>(); var val = new List<string>();
-                long total = 0;
-
-                void Flush()
+                var header = raw.GetStatusLogHeaderInformation();
+                int n = raw.GetStatusLogEntriesCount();
+                for (int p = 0; p < n; p++)
                 {
-                    if (si.Count == 0) return;
-                    using (var rg = w.CreateRowGroup())
+                    var e = raw.GetStatusLogEntry(p);
+                    var vals = e.Values;
+                    int m = Math.Min(header.Length, vals?.Length ?? 0);
+                    for (int j = 0; j < m; j++)
                     {
-                        rg.WriteColumnAsync(new DataColumn((DataField)schema[0], si.ToArray())).GetAwaiter().GetResult();
-                        rg.WriteColumnAsync(new DataColumn((DataField)schema[1], lab.ToArray())).GetAwaiter().GetResult();
-                        rg.WriteColumnAsync(new DataColumn((DataField)schema[2], val.ToArray())).GetAwaiter().GetResult();
-                        rg.WriteColumnAsync(new DataColumn((DataField)schema[3], val.Select(ParseVendorFloat).ToArray())).GetAwaiter().GetResult();
+                        pos.Add(p); rt.Add(e.Time);
+                        lab.Add(header[j].Label ?? ""); val.Add(vals[j]?.ToString() ?? ""); flt.Add(NumericOrNull(vals[j]));
                     }
-                    si.Clear(); lab.Clear(); val.Clear();
                 }
-
-                for (int s = first; s <= last; s++)
-                {
-                    ILogEntryAccess t;
-                    try { t = raw.GetTrailerExtraInformation(s); } catch { continue; }
-                    if (t == null) continue;
-                    for (int i = 0; i < t.Length; i++)
-                    { si.Add((ulong)s); lab.Add(t.Labels[i] ?? ""); val.Add(t.Values[i] ?? ""); total++; }
-                    if (si.Count >= flushRows) Flush();
-                }
-                Flush();
-                return total;
             }
+            catch { }
+
+            var schema = new ParquetSchema(
+                new DataField<int>("position"), new DataField<double>("rt"), new DataField<string>("label"),
+                new DataField<string>("value"), new DataField<double?>("value_float"));
+            return WriteFlatFacet(schema, new (DataField, Array)[]
+            {
+                ((DataField)schema[0], pos.ToArray()), ((DataField)schema[1], rt.ToArray()),
+                ((DataField)schema[2], lab.ToArray()), ((DataField)schema[3], val.ToArray()),
+                ((DataField)schema[4], flt.ToArray())
+            });
+        }
+
+        // vendor_error_log: the instrument error log (usually empty), one row per entry.
+        internal static byte[] BuildVendorErrorLog(IRawDataPlus raw)
+        {
+            var idx = new List<int>(); var rt = new List<double?>(); var msg = new List<string>();
+            try
+            {
+                int n = raw.RunHeaderEx.ErrorLogCount;
+                for (int i = 0; i < n; i++)
+                {
+                    var item = raw.GetErrorLogItem(i);
+                    if (item == null) continue;
+                    var mp = item.GetType().GetProperty("Message");
+                    var tp = item.GetType().GetProperty("RetentionTime") ?? item.GetType().GetProperty("Time");
+                    idx.Add(i);
+                    rt.Add(tp != null ? NumericOrNull(Try(() => tp.GetValue(item))) : null);
+                    msg.Add((mp != null ? Try(() => mp.GetValue(item))?.ToString() : item.ToString()) ?? "");
+                }
+            }
+            catch { }
+
+            var schema = new ParquetSchema(
+                new DataField<int>("index"), new DataField<double?>("rt"), new DataField<string>("message"));
+            return WriteFlatFacet(schema, new (DataField, Array)[]
+            {
+                ((DataField)schema[0], idx.ToArray()), ((DataField)schema[1], rt.ToArray()), ((DataField)schema[2], msg.ToArray())
+            });
         }
 
         // vendor_file_metadata (tall): file-level metadata tagged by category.

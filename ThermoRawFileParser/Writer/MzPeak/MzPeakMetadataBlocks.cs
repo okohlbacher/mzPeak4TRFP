@@ -288,11 +288,18 @@ namespace ThermoRawFileParser.Writer
 
             if (hasVendor)
             {
-                // Additive, non-CV verbatim vendor metadata (entity_type "vendor" so conformance tooling
-                // can ignore it). Tall trailer bag + file-level metadata + the trailer schema sidecar.
-                files.Add(new JObject { ["name"] = "vendor_scan_trailers.parquet", ["entity_type"] = "vendor", ["data_kind"] = "metadata" });
-                files.Add(new JObject { ["name"] = "vendor_file_metadata.parquet", ["entity_type"] = "vendor", ["data_kind"] = "metadata" });
-                files.Add(new JObject { ["name"] = "vendor_trailer_schema.parquet", ["entity_type"] = "vendor", ["data_kind"] = "metadata" });
+                // Additive, verbatim vendor metadata under the spec-sanctioned open-enum entity_type
+                // "proprietary" (the mzPeak index reserves it for vendor data without a PSI-MS CV term;
+                // conformance tooling ignores non-spectrum/chromatogram entity_types). Retrieval is by the
+                // descriptive file name. Tall trailer bag + file-level metadata + status-log timeseries +
+                // error log + the trailer schema sidecar.
+                void Vendor(string name, string kind) =>
+                    files.Add(new JObject { ["name"] = name, ["entity_type"] = "proprietary", ["data_kind"] = kind });
+                Vendor("vendor_scan_trailers.parquet", "scan trailers");
+                Vendor("vendor_file_metadata.parquet", "file metadata");
+                Vendor("vendor_trailer_schema.parquet", "trailer schema");
+                Vendor("vendor_status_log.parquet", "status log");
+                Vendor("vendor_error_log.parquet", "error log");
             }
 
             var metadata = _metadataBlocks != null
