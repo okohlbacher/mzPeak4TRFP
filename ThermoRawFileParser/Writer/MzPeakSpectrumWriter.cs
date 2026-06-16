@@ -99,6 +99,7 @@ namespace ThermoRawFileParser.Writer
             ISpectraDataFacet dataFacet = null;
             PointFacetStream peaksFacet = null;
             IChromDataFacet chromFacet = null;
+            string vendorTrailersTemp = null;
 
             try
             {
@@ -202,7 +203,20 @@ namespace ThermoRawFileParser.Writer
 
                 var chromMetaBytes = BuildChromatogramMetadataFacet(records.Count, chromTime.Count);
                 var metaBytes = BuildMetadataFacet(records);
-                var indexBytes = BuildIndex(hasPeaks, true);
+
+                // Optional verbatim vendor-metadata facets (additive, non-CV).
+                byte[] vendorFileMeta = null, vendorSchema = null;
+                var vendorOn = ParseInput.MzPeakVendorMetadata;
+                if (vendorOn)
+                {
+                    vendorTrailersTemp = Path.GetTempFileName();
+                    var trailerRows = WriteVendorScanTrailers(raw, firstScanNumber, lastScanNumber, vendorTrailersTemp);
+                    vendorFileMeta = BuildVendorFileMetadata(raw);
+                    vendorSchema = BuildVendorTrailerSchema(raw);
+                    Log.Info($"Vendor metadata: {trailerRows} scan-trailer rows + file metadata + trailer schema");
+                }
+
+                var indexBytes = BuildIndex(hasPeaks, true, vendorOn);
 
                 ConfigureWriter(".mzpeak");
                 try
@@ -215,6 +229,12 @@ namespace ThermoRawFileParser.Writer
                         if (hasPeaks) AddStoredFromFile(zip, "spectra_peaks.parquet", peaksFacet.TempPath);
                         AddStored(zip, "chromatograms_metadata.parquet", chromMetaBytes);
                         AddStoredFromFile(zip, "chromatograms_data.parquet", chromFacet.TempPath);
+                        if (vendorOn)
+                        {
+                            AddStoredFromFile(zip, "vendor_scan_trailers.parquet", vendorTrailersTemp);
+                            AddStored(zip, "vendor_file_metadata.parquet", vendorFileMeta);
+                            AddStored(zip, "vendor_trailer_schema.parquet", vendorSchema);
+                        }
                     }
 
                     Writer.Flush();
@@ -235,6 +255,7 @@ namespace ThermoRawFileParser.Writer
                 TryDelete(dataFacet?.TempPath);
                 TryDelete(peaksFacet?.TempPath);
                 TryDelete(chromFacet?.TempPath);
+                TryDelete(vendorTrailersTemp);
             }
         }
 

@@ -114,6 +114,8 @@ namespace ThermoRawFileParser
 
         public bool MzPeakNumpress { get; set; }
 
+        public bool MzPeakVendorMetadata { get; set; }
+
         private S3Loader S3Loader { get; set; }
 
         public string S3AccessKeyId { get; set; }

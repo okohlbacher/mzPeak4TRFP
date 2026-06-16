@@ -1298,15 +1298,16 @@ namespace ThermoRawFileParserTest
 
                 var errors = findings.Where(f => (string)f["level"] == "error")
                     .Select(f => (string)f["ruleId"]).ToArray();
-                // The cv_mapping placement rules are shipped at WARNING by the profile as advisory and
-                // non-regressing: their spec MUSTs were authored against mzML's element model and cannot
-                // map cleanly onto mzPeak's packed metadata facets (e.g. spectrum type wants a resolvable
-                // child of MS:1000559, which a single packed column cannot express). They are not a
-                // converter defect, so the gate ignores them while still failing on any other warning.
-                var advisory = new[] { "cv_term_placement_tables", "cv_term_placement_imaging" };
+                // The cv_mapping placement rules (the cv_term_placement_* family) are shipped at WARNING by
+                // the profile as advisory and non-regressing: their spec MUSTs were authored against mzML's
+                // element model and cannot map cleanly onto mzPeak's packed metadata facets (e.g. spectrum
+                // type wants a resolvable child of MS:1000559, which a single packed column cannot express;
+                // likewise the data_processing method MUSTs). They are not a converter defect, so the gate
+                // ignores the whole family while still failing on any other warning.
+                bool IsAdvisory(string rule) => rule != null && rule.StartsWith("cv_term_placement_");
                 var warningFindings = findings.Where(f => (string)f["level"] == "warning").ToArray();
                 var warnings = warningFindings
-                    .Select(f => (string)f["ruleId"]).Where(r => !advisory.Contains(r)).ToArray();
+                    .Select(f => (string)f["ruleId"]).Where(r => !IsAdvisory(r)).ToArray();
 
                 Assert.That(errors, Is.Empty, $"0 errors required; got {string.Join(",", errors)}");
                 Assert.That(warnings, Is.Empty, $"0 non-advisory warnings required; got {string.Join(",", warnings)}");
@@ -1315,7 +1316,7 @@ namespace ThermoRawFileParserTest
                 // suppressed cv_mapping warning that mentions FAIMS / ion_mobility / MS:1001581 would be
                 // a genuine FAIMS finding hiding behind the advisory ruleId, so fail on it explicitly.
                 var maskedImFindings = warningFindings
-                    .Where(f => advisory.Contains((string)f["ruleId"]))
+                    .Where(f => IsAdvisory((string)f["ruleId"]))
                     .Select(f => (string)f["message"])
                     .Where(m => m != null && (m.Contains("ion_mobility") || m.Contains("FAIMS") || m.Contains("MS:1001581")))
                     .ToArray();

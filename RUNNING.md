@@ -47,6 +47,28 @@ The default lossy mode prints a one-line warning at startup; `--lossless` or `--
 time-axis chunk (numpress-linear or delta time, f64 intensity, matching the reference); `--point`
 emits the legacy per-point chromatogram with a per-point ms_level.
 
+### Vendor metadata (`--vendor-metadata`)
+
+Thermo `.raw` files carry far more metadata than mzML's CV vocabulary can express (e.g. an Orbitrap
+Astral run exposes ~85 per-scan "Trailer Extra" fields, ~80 of which have no mzML CV term, plus tune
+data with the mass-calibration vector, a per-RT status log, and the instrument method text).
+`--vendor-metadata` captures it **verbatim** as additive, non-CV facets:
+
+| Facet | Shape | Content |
+|-------|-------|---------|
+| `vendor_scan_trailers.parquet` | tall: `(scan_index, label, value, value_float)` | the complete per-scan Trailer Extra bag, one row per (scan, label) |
+| `vendor_file_metadata.parquet` | tall: `(category, entry_index, label, value, value_float)` | instrument / sample / run_header / tune / status-log-header / instrument_method |
+| `vendor_trailer_schema.parquet` | `(ordinal, label, data_type)` | the trailer header — lets a consumer pivot the tall trailers into a typed wide view |
+
+Every `value` is the exact source string; `value_float` is a best-effort numeric parse (null when
+non-numeric) so the tables are directly queryable. The tall layout is verbatim, schema-stable across
+instruments/methods, and concatenates trivially for cross-run QC. These facets are listed in
+`mzpeak_index.json` with `entity_type: "vendor"` and are ignored by `mzpeak-validate` (0 errors).
+
+```bash
+trfp -i input.raw -b output.mzpeak -f mzpeak --vendor-metadata
+```
+
 ```bash
 # exact (lossless) chunked output
 dotnet ThermoRawFileParser/bin/x64/Release/net8.0/ThermoRawFileParser.dll \

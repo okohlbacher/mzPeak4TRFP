@@ -616,6 +616,13 @@ namespace ThermoRawFileParser
                     }
                 },
                 {
+                    "vendor-metadata",
+                    "mzPeak: also emit verbatim Thermo vendor metadata facets (vendor_scan_trailers, " +
+                    "vendor_file_metadata, vendor_trailer_schema) — the per-scan Trailer Extra bag, tune/" +
+                    "sample/run-header/method, and the trailer schema, none of which map to mzML CV terms.",
+                    v => parseInput.MzPeakVendorMetadata = v != null
+                },
+                {
                     "u:|s3_url:",
                     "Optional property to write directly the data into S3 Storage.",
                     v => parseInput.S3Url = v

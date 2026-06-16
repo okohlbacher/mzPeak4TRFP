@@ -242,7 +242,7 @@ namespace ThermoRawFileParser.Writer
             };
         }
 
-        private byte[] BuildIndex(bool hasPeaks, bool hasChromatograms)
+        private byte[] BuildIndex(bool hasPeaks, bool hasChromatograms, bool hasVendor = false)
         {
             var files = new JArray
             {
@@ -284,6 +284,15 @@ namespace ThermoRawFileParser.Writer
                     ["entity_type"] = "chromatogram",
                     ["data_kind"] = "data arrays"
                 });
+            }
+
+            if (hasVendor)
+            {
+                // Additive, non-CV verbatim vendor metadata (entity_type "vendor" so conformance tooling
+                // can ignore it). Tall trailer bag + file-level metadata + the trailer schema sidecar.
+                files.Add(new JObject { ["name"] = "vendor_scan_trailers.parquet", ["entity_type"] = "vendor", ["data_kind"] = "metadata" });
+                files.Add(new JObject { ["name"] = "vendor_file_metadata.parquet", ["entity_type"] = "vendor", ["data_kind"] = "metadata" });
+                files.Add(new JObject { ["name"] = "vendor_trailer_schema.parquet", ["entity_type"] = "vendor", ["data_kind"] = "metadata" });
             }
 
             var metadata = _metadataBlocks != null

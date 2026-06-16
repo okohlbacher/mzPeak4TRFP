@@ -1,5 +1,10 @@
 # Prototype: verbatim Thermo RAW metadata → Parquet
 
+> **Now integrated** into the mzPeak writer as `--vendor-metadata` (emits `vendor_scan_trailers` /
+> `vendor_file_metadata` / `vendor_trailer_schema` facets — see `RUNNING.md`). These standalone tools
+> remain for ad-hoc probing/export outside the mzPeak archive.
+
+
 Thermo `.raw` files carry far more instrument metadata than the HUPO-PSI mzML controlled vocabulary
 can represent. This prototype (a) **probes** the full metadata surface and (b) **exports it verbatim**
 into Parquet tables that could become `vendor_*` facets inside an mzPeak archive.
