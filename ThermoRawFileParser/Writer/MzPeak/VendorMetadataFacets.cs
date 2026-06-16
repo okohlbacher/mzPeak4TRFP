@@ -133,25 +133,28 @@ namespace ThermoRawFileParser.Writer
 
         // vendor_trailer_schema: the trailer header (label, data_type) — lets a consumer pivot the tall
         // vendor_scan_trailers into a typed wide view deterministically.
-        internal static byte[] BuildVendorTrailerSchema(IRawDataPlus raw)
+        // The trailer header as a sidecar: ordinal, exact label, Thermo data_type, the sanitized wide
+        // column_name, and value_kind (numeric/string) — lets a consumer pivot the tall trailers into a
+        // typed wide view and maps verbatim labels to the wide facet's columns.
+        internal static byte[] BuildVendorTrailerSchema(List<VendorWideTrailerFacet.Column> cols)
         {
             var ord = new List<int>(); var lab = new List<string>(); var dtype = new List<string>();
-            try
+            var name = new List<string>(); var kind = new List<string>();
+            for (int i = 0; i < cols.Count; i++)
             {
-                var header = raw.GetTrailerExtraHeaderInformation();
-                for (int i = 0; i < header.Length; i++)
-                { ord.Add(i); lab.Add(header[i].Label ?? ""); dtype.Add(header[i].DataType.ToString()); }
+                ord.Add(i); lab.Add(cols[i].Label); dtype.Add(cols[i].DataType);
+                name.Add(cols[i].Name); kind.Add(cols[i].Numeric ? "numeric" : "string");
             }
-            catch { /* header unavailable: emit empty schema facet */ }
 
             var schema = new ParquetSchema(
-                new DataField<int>("ordinal"), new DataField<string>("label"), new DataField<string>("data_type"));
-            var cols = new (DataField, Array)[]
+                new DataField<int>("ordinal"), new DataField<string>("label"), new DataField<string>("data_type"),
+                new DataField<string>("column_name"), new DataField<string>("value_kind"));
+            return WriteFlatFacet(schema, new (DataField, Array)[]
             {
                 ((DataField)schema[0], ord.ToArray()), ((DataField)schema[1], lab.ToArray()),
-                ((DataField)schema[2], dtype.ToArray())
-            };
-            return WriteFlatFacet(schema, cols);
+                ((DataField)schema[2], dtype.ToArray()), ((DataField)schema[3], name.ToArray()),
+                ((DataField)schema[4], kind.ToArray())
+            });
         }
 
         // Readable JSON sidecar of the FILE-LEVEL vendor metadata (instrument/sample/run-header/tune/

@@ -616,11 +616,19 @@ namespace ThermoRawFileParser
                     }
                 },
                 {
-                    "vendor-metadata",
-                    "mzPeak: also emit verbatim Thermo vendor metadata facets (vendor_scan_trailers, " +
-                    "vendor_file_metadata, vendor_trailer_schema) — the per-scan Trailer Extra bag, tune/" +
-                    "sample/run-header/method, and the trailer schema, none of which map to mzML CV terms.",
-                    v => parseInput.MzPeakVendorMetadata = v != null
+                    "vendor-metadata:",
+                    "mzPeak: also emit verbatim Thermo vendor metadata facets (the per-scan Trailer Extra " +
+                    "bag, tune/sample/run-header/method, status log, trailer schema), none of which map to " +
+                    "mzML CV terms. Optional layout for the trailer bag: 'tall' (default), 'wide' (one typed " +
+                    "column per label), or 'both'.",
+                    v =>
+                    {
+                        parseInput.MzPeakVendorMetadata = true;
+                        var mode = string.IsNullOrEmpty(v) ? "tall" : v.ToLowerInvariant();
+                        if (mode != "tall" && mode != "wide" && mode != "both")
+                            throw new OptionException("Invalid --vendor-metadata '" + v + "': use tall, wide, or both.", "vendor-metadata");
+                        parseInput.MzPeakVendorMetadataMode = mode;
+                    }
                 },
                 {
                     "vendor-metadata-json:",

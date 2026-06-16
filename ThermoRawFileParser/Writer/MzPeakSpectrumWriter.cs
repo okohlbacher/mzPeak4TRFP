@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Reflection;
 using System.Text;
 using ThermoFisher.CommonCore.Data.FilterEnums;
@@ -100,7 +101,11 @@ namespace ThermoRawFileParser.Writer
             PointFacetStream peaksFacet = null;
             IChromDataFacet chromFacet = null;
             var vendorOn = ParseInput.MzPeakVendorMetadata;
+            var vendorMode = ParseInput.MzPeakVendorMetadataMode ?? "tall";
+            var vendorTall = vendorOn && vendorMode != "wide";
+            var vendorWide = vendorOn && vendorMode != "tall";
             VendorTrailerFacetStream vendorTrailers = null;
+            string vendorWideTemp = null;
 
             try
             {
@@ -113,8 +118,8 @@ namespace ThermoRawFileParser.Writer
                 chromFacet = ParseInput.MzPeakPointLayout
                     ? (IChromDataFacet)new ChromDataFacetStream(Cap, ByteCap)
                     : new ChromChunkFacetStream(ParseInput.MzPeakNumpress);
-                // Vendor scan-trailers are captured DURING the loop (single pass, committed scans only).
-                if (vendorOn) vendorTrailers = new VendorTrailerFacetStream();
+                // Vendor scan-trailers (tall) are captured DURING the loop (single pass, committed scans).
+                if (vendorTall) vendorTrailers = new VendorTrailerFacetStream();
 
                 for (var scanNumber = firstScanNumber; scanNumber <= lastScanNumber; scanNumber++)
                 {
@@ -152,7 +157,7 @@ namespace ThermoRawFileParser.Writer
                     }
                     records.Add(staged.Rec);
                     scanNumberToOrdinal[scanNumber] = ordinal;
-                    if (vendorOn) vendorTrailers.Append(ordinal, scanNumber, raw);
+                    if (vendorTall) vendorTrailers.Append(ordinal, scanNumber, raw);
                     _precursorScanNumbers[staged.FilterKey] = scanNumber;
                     ordinal++;
                 }
@@ -213,13 +218,22 @@ namespace ThermoRawFileParser.Writer
                 byte[] vendorFileMeta = null, vendorSchema = null, vendorStatusLog = null, vendorErrorLog = null;
                 if (vendorOn)
                 {
-                    vendorTrailers.Close();
+                    if (vendorTall) vendorTrailers.Close();
+                    var wideCols = VendorWideTrailerFacet.Classify(raw);
+                    if (vendorWide)
+                    {
+                        var committed = scanNumberToOrdinal.Select(kv => (kv.Value, kv.Key))
+                            .OrderBy(x => x.Value).ToList();
+                        vendorWideTemp = Path.GetTempFileName();
+                        VendorWideTrailerFacet.Write(raw, committed, wideCols, vendorWideTemp);
+                    }
                     vendorFileMeta = BuildVendorFileMetadata(raw);
-                    vendorSchema = BuildVendorTrailerSchema(raw);
+                    vendorSchema = BuildVendorTrailerSchema(wideCols);
                     vendorStatusLog = BuildVendorStatusLog(raw);
                     vendorErrorLog = BuildVendorErrorLog(raw);
-                    Log.Info($"Vendor metadata: {vendorTrailers.RowCount} scan-trailer rows + file metadata + " +
-                             "status log + trailer schema");
+                    Log.Info($"Vendor metadata ({vendorMode}): " +
+                             (vendorTall ? $"{vendorTrailers.RowCount} tall trailer rows; " : "") +
+                             "file metadata + status log + trailer schema");
                 }
 
                 // Optional readable JSON sidecar of the file-level vendor metadata (independent of the
@@ -239,7 +253,7 @@ namespace ThermoRawFileParser.Writer
                     Log.Info($"Vendor metadata JSON → {jsonPath}");
                 }
 
-                var indexBytes = BuildIndex(hasPeaks, true, vendorOn);
+                var indexBytes = BuildIndex(hasPeaks, true, vendorOn, vendorTall, vendorWide);
 
                 ConfigureWriter(".mzpeak");
                 try
@@ -254,7 +268,8 @@ namespace ThermoRawFileParser.Writer
                         AddStoredFromFile(zip, "chromatograms_data.parquet", chromFacet.TempPath);
                         if (vendorOn)
                         {
-                            AddStoredFromFile(zip, "vendor_scan_trailers.parquet", vendorTrailers.TempPath);
+                            if (vendorTall) AddStoredFromFile(zip, "vendor_scan_trailers.parquet", vendorTrailers.TempPath);
+                            if (vendorWide) AddStoredFromFile(zip, "vendor_scan_trailers_wide.parquet", vendorWideTemp);
                             AddStored(zip, "vendor_file_metadata.parquet", vendorFileMeta);
                             AddStored(zip, "vendor_trailer_schema.parquet", vendorSchema);
                             AddStored(zip, "vendor_status_log.parquet", vendorStatusLog);
@@ -282,6 +297,7 @@ namespace ThermoRawFileParser.Writer
                 TryDelete(chromFacet?.TempPath);
                 vendorTrailers?.Dispose();
                 TryDelete(vendorTrailers?.TempPath);
+                TryDelete(vendorWideTemp);
             }
         }
 

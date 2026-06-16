@@ -116,6 +116,9 @@ namespace ThermoRawFileParser
 
         public bool MzPeakVendorMetadata { get; set; }
 
+        // Trailer layout for --vendor-metadata: "tall" (default), "wide", or "both".
+        public string MzPeakVendorMetadataMode { get; set; } = "tall";
+
         // null = off; "" = write to the default <output>.vendor.json; non-empty = explicit path.
         public string MzPeakVendorMetadataJson { get; set; }
 

@@ -242,7 +242,8 @@ namespace ThermoRawFileParser.Writer
             };
         }
 
-        private byte[] BuildIndex(bool hasPeaks, bool hasChromatograms, bool hasVendor = false)
+        private byte[] BuildIndex(bool hasPeaks, bool hasChromatograms, bool hasVendor = false,
+            bool vendorTall = false, bool vendorWide = false)
         {
             var files = new JArray
             {
@@ -295,7 +296,8 @@ namespace ThermoRawFileParser.Writer
                 // error log + the trailer schema sidecar.
                 void Vendor(string name, string kind) =>
                     files.Add(new JObject { ["name"] = name, ["entity_type"] = "proprietary", ["data_kind"] = kind });
-                Vendor("vendor_scan_trailers.parquet", "scan trailers");
+                if (vendorTall) Vendor("vendor_scan_trailers.parquet", "scan trailers");
+                if (vendorWide) Vendor("vendor_scan_trailers_wide.parquet", "scan trailers");
                 Vendor("vendor_file_metadata.parquet", "file metadata");
                 Vendor("vendor_trailer_schema.parquet", "trailer schema");
                 Vendor("vendor_status_log.parquet", "status log");

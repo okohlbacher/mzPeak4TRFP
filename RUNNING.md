@@ -56,17 +56,26 @@ data with the mass-calibration vector, a per-RT status log, and the instrument m
 
 | Facet | Shape | Content |
 |-------|-------|---------|
-| `vendor_scan_trailers.parquet` | tall: `(scan_index, label, value, value_float)` | the complete per-scan Trailer Extra bag, one row per (scan, label) |
-| `vendor_file_metadata.parquet` | tall: `(category, entry_index, label, value, value_float)` | instrument / sample / run_header / tune / status-log-header / instrument_method |
-| `vendor_trailer_schema.parquet` | `(ordinal, label, data_type)` | the trailer header — lets a consumer pivot the tall trailers into a typed wide view |
+| `vendor_scan_trailers.parquet` | tall: `(ordinal, scan_number, label, value, value_float)` | the complete per-scan Trailer Extra bag, one row per (spectrum, label) |
+| `vendor_scan_trailers_wide.parquet` | wide: `(ordinal, scan_number, <label columns…>)` | one row per spectrum; numeric labels → typed `double` columns, others verbatim `string` (only with `=wide`/`=both`) |
+| `vendor_file_metadata.parquet` | tall: `(category, entry_index, label, value, value_float)` | instrument / sample / run_header / tune / instrument_method |
+| `vendor_status_log.parquet` | tall: `(position, rt, label, value, value_float)` | the per-RT status-log timeseries (voltages/temps/pressures) |
+| `vendor_trailer_schema.parquet` | `(ordinal, label, data_type, column_name, value_kind)` | the trailer header + tall→wide pivot mapping |
+| `vendor_error_log.parquet` | `(index, rt, message)` | the instrument error log (often empty) |
 
-Every `value` is the exact source string; `value_float` is a best-effort numeric parse (null when
-non-numeric) so the tables are directly queryable. The tall layout is verbatim, schema-stable across
-instruments/methods, and concatenates trivially for cross-run QC. These facets are listed in
-`mzpeak_index.json` with `entity_type: "vendor"` and are ignored by `mzpeak-validate` (0 errors).
+`value` is the exact source string; `value_float` (tall) and the wide numeric columns come from the
+**typed** trailer/status values, not string parsing. The tall scan-trailers are captured in a single
+pass over the committed spectra and keyed by both `ordinal` (joins the spectra facets) and the verbatim
+`scan_number`. Layout is selectable: `--vendor-metadata` (= `tall`, default), `--vendor-metadata=wide`,
+or `--vendor-metadata=both`. Tall is verbatim, schema-stable across instruments/methods, and
+concatenates trivially for cross-run QC; wide is analytics-friendly for a single file. All facets are
+listed in `mzpeak_index.json` with the spec-sanctioned `entity_type: "proprietary"` and are ignored by
+`mzpeak-validate` (0 errors).
 
 ```bash
-trfp -i input.raw -b output.mzpeak -f mzpeak --vendor-metadata
+trfp -i input.raw -b output.mzpeak -f mzpeak --vendor-metadata          # tall (default)
+trfp -i input.raw -b output.mzpeak -f mzpeak --vendor-metadata=wide     # typed wide columns
+trfp -i input.raw -b output.mzpeak -f mzpeak --vendor-metadata=both
 ```
 
 `--vendor-metadata-json[=FILE]` additionally dumps the **file-level** vendor metadata (instrument,

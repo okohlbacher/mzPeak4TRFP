@@ -72,6 +72,52 @@ namespace ThermoRawFileParserTest
         }
 
         [Test]
+        public void VendorMetadata_Wide_EmitsTypedColumns_TallAbsent()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
+            Directory.CreateDirectory(dir);
+            var input = new ParseInput(TestRawFile, null, dir, OutputFormat.MzPeak)
+            { MzPeakVendorMetadata = true, MzPeakVendorMetadataMode = "wide" };
+            RawFileParser.Parse(input);
+            Assert.That(input.Errors, Is.EqualTo(0));
+            var archive = Path.Combine(dir, "small.mzpeak");
+            try
+            {
+                Assert.That(ReadEntry(archive, "vendor_scan_trailers_wide.parquet"), Is.Not.Null, "wide facet present");
+                Assert.That(ReadEntry(archive, "vendor_scan_trailers.parquet"), Is.Null, "tall facet absent in wide mode");
+
+                // Wide: one row per spectrum; numeric trailer labels become typed (double) columns named
+                // per the sanitized label; the schema sidecar carries the label -> column mapping.
+                var o = PyArrow(archive, "vendor_scan_trailers_wide.parquet",
+                    "import pyarrow.parquet as pq, json\n" +
+                    "t = pq.read_table(r'{PARQUET}')\n" +
+                    "names = t.schema.names\n" +
+                    "ty = {f.name: str(f.type) for f in t.schema}\n" +
+                    "print(json.dumps({'rows': t.num_rows, 'has_ordinal': 'ordinal' in names,\n" +
+                    "  'has_inj': 'ion_injection_time_ms' in names,\n" +
+                    "  'inj_type': ty.get('ion_injection_time_ms')}))\n");
+
+                var meta = PyArrow(archive, "spectra_metadata.parquet",
+                    "import pyarrow.parquet as pq, json\nprint(json.dumps({'n': pq.read_table(r'{PARQUET}').num_rows}))\n");
+                Assert.That((int)o["rows"], Is.EqualTo((int)meta["n"]), "one wide row per emitted spectrum");
+                Assert.That((bool)o["has_ordinal"], Is.True);
+                Assert.That((bool)o["has_inj"], Is.True, "numeric trailer label became a typed column");
+                Assert.That((string)o["inj_type"], Is.EqualTo("double"), "numeric column is f64");
+
+                var schema = PyArrow(archive, "vendor_trailer_schema.parquet",
+                    "import pyarrow.parquet as pq, json\n" +
+                    "d = pq.read_table(r'{PARQUET}').to_pylist()\n" +
+                    "r = next((x for x in d if x['column_name'] == 'ion_injection_time_ms'), None)\n" +
+                    "print(json.dumps({'cols': pq.read_table(r'{PARQUET}').schema.names, 'label': r and r['label'], 'kind': r and r['value_kind']}))\n");
+                Assert.That(schema["cols"].Select(x => (string)x).ToArray(),
+                    Is.EqualTo(new[] { "ordinal", "label", "data_type", "column_name", "value_kind" }));
+                Assert.That((string)schema["label"], Is.EqualTo("Ion Injection Time (ms):"));
+                Assert.That((string)schema["kind"], Is.EqualTo("numeric"));
+            }
+            finally { Directory.Delete(dir, true); }
+        }
+
+        [Test]
         public void VendorMetadataJson_Sidecar_WrittenAndWellFormed()
         {
             var dir = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
