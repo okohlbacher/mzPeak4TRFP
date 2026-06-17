@@ -8,3 +8,5 @@ refs/mzML2mzPeak/
 # Large local mzpeak example artifacts
 *.mzpeak
 publish/
+# Vendored mzPeak.NET: proprietary ThermoFisher DLLs come via NuGet, not committed
+mzpeak.net/**/lib/

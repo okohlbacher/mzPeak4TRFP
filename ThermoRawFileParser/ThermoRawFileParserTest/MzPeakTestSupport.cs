@@ -102,9 +102,9 @@ namespace ThermoRawFileParserTest
         public static System.Collections.Generic.List<JObject> PyArrowArray(string archive, string entry, string snippet) =>
             JArray.Parse(PyArrowRaw(archive, entry, snippet)).Cast<JObject>().ToList();
 
-        // The null-aware delta-decode python function used by the chunk/differential snippets. Inverse
-        // of MzPeakChunkCodec.DeltaEncode: cumulative add for present deltas, absolute restart after a
-        // null, nulls preserved. Prepend to a snippet and call dd(start, values).
+        // The null-aware delta-decode python function used by the differential snippets: cumulative
+        // add for present deltas, absolute restart after a null, nulls preserved. Prepend to a snippet
+        // and call dd(start, values).
         public const string DdFunc =
             "def dd(start, arr):\n" +
             "    buf=[]; last=start\n" +

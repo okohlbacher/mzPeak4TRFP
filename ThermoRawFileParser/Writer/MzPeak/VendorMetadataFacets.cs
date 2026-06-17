@@ -4,34 +4,74 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Linq;
+using Apache.Arrow;
+using Apache.Arrow.Types;
+using MZPeak.Storage;
+using MZPeak.Thermo;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
-using Parquet;
-using Parquet.Data;
-using Parquet.Schema;
+using ParquetSharp.Arrow;
 using ThermoFisher.CommonCore.Data.Interfaces;
 
 namespace ThermoRawFileParser.Writer
 {
     // Verbatim Thermo vendor-metadata facets (opt-in, --vendor-metadata). Captures the metadata that
-    // mzML's CV vocabulary cannot represent — the per-scan Trailer Extra bag, tune/sample/run-header/
-    // method, and the trailer schema — exactly as the instrument reports it. These are additive,
-    // non-CV facets: every value is the source string (value_float is a best-effort numeric parse so
-    // the table is directly queryable). Tall layout keeps the schema stable across instruments/methods
-    // and preserves the exact labels; vendor_trailer_schema lets a consumer pivot to a typed wide view.
+    // mzML's CV vocabulary cannot represent, written as additive non-CV proprietary entries into the
+    // mzPeak archive. Uses ParquetSharp/Arrow for Parquet serialization.
     public partial class MzPeakSpectrumWriter
     {
-        // A typed trailer/status value (GetTrailerExtraValues / IStatusLogEntry.Values) as a double, or
-        // null when non-numeric (bool/string/section-header) — avoids culture-dependent string parsing.
         internal static double? NumericOrNull(object o)
         {
             if (o == null || o is bool || o is string) return null;
             try { return Convert.ToDouble(o, CultureInfo.InvariantCulture); } catch { return null; }
         }
 
-        // vendor_status_log (tall): the per-RT status-log timeseries (sensor voltages/temps/pressures),
-        // one row per (timepoint position, label). value is verbatim; value_float is the typed value.
-        internal static byte[] BuildVendorStatusLog(IRawDataPlus raw)
+        internal static void WriteVendorFacets(
+            ThermoMZPeakWriter writer,
+            IRawDataPlus raw,
+            bool vendorTall,
+            bool vendorWide,
+            VendorTrailerFacetStream trailers,
+            Dictionary<int, ulong> scanNumberToOrdinal,
+            List<VendorWideTrailerFacet.Column> wideCols)
+        {
+            // Tall scan trailers: already written to temp file — copy into archive
+            if (vendorTall && trailers != null)
+            {
+                var entry = new FileIndexEntry("vendor_scan_trailers.parquet",
+                    new EntityType(EntityTypeTag.Other, "proprietary"), DataKind.Proprietary);
+                using var dest = writer.StartProprietaryEntry(entry);
+                using var src  = File.OpenRead(trailers.TempPath);
+                src.CopyTo(dest, 65536);
+            }
+
+            // Wide scan trailers: build from committed scans
+            if (vendorWide)
+            {
+                var committed = scanNumberToOrdinal
+                    .OrderBy(kv => kv.Value)
+                    .Select(kv => (kv.Value, kv.Key))
+                    .ToList();
+                string wideTemp = Path.GetTempFileName();
+                try
+                {
+                    VendorWideTrailerFacet.Write(raw, committed, wideCols, wideTemp);
+                    var entry = new FileIndexEntry("vendor_scan_trailers_wide.parquet",
+                        new EntityType(EntityTypeTag.Other, "proprietary"), DataKind.Proprietary);
+                    using var dest = writer.StartProprietaryEntry(entry);
+                    using var src  = File.OpenRead(wideTemp);
+                    src.CopyTo(dest, 65536);
+                }
+                finally { TryDelete(wideTemp); }
+            }
+
+            WriteVendorFileMetadata(writer, raw);
+            WriteVendorTrailerSchema(writer, wideCols);
+            WriteVendorStatusLog(writer, raw);
+            WriteVendorErrorLog(writer, raw);
+        }
+
+        private static void WriteVendorStatusLog(ThermoMZPeakWriter writer, IRawDataPlus raw)
         {
             var pos = new List<int>(); var rt = new List<double>();
             var lab = new List<string>(); var val = new List<string>(); var flt = new List<double?>();
@@ -53,19 +93,22 @@ namespace ThermoRawFileParser.Writer
             }
             catch { }
 
-            var schema = new ParquetSchema(
-                new DataField<int>("position"), new DataField<double>("rt"), new DataField<string>("label"),
-                new DataField<string>("value"), new DataField<double?>("value_float"));
-            return WriteFlatFacet(schema, new (DataField, Array)[]
-            {
-                ((DataField)schema[0], pos.ToArray()), ((DataField)schema[1], rt.ToArray()),
-                ((DataField)schema[2], lab.ToArray()), ((DataField)schema[3], val.ToArray()),
-                ((DataField)schema[4], flt.ToArray())
-            });
+            var schema = VendorArrow.Schema(
+                ("position",    new Int32Type(),  false),
+                ("rt",          new DoubleType(), false),
+                ("label",       new StringType(), false),
+                ("value",       new StringType(), false),
+                ("value_float", new DoubleType(), true));
+
+            var batch = VendorArrow.Batch(schema,
+                VendorArrow.Int32(pos), VendorArrow.Double(rt),
+                VendorArrow.String(lab), VendorArrow.String(val),
+                VendorArrow.NullableDouble(flt));
+
+            WriteEntry(writer, "vendor_status_log.parquet", schema, batch);
         }
 
-        // vendor_error_log: the instrument error log (usually empty), one row per entry.
-        internal static byte[] BuildVendorErrorLog(IRawDataPlus raw)
+        private static void WriteVendorErrorLog(ThermoMZPeakWriter writer, IRawDataPlus raw)
         {
             var idx = new List<int>(); var rt = new List<double?>(); var msg = new List<string>();
             try
@@ -84,22 +127,28 @@ namespace ThermoRawFileParser.Writer
             }
             catch { }
 
-            var schema = new ParquetSchema(
-                new DataField<int>("index"), new DataField<double?>("rt"), new DataField<string>("message"));
-            return WriteFlatFacet(schema, new (DataField, Array)[]
-            {
-                ((DataField)schema[0], idx.ToArray()), ((DataField)schema[1], rt.ToArray()), ((DataField)schema[2], msg.ToArray())
-            });
+            var schema = VendorArrow.Schema(
+                ("index",   new Int32Type(),  false),
+                ("rt",      new DoubleType(), true),
+                ("message", new StringType(), false));
+
+            var batch = VendorArrow.Batch(schema,
+                VendorArrow.Int32(idx), VendorArrow.NullableDouble(rt), VendorArrow.String(msg));
+
+            WriteEntry(writer, "vendor_error_log.parquet", schema, batch);
         }
 
-        // vendor_file_metadata (tall): file-level metadata tagged by category.
-        internal static byte[] BuildVendorFileMetadata(IRawDataPlus raw)
+        private static void WriteVendorFileMetadata(ThermoMZPeakWriter writer, IRawDataPlus raw)
         {
             var cat = new List<string>(); var idx = new List<int>();
             var lab = new List<string>(); var val = new List<string>();
 
             void Add(string c, int i, string l, string v) { cat.Add(c); idx.Add(i); lab.Add(l ?? ""); val.Add(v ?? ""); }
-            void AddLog(string c, ILogEntryAccess log) { if (log == null) return; for (int i = 0; i < log.Length; i++) Add(c, i, log.Labels[i], log.Values[i]); }
+            void AddLog(string c, ILogEntryAccess log)
+            {
+                if (log == null) return;
+                for (int i = 0; i < log.Length; i++) Add(c, i, log.Labels[i], log.Values[i]);
+            }
             void AddProps(string c, object o)
             {
                 if (o == null) return; int i = 0;
@@ -112,33 +161,31 @@ namespace ThermoRawFileParser.Writer
             }
 
             AddProps("instrument", Try(() => (object)raw.GetInstrumentData()));
-            AddProps("sample", Try(() => (object)raw.SampleInformation));
+            AddProps("sample",     Try(() => (object)raw.SampleInformation));
             AddProps("run_header", Try(() => (object)raw.RunHeaderEx));
             int tunes = Try(() => raw.GetTuneDataCount());
             for (int t = 0; t < tunes; t++) AddLog($"tune[{t}]", Try(() => raw.GetTuneData(t)));
             AddLog("status_log_header", Try(() => raw.GetStatusLogForRetentionTime(raw.RunHeaderEx.StartTime)));
             try { for (int m = 0; m < raw.InstrumentMethodsCount; m++) Add("instrument_method", m, $"method[{m}]", raw.GetInstrumentMethod(m)); } catch { }
 
-            var schema = new ParquetSchema(
-                new DataField<string>("category"), new DataField<int>("entry_index"),
-                new DataField<string>("label"), new DataField<string>("value"), new DataField<double?>("value_float"));
-            var cols = new (DataField, Array)[]
-            {
-                ((DataField)schema[0], cat.ToArray()), ((DataField)schema[1], idx.ToArray()),
-                ((DataField)schema[2], lab.ToArray()), ((DataField)schema[3], val.ToArray()),
-                ((DataField)schema[4], val.Select(ParseVendorFloat).ToArray())
-            };
-            return WriteFlatFacet(schema, cols);
+            var schema = VendorArrow.Schema(
+                ("category",    new StringType(), false),
+                ("entry_index", new Int32Type(),  false),
+                ("label",       new StringType(), false),
+                ("value",       new StringType(), false),
+                ("value_float", new DoubleType(), true));
+
+            var batch = VendorArrow.Batch(schema,
+                VendorArrow.String(cat), VendorArrow.Int32(idx),
+                VendorArrow.String(lab), VendorArrow.String(val),
+                VendorArrow.NullableDouble(val.Select(ParseVendorFloat).ToList()));
+
+            WriteEntry(writer, "vendor_file_metadata.parquet", schema, batch);
         }
 
-        // vendor_trailer_schema: the trailer header (label, data_type) — lets a consumer pivot the tall
-        // vendor_scan_trailers into a typed wide view deterministically.
-        // The trailer header as a sidecar: ordinal, exact label, Thermo data_type, the sanitized wide
-        // column_name, and value_kind (numeric/string) — lets a consumer pivot the tall trailers into a
-        // typed wide view and maps verbatim labels to the wide facet's columns.
-        internal static byte[] BuildVendorTrailerSchema(List<VendorWideTrailerFacet.Column> cols)
+        internal static void WriteVendorTrailerSchema(ThermoMZPeakWriter writer, List<VendorWideTrailerFacet.Column> cols)
         {
-            var ord = new List<int>(); var lab = new List<string>(); var dtype = new List<string>();
+            var ord  = new List<int>(); var lab = new List<string>(); var dtype = new List<string>();
             var name = new List<string>(); var kind = new List<string>();
             for (int i = 0; i < cols.Count; i++)
             {
@@ -146,20 +193,20 @@ namespace ThermoRawFileParser.Writer
                 name.Add(cols[i].Name); kind.Add(cols[i].Numeric ? "numeric" : "string");
             }
 
-            var schema = new ParquetSchema(
-                new DataField<int>("ordinal"), new DataField<string>("label"), new DataField<string>("data_type"),
-                new DataField<string>("column_name"), new DataField<string>("value_kind"));
-            return WriteFlatFacet(schema, new (DataField, Array)[]
-            {
-                ((DataField)schema[0], ord.ToArray()), ((DataField)schema[1], lab.ToArray()),
-                ((DataField)schema[2], dtype.ToArray()), ((DataField)schema[3], name.ToArray()),
-                ((DataField)schema[4], kind.ToArray())
-            });
+            var schema = VendorArrow.Schema(
+                ("ordinal",      new Int32Type(),  false),
+                ("label",        new StringType(), false),
+                ("data_type",    new StringType(), false),
+                ("column_name",  new StringType(), false),
+                ("value_kind",   new StringType(), false));
+
+            var batch = VendorArrow.Batch(schema,
+                VendorArrow.Int32(ord), VendorArrow.String(lab), VendorArrow.String(dtype),
+                VendorArrow.String(name), VendorArrow.String(kind));
+
+            WriteEntry(writer, "vendor_trailer_schema.parquet", schema, batch);
         }
 
-        // Readable JSON sidecar of the FILE-LEVEL vendor metadata (instrument/sample/run-header/tune/
-        // status-log header/method/trailer schema). Per-scan trailers are NOT included — at 85 fields ×
-        // hundreds of thousands of scans they belong in the vendor_scan_trailers parquet facet, not JSON.
         internal static string BuildVendorMetadataJson(IRawDataPlus raw, string sourceName)
         {
             JObject Props(object o)
@@ -201,38 +248,85 @@ namespace ThermoRawFileParser.Writer
 
             var root = new JObject
             {
-                ["source_file"] = sourceName,
-                ["instrument"] = Props(Try(() => (object)raw.GetInstrumentData())),
-                ["sample"] = Props(Try(() => (object)raw.SampleInformation)),
-                ["run_header"] = Props(Try(() => (object)raw.RunHeaderEx)),
-                ["tune"] = tune,
-                ["status_log_header"] = Entries(Try(() => raw.GetStatusLogForRetentionTime(raw.RunHeaderEx.StartTime))),
+                ["source_file"]        = sourceName,
+                ["instrument"]         = Props(Try(() => (object)raw.GetInstrumentData())),
+                ["sample"]             = Props(Try(() => (object)raw.SampleInformation)),
+                ["run_header"]         = Props(Try(() => (object)raw.RunHeaderEx)),
+                ["tune"]               = tune,
+                ["status_log_header"]  = Entries(Try(() => raw.GetStatusLogForRetentionTime(raw.RunHeaderEx.StartTime))),
                 ["instrument_methods"] = methods,
-                ["trailer_schema"] = schema
+                ["trailer_schema"]     = schema
             };
             return root.ToString(Formatting.Indented);
         }
 
-        private static byte[] WriteFlatFacet(ParquetSchema schema, (DataField field, Array values)[] cols)
+        private static void WriteEntry(ThermoMZPeakWriter writer, string name, Schema schema, RecordBatch batch)
         {
-            using (var ms = new MemoryStream())
-            {
-                using (var w = ParquetWriter.CreateAsync(schema, ms).GetAwaiter().GetResult())
-                using (var rg = w.CreateRowGroup())
-                    foreach (var (field, values) in cols)
-                        rg.WriteColumnAsync(new DataColumn(field, values)).GetAwaiter().GetResult();
-                return ms.ToArray();
-            }
+            var entry = new FileIndexEntry(name,
+                new EntityType(EntityTypeTag.Other, "proprietary"), DataKind.Proprietary);
+            var managedStream = writer.StartProprietaryParquetEntry(entry);
+            var writerProps = new ParquetSharp.WriterPropertiesBuilder()
+                .Compression(ParquetSharp.Compression.Zstd)
+                .Build();
+            var arrowProps = new ArrowWriterPropertiesBuilder().StoreSchema().Build();
+            using var pw = new FileWriter(managedStream, schema, writerProps, arrowProps);
+            pw.WriteRecordBatch(batch);
+            pw.Close();
         }
 
         private static double? ParseVendorFloat(string s)
         {
             if (string.IsNullOrWhiteSpace(s)) return null;
             if (double.TryParse(s, NumberStyles.Any, CultureInfo.InvariantCulture, out var d)) return d;
-            if (double.TryParse(s, NumberStyles.Any, CultureInfo.CurrentCulture, out d)) return d;
+            if (double.TryParse(s, NumberStyles.Any, CultureInfo.CurrentCulture,   out d))     return d;
             return null;
         }
 
         private static T Try<T>(Func<T> f) { try { return f(); } catch { return default; } }
+    }
+
+    // Arrow array building helpers used by vendor facet code.
+    internal static class VendorArrow
+    {
+        public static Schema Schema(params (string name, IArrowType type, bool nullable)[] fields)
+        {
+            var b = new Schema.Builder();
+            foreach (var (n, t, nullable) in fields) b.Field(new Field(n, t, nullable));
+            return b.Build();
+        }
+
+        public static RecordBatch Batch(Schema schema, params IArrowArray[] columns)
+        {
+            int length = columns.Length > 0 ? columns[0].Length : 0;
+            return new RecordBatch(schema, columns, length);
+        }
+
+        public static IArrowArray Int32(IEnumerable<int> values)
+        {
+            var b = new Int32Array.Builder();
+            foreach (var v in values) b.Append(v);
+            return b.Build();
+        }
+
+        public static IArrowArray Double(IEnumerable<double> values)
+        {
+            var b = new DoubleArray.Builder();
+            foreach (var v in values) b.Append(v);
+            return b.Build();
+        }
+
+        public static IArrowArray NullableDouble(IEnumerable<double?> values)
+        {
+            var b = new DoubleArray.Builder();
+            foreach (var v in values) { if (v.HasValue) b.Append(v.Value); else b.AppendNull(); }
+            return b.Build();
+        }
+
+        public static IArrowArray String(IEnumerable<string> values)
+        {
+            var b = new StringArray.Builder();
+            foreach (var v in values) b.Append(v ?? "");
+            return b.Build();
+        }
     }
 }

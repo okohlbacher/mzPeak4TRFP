@@ -1,0 +1,62 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector" Version="6.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.2" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.12.0" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+    <ProjectReference Include="../MZPeakNet/MZPeakNet.csproj" />
+    <ProjectReference Include="../MZPeakNet.Thermo/MZPeakNet.Thermo.csproj" />
+    <ProjectReference Include="../MZPeakNet.AppTest/MZPeakNet.AppTest.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="../TestData/small.mzpeak">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../TestData/small.chunked.mzpeak">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+    <Content Include="../TestData/small.RAW">
+      <CopyToOutputDirectory>Always</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="ThermoFisher.CommonCore.BackgroundSubtraction">
+      <HintPath>../MZPeakNet.Thermo/lib/update/ThermoFisher.CommonCore.BackgroundSubtraction.dll</HintPath>
+    </Reference>
+    <Reference Include="ThermoFisher.CommonCore.Data">
+      <HintPath>../MZPeakNet.Thermo/lib/update/ThermoFisher.CommonCore.Data.dll</HintPath>
+    </Reference>
+    <Reference Include="ThermoFisher.CommonCore.MassPrecisionEstimator">
+      <HintPath>../MZPeakNet.Thermo/lib/update/ThermoFisher.CommonCore.MassPrecisionEstimator.dll</HintPath>
+    </Reference>
+    <Reference Include="ThermoFisher.CommonCore.RawFileReader">
+      <HintPath>../MZPeakNet.Thermo/lib/update/ThermoFisher.CommonCore.RawFileReader.dll</HintPath>
+    </Reference>
+    <Reference Include="ThermoFisher.CommonCore.RandomAccessReaderPlugin">
+      <HintPath>../MZPeakNet.Thermo/lib/update/ThermoFisher.CommonCore.RandomAccessReaderPlugin.dll</HintPath>
+    </Reference>
+    <Reference Include="OpenMcdf">
+      <HintPath>../MZPeakNet.Thermo/lib/core/OpenMcdf.dll</HintPath>
+    </Reference>
+    <Reference Include="OpenMcdf.Extensions">
+      <HintPath>../MZPeakNet.Thermo/lib/core/OpenMcdf.Extensions.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+</Project>

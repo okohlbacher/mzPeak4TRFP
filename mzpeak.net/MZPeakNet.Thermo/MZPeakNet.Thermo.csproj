@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PlatformTarget>AnyCPU</PlatformTarget>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../MZPeakNet/MZPeakNet.csproj" />
+    <PackageReference Include="ThermoFisher.CommonCore.BackgroundSubtraction" Version="8.0.37" />
+    <PackageReference Include="ThermoFisher.CommonCore.Data" Version="8.0.37" />
+<PackageReference Include="ThermoFisher.CommonCore.RandomAccessReaderPlugin" Version="8.0.37" />
+    <PackageReference Include="ThermoFisher.CommonCore.RawFileReader" Version="8.0.37" />
+  </ItemGroup>
+
+</Project>

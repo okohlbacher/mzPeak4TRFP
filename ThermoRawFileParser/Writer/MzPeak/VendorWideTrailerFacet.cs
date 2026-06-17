@@ -3,9 +3,8 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Text;
-using Parquet;
-using Parquet.Data;
-using Parquet.Schema;
+using Apache.Arrow;
+using Apache.Arrow.Types;
 using ThermoFisher.CommonCore.Data.Interfaces;
 
 namespace ThermoRawFileParser.Writer
@@ -13,16 +12,12 @@ namespace ThermoRawFileParser.Writer
     // Streamed vendor_scan_trailers_wide facet: one row per committed spectrum, one TYPED column per
     // trailer-header label (numeric labels -> nullable double; others -> verbatim string), classified
     // once from the run's stable trailer header. Column names are sanitized; the exact label -> column
-    // mapping (+ value_kind) is recorded in vendor_trailer_schema. This is the analytics-friendly
-    // counterpart to the tall vendor_scan_trailers (a pivot of the same data); opt-in via
-    // --vendor-metadata=wide|both.
+    // mapping (+ value_kind) is recorded in vendor_trailer_schema. Uses ParquetSharp/Arrow.
     internal static class VendorWideTrailerFacet
     {
-        // Thermo GenericDataTypes whose typed value is a number (rendered as a double column).
         private static readonly HashSet<string> NumericTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         { "SHORT", "USHORT", "INT", "UINT", "LONG", "ULONG", "FLOAT", "DOUBLE", "SBYTE", "BYTE", "CHAR" };
 
-        // Header classification result, reused for the schema sidecar.
         internal sealed class Column { public string Label; public string DataType; public string Name; public bool Numeric; }
 
         internal static List<Column> Classify(IRawDataPlus raw)
@@ -39,65 +34,94 @@ namespace ThermoRawFileParser.Writer
                     cols.Add(new Column { Label = header[i].Label ?? "", DataType = dt, Name = name, Numeric = NumericTypes.Contains(dt) });
                 }
             }
-            catch { /* header unavailable: empty classification */ }
+            catch { }
             return cols;
         }
 
-        // Writes the wide facet over the committed scans (ordinal order). Returns the row count.
         internal static long Write(IRawDataPlus raw, IReadOnlyList<(ulong ordinal, int scan)> committed,
             List<Column> cols, string tempPath)
         {
-            var fields = new List<Field> { new DataField<ulong>("ordinal"), new DataField<int>("scan_number") };
+            var schemaBuilder = new Schema.Builder()
+                .Field(new Field("ordinal",     new UInt64Type(), nullable: false))
+                .Field(new Field("scan_number", new Int32Type(),  nullable: false));
             foreach (var c in cols)
-                fields.Add(c.Numeric ? (DataField)new DataField<double?>(c.Name) : new DataField<string>(c.Name));
-            var schema = new ParquetSchema(fields);
+                schemaBuilder.Field(new Field(c.Name,
+                    c.Numeric ? (IArrowType)new DoubleType() : new StringType(),
+                    nullable: true));
+            var schema = schemaBuilder.Build();
 
             const int flushRows = 50_000;
-            var ord = new List<ulong>(); var scan = new List<int>();
-            var dbl = cols.Select(_ => new List<double?>()).ToArray();
-            var str = cols.Select(_ => new List<string>()).ToArray();
+            var ord  = new List<ulong>();
+            var scan = new List<int>();
+            var dbl  = cols.Select(_ => new List<double?>()).ToArray();
+            var str  = cols.Select(_ => new List<string>()).ToArray();
             long rows = 0;
 
-            using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write))
-            using (var w = ParquetWriter.CreateAsync(schema, fs).GetAwaiter().GetResult())
+            using var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write);
+            var managedSink = new ParquetSharp.IO.ManagedOutputStream(fs);
+            var writerProps = new ParquetSharp.WriterPropertiesBuilder()
+                .Compression(ParquetSharp.Compression.Zstd)
+                .Build();
+            var arrowProps = new ParquetSharp.Arrow.ArrowWriterPropertiesBuilder()
+                .StoreSchema()
+                .Build();
+            var writer = new ParquetSharp.Arrow.FileWriter(managedSink, schema, writerProps, arrowProps);
+
+            void Flush()
             {
-                void Flush()
+                if (ord.Count == 0) return;
+
+                var arrays = new List<IArrowArray>();
+                var ordB = new UInt64Array.Builder(); foreach (var v in ord)  ordB.Append(v);
+                arrays.Add(ordB.Build());
+                var scB  = new Int32Array.Builder();  foreach (var v in scan) scB.Append(v);
+                arrays.Add(scB.Build());
+
+                for (int c = 0; c < cols.Count; c++)
                 {
-                    if (ord.Count == 0) return;
-                    using (var rg = w.CreateRowGroup())
+                    if (cols[c].Numeric)
                     {
-                        rg.WriteColumnAsync(new DataColumn((DataField)schema[0], ord.ToArray())).GetAwaiter().GetResult();
-                        rg.WriteColumnAsync(new DataColumn((DataField)schema[1], scan.ToArray())).GetAwaiter().GetResult();
-                        for (int c = 0; c < cols.Count; c++)
-                            rg.WriteColumnAsync(new DataColumn((DataField)schema[c + 2],
-                                cols[c].Numeric ? (Array)dbl[c].ToArray() : str[c].ToArray())).GetAwaiter().GetResult();
+                        var b = new DoubleArray.Builder();
+                        foreach (var v in dbl[c]) { if (v.HasValue) b.Append(v.Value); else b.AppendNull(); }
+                        arrays.Add(b.Build());
                     }
-                    ord.Clear(); scan.Clear();
-                    for (int c = 0; c < cols.Count; c++) { dbl[c].Clear(); str[c].Clear(); }
+                    else
+                    {
+                        var b = new StringArray.Builder();
+                        foreach (var v in str[c]) { if (v != null) b.Append(v); else b.AppendNull(); }
+                        arrays.Add(b.Build());
+                    }
                 }
 
-                foreach (var (ordinal, scanNumber) in committed)
-                {
-                    var info = raw.GetTrailerExtraInformation(scanNumber);
-                    object[] typed = null;
-                    try { typed = raw.GetTrailerExtraValues(scanNumber); } catch { }
-                    ord.Add(ordinal); scan.Add(scanNumber);
-                    for (int c = 0; c < cols.Count; c++)
-                    {
-                        if (cols[c].Numeric)
-                            dbl[c].Add(MzPeakSpectrumWriter.NumericOrNull(typed != null && c < typed.Length ? typed[c] : null));
-                        else
-                            str[c].Add(c < info.Length ? (info.Values[c] ?? "") : "");
-                    }
-                    rows++;
-                    if (ord.Count >= flushRows) Flush();
-                }
-                Flush();
+                writer.WriteRecordBatch(new RecordBatch(schema, arrays.ToArray(), ord.Count));
+                ord.Clear(); scan.Clear();
+                for (int c = 0; c < cols.Count; c++) { dbl[c].Clear(); str[c].Clear(); }
             }
+
+            foreach (var (ordinal, scanNumber) in committed)
+            {
+                var info = raw.GetTrailerExtraInformation(scanNumber);
+                object[] typed = null;
+                try { typed = raw.GetTrailerExtraValues(scanNumber); } catch { }
+                ord.Add(ordinal); scan.Add(scanNumber);
+                for (int c = 0; c < cols.Count; c++)
+                {
+                    if (cols[c].Numeric)
+                        dbl[c].Add(MzPeakSpectrumWriter.NumericOrNull(typed != null && c < typed.Length ? typed[c] : null));
+                    else
+                        // info may be null for some scans (parity with the tall path's guard); keep
+                        // the row aligned by emitting an empty string rather than dereferencing null.
+                        str[c].Add(info != null && c < info.Length ? (info.Values[c] ?? "") : "");
+                }
+                rows++;
+                if (ord.Count >= flushRows) Flush();
+            }
+            Flush();
+            writer.Close();
+            managedSink.Dispose();
             return rows;
         }
 
-        // A Parquet-safe column name from a trailer label: lower-case, non-alphanumeric runs -> '_'.
         private static string Sanitize(string label, int ordinal)
         {
             if (string.IsNullOrWhiteSpace(label)) return "col_" + ordinal;

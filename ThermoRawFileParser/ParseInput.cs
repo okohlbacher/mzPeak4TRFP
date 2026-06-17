@@ -110,10 +110,6 @@ namespace ThermoRawFileParser
 
         public bool MzPeakPointLayout { get; set; }
 
-        public double MzPeakChunkSize { get; set; }
-
-        public bool MzPeakNumpress { get; set; }
-
         public bool MzPeakVendorMetadata { get; set; }
 
         // Trailer layout for --vendor-metadata: "tall" (default), "wide", or "both".
@@ -154,8 +150,6 @@ namespace ThermoRawFileParser
             ChargeData = false;
             Vigilant = false;
             MzPeakPointLayout = false;
-            MzPeakChunkSize = MzPeakChunkCodec.DefaultChunkSize;
-            MzPeakNumpress = true;
             _errors = 0;
             _warnings = 0;
             MaxLevel = 10;

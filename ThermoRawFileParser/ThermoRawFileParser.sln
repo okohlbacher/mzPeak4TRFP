@@ -7,6 +7,10 @@ Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ThermoRawFileParser", "Ther
 EndProject
 Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "ThermoRawFileParserTest", "ThermoRawFileParserTest\ThermoRawFileParserTest.csproj", "{5D42807F-E856-42D7-9D3E-0A17584A9D55}"
 EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MZPeakNet", "..\mzpeak.net\MZPeakNet\MZPeakNet.csproj", "{C3E4F7A2-B891-4D23-9F0E-1A8C6D5E2B34}"
+EndProject
+Project("{9A19103F-16F7-4668-BE54-9A1E7A4F7556}") = "MZPeakNet.Thermo", "..\mzpeak.net\MZPeakNet.Thermo\MZPeakNet.Thermo.csproj", "{D7F2A9C1-5B46-4E87-A213-0B3D8F4C6E91}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|x64 = Debug|x64
@@ -21,6 +25,14 @@ Global
 		{5D42807F-E856-42D7-9D3E-0A17584A9D55}.Debug|x64.Build.0 = Debug|x64
 		{5D42807F-E856-42D7-9D3E-0A17584A9D55}.Release|x64.ActiveCfg = Release|x64
 		{5D42807F-E856-42D7-9D3E-0A17584A9D55}.Release|x64.Build.0 = Release|x64
+		{C3E4F7A2-B891-4D23-9F0E-1A8C6D5E2B34}.Debug|x64.ActiveCfg = Debug|AnyCPU
+		{C3E4F7A2-B891-4D23-9F0E-1A8C6D5E2B34}.Debug|x64.Build.0 = Debug|AnyCPU
+		{C3E4F7A2-B891-4D23-9F0E-1A8C6D5E2B34}.Release|x64.ActiveCfg = Release|AnyCPU
+		{C3E4F7A2-B891-4D23-9F0E-1A8C6D5E2B34}.Release|x64.Build.0 = Release|AnyCPU
+		{D7F2A9C1-5B46-4E87-A213-0B3D8F4C6E91}.Debug|x64.ActiveCfg = Debug|AnyCPU
+		{D7F2A9C1-5B46-4E87-A213-0B3D8F4C6E91}.Debug|x64.Build.0 = Debug|AnyCPU
+		{D7F2A9C1-5B46-4E87-A213-0B3D8F4C6E91}.Release|x64.ActiveCfg = Release|AnyCPU
+		{D7F2A9C1-5B46-4E87-A213-0B3D8F4C6E91}.Release|x64.Build.0 = Release|AnyCPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

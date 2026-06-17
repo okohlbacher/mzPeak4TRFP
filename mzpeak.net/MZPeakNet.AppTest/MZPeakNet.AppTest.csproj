@@ -1,0 +1,45 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../MZPeakNet/MZPeakNet.csproj" />
+    <ProjectReference Include="../MZPeakNet.Thermo/MZPeakNet.Thermo.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="ThermoFisher.CommonCore.BackgroundSubtraction">
+      <HintPath>../MZPeakNet.Thermo/lib/update/ThermoFisher.CommonCore.BackgroundSubtraction.dll</HintPath>
+    </Reference>
+    <Reference Include="ThermoFisher.CommonCore.Data">
+      <HintPath>../MZPeakNet.Thermo/lib/update/ThermoFisher.CommonCore.Data.dll</HintPath>
+    </Reference>
+    <Reference Include="ThermoFisher.CommonCore.MassPrecisionEstimator">
+      <HintPath>../MZPeakNet.Thermo/lib/update/ThermoFisher.CommonCore.MassPrecisionEstimator.dll</HintPath>
+    </Reference>
+    <Reference Include="ThermoFisher.CommonCore.RawFileReader">
+      <HintPath>../MZPeakNet.Thermo/lib/update/ThermoFisher.CommonCore.RawFileReader.dll</HintPath>
+    </Reference>
+    <Reference Include="ThermoFisher.CommonCore.RandomAccessReaderPlugin">
+      <HintPath>../MZPeakNet.Thermo/lib/update/ThermoFisher.CommonCore.RandomAccessReaderPlugin.dll</HintPath>
+    </Reference>
+
+    <Reference Include="OpenMcdf">
+      <HintPath>../MZPeakNet.Thermo/lib/core/OpenMcdf.dll</HintPath>
+    </Reference>
+    <Reference Include="OpenMcdf.Extensions">
+      <HintPath>../MZPeakNet.Thermo/lib/core/OpenMcdf.Extensions.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="10.0.2" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Console" Version="10.0.2" />
+    <PackageReference Include="System.CommandLine" Version="2.0.2" />
+  </ItemGroup>
+</Project>

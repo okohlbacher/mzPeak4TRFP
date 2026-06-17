@@ -1,0 +1,5 @@
+obj/
+bin/
+*.ipynb
+demo.mzpeak
+.vs
