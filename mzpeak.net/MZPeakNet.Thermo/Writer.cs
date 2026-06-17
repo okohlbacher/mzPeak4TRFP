@@ -533,10 +533,14 @@ public class ConversionContextHelper
     {
         var descr = new FileDescription();
         uint counter;
+        // Required CV term "data file content" (MS:1000524): the cv_mapping rule has use_term=false +
+        // allow_children, checking contents[]/accession. The child terms MS:1000579 (MS1 spectrum) /
+        // MS:1000580 (MSn spectrum) must therefore carry the CURIE in their *accession* field — the
+        // 3-arg Param ctor (name, accession, value) — not the 2-arg ctor which leaves accession null.
         if (MSLevelCounts.TryGetValue(1, out counter) && counter > 0)
-            descr.Contents.Add(new Param(SpectrumType.Ms1Spectrum.Name(), SpectrumType.Ms1Spectrum.CURIE()));
+            descr.Contents.Add(new Param(SpectrumType.Ms1Spectrum.Name(), SpectrumType.Ms1Spectrum.CURIE(), null));
         if (MSLevelCounts.TryGetValue(2, out counter) && counter > 0)
-            descr.Contents.Add(new Param(SpectrumType.MsnSpectrum.Name(), SpectrumType.MsnSpectrum.CURIE()));
+            descr.Contents.Add(new Param(SpectrumType.MsnSpectrum.Name(), SpectrumType.MsnSpectrum.CURIE(), null));
 
         var path = accessor.Path;
         if (path.Contains("\\"))
@@ -1415,6 +1419,12 @@ public class ThermoMZPeakWriter : IDisposable
             paramList.Add(SpectrumRepresentation.CentroidSpectrum.AsParam());
         else
             paramList.Add(SpectrumRepresentation.ProfileSpectrum.AsParam());
+
+        // Required CV term "spectrum type" (MS:1000559): the cv_mapping rule has use_term=false +
+        // allow_children, i.e. the spectrum needs a param whose *accession* is a concrete child of
+        // MS:1000559. All Thermo scans are mass spectra → emit MS:1000294 as the accession (lands in
+        // the generic parameters[] list since no inflected column claims it).
+        paramList.Add(new Param("mass spectrum", "MS:1000294", null));
 
         var id = $"controllerType=0 controllerNumber=1 scan={scanNumber}";
         var index = Writer.AddSpectrum(id, time, null, paramList, entryDerivedMetadata);

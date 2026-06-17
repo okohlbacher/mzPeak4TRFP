@@ -857,7 +857,7 @@ public class ChunkLayoutBuilder : BaseDataLayoutWriter
            deltaModel,
            auxiliaryArrays,
            (isProfile ?? false) ? steps : null,
-           !(isProfile ?? false) ? null : steps
+           (isProfile ?? false) ? null : steps
        );
         return ent;
     }

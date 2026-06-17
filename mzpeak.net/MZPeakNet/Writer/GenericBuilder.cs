@@ -195,7 +195,7 @@ public class SpectrumBuilder : ParamVisitorCollection, IArrowBuilder<(ulong, str
     DoubleArray.Builder Time;
     StringArray.Builder DataProcessingRef;
     ListArray.Builder MzDeltaModel;
-    Int32Array.Builder NumberOfAuxiliaryArrays;
+    UInt32Array.Builder NumberOfAuxiliaryArrays;
     AuxiliaryArrayListBuilder AuxiliaryArrays;
 
     public int Length => Index.Length;
@@ -209,16 +209,19 @@ public class SpectrumBuilder : ParamVisitorCollection, IArrowBuilder<(ulong, str
             SpectrumRepresentation.ProfileSpectrum.CURIE()
         ]),
         new CustomBuilderFromParam("MS:1000465", "scan polarity", new Int8Type()),
-        new CustomBuilderFromParam("MS:1000559", "spectrum type", new StringType()),
+        // Required CV term "spectrum type" (MS:1000559) is checked schema-only against inflected
+        // column NAMES, with use_term=false + allow_children: the column must be keyed on a concrete
+        // child accession (MS:1000294 "mass spectrum"), not the abstract parent MS:1000559.
+        new CustomBuilderFromParam("MS:1000294", "mass spectrum", new StringType()),
 
         // Optional spectrum properties (commonly present)
-        new CustomBuilderFromParam(SpectrumProperties.NumberOfDataPoints.CURIE(), SpectrumProperties.NumberOfDataPoints.Name(), new Int64Type()),
-        new CustomBuilderFromParam(SpectrumProperties.NumberOfPeaks.CURIE(), SpectrumProperties.NumberOfPeaks.Name(), new Int64Type()),
-        new CustomBuilderFromParam(SpectrumProperties.BasePeakMZ.CURIE(), SpectrumProperties.BasePeakMZ.Name(), new DoubleType(), Unit.NumberOfDetectorCounts.CURIE()),
-        new CustomBuilderFromParam(SpectrumProperties.BasePeakIntensity.CURIE(), SpectrumProperties.BasePeakIntensity.Name(), new DoubleType(), Unit.MZ.CURIE()),
-        new CustomBuilderFromParam(SpectrumProperties.TotalIonCurrent.CURIE(), SpectrumProperties.TotalIonCurrent.Name(), new DoubleType(), Unit.MZ.CURIE()),
-        new CustomBuilderFromParam(SpectrumProperties.LowestObservedMZ.CURIE(), SpectrumProperties.LowestObservedMZ.Name(), new DoubleType(), Unit.NumberOfDetectorCounts.CURIE()),
-        new CustomBuilderFromParam(SpectrumProperties.HighestObservedMZ.CURIE(), SpectrumProperties.HighestObservedMZ.Name(), new DoubleType(), Unit.NumberOfDetectorCounts.CURIE()),
+        new CustomBuilderFromParam(SpectrumProperties.NumberOfDataPoints.CURIE(), SpectrumProperties.NumberOfDataPoints.Name(), new UInt64Type()),
+        new CustomBuilderFromParam(SpectrumProperties.NumberOfPeaks.CURIE(), SpectrumProperties.NumberOfPeaks.Name(), new UInt64Type()),
+        new CustomBuilderFromParam(SpectrumProperties.BasePeakMZ.CURIE(), SpectrumProperties.BasePeakMZ.Name(), new DoubleType(), Unit.MZ.CURIE()),
+        new CustomBuilderFromParam(SpectrumProperties.BasePeakIntensity.CURIE(), SpectrumProperties.BasePeakIntensity.Name(), new DoubleType(), Unit.NumberOfDetectorCounts.CURIE()),
+        new CustomBuilderFromParam(SpectrumProperties.TotalIonCurrent.CURIE(), SpectrumProperties.TotalIonCurrent.Name(), new DoubleType(), Unit.NumberOfDetectorCounts.CURIE()),
+        new CustomBuilderFromParam(SpectrumProperties.LowestObservedMZ.CURIE(), SpectrumProperties.LowestObservedMZ.Name(), new DoubleType(), Unit.MZ.CURIE()),
+        new CustomBuilderFromParam(SpectrumProperties.HighestObservedMZ.CURIE(), SpectrumProperties.HighestObservedMZ.Name(), new DoubleType(), Unit.MZ.CURIE()),
     })
     {
         Index = new();
@@ -267,7 +270,7 @@ public class SpectrumBuilder : ParamVisitorCollection, IArrowBuilder<(ulong, str
                 p.rawValue = entryMeta.PeakCount;
             }
         }
-        NumberOfAuxiliaryArrays.Append(entryMeta?.AuxiliaryArrays.Count ?? 0);
+        NumberOfAuxiliaryArrays.Append((uint)(entryMeta?.AuxiliaryArrays.Count ?? 0));
         AuxiliaryArrays.Append(entryMeta?.AuxiliaryArrays ?? []);
         if (entryMeta?.SpacingInterpolationModel != null)
         {
@@ -315,7 +318,7 @@ public class SpectrumBuilder : ParamVisitorCollection, IArrowBuilder<(ulong, str
         fields.AddRange([
             new Field("data_processing_ref", new StringType(), true),
             new Field("mz_delta_model", new ListType(new DoubleType()), true),
-            new Field("number_of_auxiliary_arrays", new Int32Type(), true),
+            new Field("number_of_auxiliary_arrays", new UInt32Type(), true),
             new Field("auxiliary_arrays", AuxiliaryArrays.ArrowType()[0].DataType, true)
         ]);
         FreezeSchema();
@@ -711,7 +714,7 @@ public class ChromatogramBuilder : ParamVisitorCollection, IArrowBuilder<(ulong,
     UInt64Array.Builder Index;
     StringArray.Builder Id;
     StringArray.Builder DataProcessingRef;
-    Int32Array.Builder NumberOfAuxiliaryArrays;
+    UInt32Array.Builder NumberOfAuxiliaryArrays;
     AuxiliaryArrayListBuilder AuxiliaryArrays;
 
     public int Length => Index.Length;
@@ -726,7 +729,7 @@ public class ChromatogramBuilder : ParamVisitorCollection, IArrowBuilder<(ulong,
             ChromatogramTypesMethods.FromCURIE.Values.Select(v => v.CURIE()).ToList()
         ),
         // Optional properties (commonly present)
-        new CustomBuilderFromParam("MS:1003060", "number of data points", new Int64Type()),
+        new CustomBuilderFromParam("MS:1003060", "number of data points", new UInt64Type()),
     })
     {
         Index = new();
@@ -759,7 +762,7 @@ public class ChromatogramBuilder : ParamVisitorCollection, IArrowBuilder<(ulong,
                 p.rawValue = entryDerivedMetadata.DataPointCount;
             }
         }
-        NumberOfAuxiliaryArrays.Append(entryDerivedMetadata?.AuxiliaryArrays.Count ?? 0);
+        NumberOfAuxiliaryArrays.Append((uint)(entryDerivedMetadata?.AuxiliaryArrays.Count ?? 0));
         AuxiliaryArrays.Append(entryDerivedMetadata?.AuxiliaryArrays ?? []);
         VisitParameters(parameters);
     }
@@ -788,7 +791,7 @@ public class ChromatogramBuilder : ParamVisitorCollection, IArrowBuilder<(ulong,
         fields.AddRange(ParamList.ArrowType());
         fields.AddRange([
             new Field("data_processing_ref", new StringType(), true),
-            new Field("number_of_auxiliary_arrays", new Int32Type(), true),
+            new Field("number_of_auxiliary_arrays", new UInt32Type(), true),
             new Field("auxiliary_arrays", AuxiliaryArrays.ArrowType()[0].DataType, true)
         ]);
         FreezeSchema();
@@ -838,7 +841,7 @@ public class WavelengthSpectrumBuilder : ParamVisitorCollection, IArrowBuilder<(
     StringArray.Builder Id;
     DoubleArray.Builder Time;
     StringArray.Builder DataProcessingRef;
-    Int32Array.Builder NumberOfAuxiliaryArrays;
+    UInt32Array.Builder NumberOfAuxiliaryArrays;
     AuxiliaryArrayListBuilder AuxiliaryArrays;
 
     public int Length => Index.Length;
@@ -853,7 +856,7 @@ public class WavelengthSpectrumBuilder : ParamVisitorCollection, IArrowBuilder<(
         new CustomBuilderFromParam("MS:1000559", "spectrum type", new StringType()),
 
         // Optional spectrum properties (commonly present)
-        new CustomBuilderFromParam(SpectrumProperties.NumberOfDataPoints.CURIE(), SpectrumProperties.NumberOfDataPoints.Name(), new Int64Type()),
+        new CustomBuilderFromParam(SpectrumProperties.NumberOfDataPoints.CURIE(), SpectrumProperties.NumberOfDataPoints.Name(), new UInt64Type()),
         new CustomBuilderFromParam("MS:1000504", "base peak m/z", new DoubleType(), Unit.Nanometer.CURIE()),
         new CustomBuilderFromParam("MS:1000505", "base peak intensity", new DoubleType(), "MS:1000131"),
         new CustomBuilderFromParam("MS:1000285", "total ion current", new DoubleType(), "MS:1000131"),
@@ -893,7 +896,7 @@ public class WavelengthSpectrumBuilder : ParamVisitorCollection, IArrowBuilder<(
                 p.rawValue = entryDerivedMetadata.DataPointCount;
             }
         }
-        NumberOfAuxiliaryArrays.Append(entryDerivedMetadata?.AuxiliaryArrays.Count ?? 0);
+        NumberOfAuxiliaryArrays.Append((uint)(entryDerivedMetadata?.AuxiliaryArrays.Count ?? 0));
         AuxiliaryArrays.Append(entryDerivedMetadata?.AuxiliaryArrays ?? []);
         VisitParameters(parameters);
     }
@@ -924,7 +927,7 @@ public class WavelengthSpectrumBuilder : ParamVisitorCollection, IArrowBuilder<(
         fields.AddRange(ParamList.ArrowType());
         fields.AddRange([
             new Field("data_processing_ref", new StringType(), true),
-            new Field("number_of_auxiliary_arrays", new Int32Type(), true),
+            new Field("number_of_auxiliary_arrays", new UInt32Type(), true),
             new Field("auxiliary_arrays", AuxiliaryArrays.ArrowType()[0].DataType, true)
         ]);
         FreezeSchema();
