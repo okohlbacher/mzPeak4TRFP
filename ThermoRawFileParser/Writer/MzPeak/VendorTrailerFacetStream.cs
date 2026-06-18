@@ -1,8 +1,10 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Reflection;
 using Apache.Arrow;
 using Apache.Arrow.Types;
+using log4net;
 using ThermoFisher.CommonCore.Data.Interfaces;
 
 namespace ThermoRawFileParser.Writer
@@ -14,6 +16,9 @@ namespace ThermoRawFileParser.Writer
     // string parsing. Flushed in bounded row groups for constant memory. Uses ParquetSharp/Arrow.
     internal sealed class VendorTrailerFacetStream : IDisposable
     {
+        private static readonly ILog Log =
+            LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+
         public string TempPath { get; }
         public long RowCount { get; private set; }
 
@@ -44,13 +49,7 @@ namespace ThermoRawFileParser.Writer
             {
                 _sink = new FileStream(TempPath, FileMode.Create, FileAccess.Write);
                 _managedSink = new ParquetSharp.IO.ManagedOutputStream(_sink);
-                var writerProps = new ParquetSharp.WriterPropertiesBuilder()
-                    .Compression(ParquetSharp.Compression.Zstd)
-                    .Build();
-                var arrowProps = new ParquetSharp.Arrow.ArrowWriterPropertiesBuilder()
-                    .StoreSchema()
-                    .Build();
-                _writer = new ParquetSharp.Arrow.FileWriter(_managedSink, _schema, writerProps, arrowProps);
+                _writer = VendorArrow.OpenWriter(_managedSink, _schema);
             }
             catch
             {
@@ -64,10 +63,13 @@ namespace ThermoRawFileParser.Writer
 
         public void Append(ulong ordinal, int scanNumber, IRawDataPlus raw)
         {
-            var info = raw.GetTrailerExtraInformation(scanNumber);
+            // Best-effort: a trailer-read failure must not abort the (opt-in) vendor facet or the run.
+            ILogEntryAccess info;
+            try { info = raw.GetTrailerExtraInformation(scanNumber); }
+            catch (Exception ex) { Log.Warn($"vendor_scan_trailers: scan #{scanNumber} trailer read failed ({ex.Message})"); return; }
             if (info == null) return;
             object[] typed = null;
-            try { typed = raw.GetTrailerExtraValues(scanNumber); } catch { }
+            try { typed = raw.GetTrailerExtraValues(scanNumber); } catch { /* typed values optional; the verbatim 'value' column below still captures the source string */ }
             for (int i = 0; i < info.Length; i++)
             {
                 _ord.Add(ordinal);
@@ -104,12 +106,13 @@ namespace ThermoRawFileParser.Writer
         public void Close()
         {
             Flush();
-            _writer.Close();
-            _writer = null;
-            _managedSink.Dispose();
-            _managedSink = null;
-            _sink.Dispose();
-            _sink = null;
+            try { _writer.Close(); }
+            finally
+            {
+                _writer = null;
+                _managedSink?.Dispose(); _managedSink = null;
+                _sink?.Dispose();        _sink = null;
+            }
         }
 
         public void Dispose()

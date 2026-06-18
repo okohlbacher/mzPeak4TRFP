@@ -35,7 +35,7 @@ namespace ThermoRawFileParser.Writer
             Dictionary<int, ulong> scanNumberToOrdinal,
             List<VendorWideTrailerFacet.Column> wideCols)
         {
-            // Tall scan trailers: already written to temp file — copy into archive
+            // Tall trailers were streamed to a temp file during the scan loop; copy them in verbatim.
             if (vendorTall && trailers != null)
             {
                 var entry = new FileIndexEntry("vendor_scan_trailers.parquet",
@@ -45,7 +45,6 @@ namespace ThermoRawFileParser.Writer
                 src.CopyTo(dest, 65536);
             }
 
-            // Wide scan trailers: build from committed scans
             if (vendorWide)
             {
                 var committed = scanNumberToOrdinal
@@ -79,7 +78,7 @@ namespace ThermoRawFileParser.Writer
             {
                 var header = raw.GetStatusLogHeaderInformation();
                 int n = raw.GetStatusLogEntriesCount();
-                for (int p = 0; p < n; p++)
+                for (int p = 0; header != null && p < n; p++)
                 {
                     var e = raw.GetStatusLogEntry(p);
                     var vals = e.Values;
@@ -91,7 +90,7 @@ namespace ThermoRawFileParser.Writer
                     }
                 }
             }
-            catch { }
+            catch (Exception ex) { Log.Warn($"vendor_status_log: partial/failed status-log read ({ex.Message})"); }
 
             var schema = VendorArrow.Schema(
                 ("position",    new Int32Type(),  false),
@@ -125,7 +124,7 @@ namespace ThermoRawFileParser.Writer
                     msg.Add((mp != null ? Try(() => mp.GetValue(item))?.ToString() : item.ToString()) ?? "");
                 }
             }
-            catch { }
+            catch (Exception ex) { Log.Warn($"vendor_error_log: partial/failed error-log read ({ex.Message})"); }
 
             var schema = VendorArrow.Schema(
                 ("index",   new Int32Type(),  false),
@@ -160,13 +159,18 @@ namespace ThermoRawFileParser.Writer
                 }
             }
 
-            AddProps("instrument", Try(() => (object)raw.GetInstrumentData()));
-            AddProps("sample",     Try(() => (object)raw.SampleInformation));
-            AddProps("run_header", Try(() => (object)raw.RunHeaderEx));
-            int tunes = Try(() => raw.GetTuneDataCount());
-            for (int t = 0; t < tunes; t++) AddLog($"tune[{t}]", Try(() => raw.GetTuneData(t)));
-            AddLog("status_log_header", Try(() => raw.GetStatusLogForRetentionTime(raw.RunHeaderEx.StartTime)));
-            try { for (int m = 0; m < raw.InstrumentMethodsCount; m++) Add("instrument_method", m, $"method[{m}]", raw.GetInstrumentMethod(m)); } catch { }
+            // Best-effort collection: any read failure logs and we still emit whatever was gathered.
+            try
+            {
+                AddProps("instrument", Try(() => (object)raw.GetInstrumentData()));
+                AddProps("sample",     Try(() => (object)raw.SampleInformation));
+                AddProps("run_header", Try(() => (object)raw.RunHeaderEx));
+                int tunes = Try(() => raw.GetTuneDataCount());
+                for (int t = 0; t < tunes; t++) AddLog($"tune[{t}]", Try(() => raw.GetTuneData(t)));
+                AddLog("status_log_header", Try(() => raw.GetStatusLogForRetentionTime(raw.RunHeaderEx.StartTime)));
+                for (int m = 0; m < raw.InstrumentMethodsCount; m++) Add("instrument_method", m, $"method[{m}]", raw.GetInstrumentMethod(m));
+            }
+            catch (Exception ex) { Log.Warn($"vendor_file_metadata: partial read ({ex.Message})"); }
 
             var schema = VendorArrow.Schema(
                 ("category",    new StringType(), false),
@@ -235,7 +239,8 @@ namespace ThermoRawFileParser.Writer
                 tune.Add(new JObject { ["segment"] = t, ["entries"] = Entries(Try(() => raw.GetTuneData(t))) });
 
             var methods = new JArray();
-            try { for (int m = 0; m < raw.InstrumentMethodsCount; m++) methods.Add(raw.GetInstrumentMethod(m)); } catch { }
+            try { for (int m = 0; m < raw.InstrumentMethodsCount; m++) methods.Add(raw.GetInstrumentMethod(m)); }
+            catch (Exception ex) { Log.Warn($"vendor JSON: instrument-method read failed, sidecar incomplete ({ex.Message})"); }
 
             var schema = new JArray();
             try
@@ -244,7 +249,7 @@ namespace ThermoRawFileParser.Writer
                 for (int i = 0; i < h.Length; i++)
                     schema.Add(new JObject { ["ordinal"] = i, ["label"] = h[i].Label, ["data_type"] = h[i].DataType.ToString() });
             }
-            catch { }
+            catch (Exception ex) { Log.Warn($"vendor JSON: trailer-schema read failed, sidecar incomplete ({ex.Message})"); }
 
             var root = new JObject
             {
@@ -264,12 +269,8 @@ namespace ThermoRawFileParser.Writer
         {
             var entry = new FileIndexEntry(name,
                 new EntityType(EntityTypeTag.Other, "proprietary"), DataKind.Proprietary);
-            var managedStream = writer.StartProprietaryParquetEntry(entry);
-            var writerProps = new ParquetSharp.WriterPropertiesBuilder()
-                .Compression(ParquetSharp.Compression.Zstd)
-                .Build();
-            var arrowProps = new ArrowWriterPropertiesBuilder().StoreSchema().Build();
-            using var pw = new FileWriter(managedStream, schema, writerProps, arrowProps);
+            using var managedStream = writer.StartProprietaryParquetEntry(entry);
+            using var pw = VendorArrow.OpenWriter(managedStream, schema);
             pw.WriteRecordBatch(batch);
             pw.Close();
         }
@@ -288,6 +289,16 @@ namespace ThermoRawFileParser.Writer
     // Arrow array building helpers used by vendor facet code.
     internal static class VendorArrow
     {
+        // Single source of truth for the proprietary-facet Parquet settings (zstd + embedded schema).
+        public static FileWriter OpenWriter(ParquetSharp.IO.ManagedOutputStream sink, Schema schema)
+        {
+            var writerProps = new ParquetSharp.WriterPropertiesBuilder()
+                .Compression(ParquetSharp.Compression.Zstd)
+                .Build();
+            var arrowProps = new ArrowWriterPropertiesBuilder().StoreSchema().Build();
+            return new FileWriter(sink, schema, writerProps, arrowProps);
+        }
+
         public static Schema Schema(params (string name, IArrowType type, bool nullable)[] fields)
         {
             var b = new Schema.Builder();

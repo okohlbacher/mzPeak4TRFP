@@ -33,6 +33,8 @@ namespace ThermoRawFileParser.Writer
             var scanNumberToOrdinal = new Dictionary<int, ulong>();
             VendorTrailerFacetStream vendorTrailers = null;
             List<VendorWideTrailerFacet.Column> wideCols = null;
+            string outputPath = null;
+            bool committed = false;
 
             try
             {
@@ -40,6 +42,7 @@ namespace ThermoRawFileParser.Writer
                 if (vendorOn)   wideCols = VendorWideTrailerFacet.Classify(raw);
 
                 ConfigureWriter(".mzpeak");
+                outputPath = (Writer.BaseStream as FileStream)?.Name;
                 var storage = new ZipStreamArchiveWriter<Stream>(Writer.BaseStream);
 
                 ThermoMZPeakWriter thermoWriter = null;
@@ -55,8 +58,29 @@ namespace ThermoRawFileParser.Writer
 
                     for (var scanNumber = firstScanNumber; scanNumber <= lastScanNumber; scanNumber++)
                     {
-                        var filter = raw.GetFilterForScanNumber(scanNumber);
-                        int level  = ConversionContextHelper.MSLevelMap[filter.MSOrder];
+                        // Cheap filter read + MS-level classification, guarded: an unreadable filter or
+                        // an unmapped MSOrder must skip the one scan, not abort the whole file.
+                        IScanFilter filter;
+                        int level;
+                        try
+                        {
+                            filter = raw.GetFilterForScanNumber(scanNumber);
+                            if (!ConversionContextHelper.MSLevelMap.TryGetValue(filter.MSOrder, out level))
+                            {
+                                Log.Warn($"Scan #{scanNumber}: unmapped MS order {filter.MSOrder}, skipping");
+                                ParseInput.NewError();
+                                continue;
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            Log.Error($"Scan #{scanNumber} filter cannot be read: {ex.Message}");
+                            Log.Debug(ex.StackTrace);
+                            ParseInput.NewError();
+                            continue;
+                        }
+
+                        // Out-of-range levels are skipped cheaply, before reading heavy scan data.
                         if (level > ParseInput.MaxLevel || !ParseInput.MsLevel.Contains(level))
                             continue;
 
@@ -85,25 +109,27 @@ namespace ThermoRawFileParser.Writer
 
                         // Commit phase — write failures are fatal (file may be partially written).
                         var dataMeta = thermoWriter.AddSpectrumData(ordinal, segments, stats);
+
+                        // Everything AddSpectrumData writes lands in spectra_data, so its row count is
+                        // number_of_data_points regardless of profile/centroid. mzPeak.NET reports that
+                        // count as DataPointCount for profile scans but as PeakCount for centroid scans
+                        // (isProfile=false) — coalesce so number_of_data_points is always the spectra_data
+                        // row count (the point layout's per_spectrum_data_points check enforces this).
+                        var dataPointCount = dataMeta.DataPointCount ?? dataMeta.PeakCount;
+                        int? peakCount = null;
+
                         if (centroids != null && centroids.Length > 0)
                         {
-                            // Merge the peak facet's derived metadata into the spectrum row, mirroring
-                            // the canonical mzPeak.NET converter: the real centroid peak count and any
-                            // peak-derived auxiliary arrays must reach spectra_metadata, otherwise
-                            // number_of_peaks wrongly mirrors number_of_data_points.
+                            // Centroids go to the separate spectra_peaks facet; its row count is
+                            // number_of_peaks. Merge peak-derived auxiliary arrays into the spectrum row.
                             var peakMeta = thermoWriter.AddSpectrumPeakData(ordinal, centroids);
                             dataMeta.AuxiliaryArrays.AddRange(peakMeta.AuxiliaryArrays);
-                            dataMeta = dataMeta with { PeakCount = peakMeta.PeakCount };
+                            peakCount = peakMeta.PeakCount;
                         }
-                        else
-                        {
-                            // No separate peak facet for this spectrum (profile points live in
-                            // spectra_data). number_of_peaks must not be reported, else the validator
-                            // checks it against spectra_peaks row count and fails. Works around the
-                            // mzPeak.NET chunk-layout writer deriving PeakCount from the profile point
-                            // count (DataWriter chunk path) instead of leaving it null.
-                            dataMeta = dataMeta with { PeakCount = null };
-                        }
+
+                        // number_of_data_points <- spectra_data rows; number_of_peaks <- spectra_peaks
+                        // rows (null when no peak facet was written for this spectrum).
+                        dataMeta = dataMeta with { DataPointCount = dataPointCount, PeakCount = peakCount };
 
                         var spectrumIndex = thermoWriter.AddSpectrum(
                             scanNumber, stats.StartTime, filter, stats, dataMeta);
@@ -123,14 +149,12 @@ namespace ThermoRawFileParser.Writer
                     if (ordinal == 0)
                         throw new RawFileParserException("No in-range spectrum to write");
 
-                    // TIC chromatogram.
                     var (chromInfo, chromArrays) =
                         thermoWriter.ConversionHelper.ReadSummaryTrace(TraceType.TIC, raw);
                     var chromMeta = thermoWriter.AddChromatogramData(0ul, chromArrays);
                     thermoWriter.AddChromatogram(
                         chromInfo.Id, chromInfo.DataProcessingRef, chromInfo.Parameters, chromMeta);
 
-                    // Vendor metadata facets (scan-trailer tall was streamed during the loop).
                     if (vendorOn)
                     {
                         if (vendorTall) vendorTrailers!.Close();
@@ -139,26 +163,6 @@ namespace ThermoRawFileParser.Writer
                         Log.Info($"Vendor metadata ({vendorMode}): " +
                                  (vendorTall ? $"{vendorTrailers!.RowCount} tall trailer rows; " : "") +
                                  "file metadata + status log + trailer schema");
-                    }
-
-                    // Optional readable JSON sidecar.
-                    if (ParseInput.MzPeakVendorMetadataJson != null)
-                    {
-                        string jsonPath = ParseInput.MzPeakVendorMetadataJson;
-                        if (string.IsNullOrEmpty(jsonPath))
-                        {
-                            var baseOut = ParseInput.OutputFile
-                                ?? Path.Combine(ParseInput.OutputDirectory ?? ".",
-                                    ParseInput.RawFileNameWithoutExtension);
-                            foreach (var ext in new[] { ".gz", ".mzpeak" })
-                                if (baseOut.ToLower().EndsWith(ext))
-                                    baseOut = baseOut.Substring(0, baseOut.Length - ext.Length)
-                                                     .TrimEnd('.');
-                            jsonPath = baseOut + ".vendor.json";
-                        }
-                        var sourceName = Path.GetFileName(ParseInput.RawFilePath);
-                        File.WriteAllText(jsonPath, BuildVendorMetadataJson(raw, sourceName));
-                        Log.Info($"Vendor metadata JSON → {jsonPath}");
                     }
 
                     thermoWriter.Close();
@@ -173,13 +177,41 @@ namespace ThermoRawFileParser.Writer
                 }
 
                 Writer.Flush();
+                committed = true;   // archive fully written and flushed — safe to keep
+
+                // Optional JSON sidecar is independent of the archive: write it only after the archive
+                // is committed, and never let a sidecar failure delete the valid archive.
+                if (ParseInput.MzPeakVendorMetadataJson != null)
+                {
+                    try { WriteVendorJsonSidecar(raw); }
+                    catch (Exception ex) { Log.Warn($"Vendor metadata JSON sidecar failed: {ex.Message}"); }
+                }
             }
             finally
             {
                 vendorTrailers?.Dispose();
                 TryDelete(vendorTrailers?.TempPath);
-                Writer?.Close();
+                // Guard each cleanup step so a close failure can't skip the partial-archive delete.
+                try { Writer?.Close(); } catch (Exception ex) { Log.Debug($"writer close failed: {ex.Message}"); }
+                if (!committed && outputPath != null) TryDelete(outputPath);
             }
+        }
+
+        // Optional human-readable JSON dump of the vendor metadata, alongside the archive.
+        private void WriteVendorJsonSidecar(IRawDataPlus raw)
+        {
+            string jsonPath = ParseInput.MzPeakVendorMetadataJson;
+            if (string.IsNullOrEmpty(jsonPath))
+            {
+                var baseOut = ParseInput.OutputFile
+                    ?? Path.Combine(ParseInput.OutputDirectory ?? ".", ParseInput.RawFileNameWithoutExtension);
+                foreach (var ext in new[] { ".gz", ".mzpeak" })
+                    if (baseOut.ToLowerInvariant().EndsWith(ext))
+                        baseOut = baseOut.Substring(0, baseOut.Length - ext.Length).TrimEnd('.');
+                jsonPath = baseOut + ".vendor.json";
+            }
+            File.WriteAllText(jsonPath, BuildVendorMetadataJson(raw, Path.GetFileName(ParseInput.RawFilePath)));
+            Log.Info($"Vendor metadata JSON → {jsonPath}");
         }
 
         internal static void TryDelete(string path)

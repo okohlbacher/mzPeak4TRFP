@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using Apache.Arrow;
 using Apache.Arrow.Types;
+using log4net;
 using ThermoFisher.CommonCore.Data.Interfaces;
 
 namespace ThermoRawFileParser.Writer
@@ -15,8 +17,12 @@ namespace ThermoRawFileParser.Writer
     // mapping (+ value_kind) is recorded in vendor_trailer_schema. Uses ParquetSharp/Arrow.
     internal static class VendorWideTrailerFacet
     {
+        private static readonly ILog Log =
+            LogManager.GetLogger(MethodBase.GetCurrentMethod().DeclaringType);
+
+        // CHAR is excluded: a character trailer value coerced to double is meaningless — keep it a string.
         private static readonly HashSet<string> NumericTypes = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        { "SHORT", "USHORT", "INT", "UINT", "LONG", "ULONG", "FLOAT", "DOUBLE", "SBYTE", "BYTE", "CHAR" };
+        { "SHORT", "USHORT", "INT", "UINT", "LONG", "ULONG", "FLOAT", "DOUBLE", "SBYTE", "BYTE" };
 
         internal sealed class Column { public string Label; public string DataType; public string Name; public bool Numeric; }
 
@@ -34,7 +40,7 @@ namespace ThermoRawFileParser.Writer
                     cols.Add(new Column { Label = header[i].Label ?? "", DataType = dt, Name = name, Numeric = NumericTypes.Contains(dt) });
                 }
             }
-            catch { }
+            catch (Exception ex) { Log.Warn($"vendor_scan_trailers_wide: trailer-header classification failed, columns may be incomplete ({ex.Message})"); }
             return cols;
         }
 
@@ -58,14 +64,9 @@ namespace ThermoRawFileParser.Writer
             long rows = 0;
 
             using var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write);
-            var managedSink = new ParquetSharp.IO.ManagedOutputStream(fs);
-            var writerProps = new ParquetSharp.WriterPropertiesBuilder()
-                .Compression(ParquetSharp.Compression.Zstd)
-                .Build();
-            var arrowProps = new ParquetSharp.Arrow.ArrowWriterPropertiesBuilder()
-                .StoreSchema()
-                .Build();
-            var writer = new ParquetSharp.Arrow.FileWriter(managedSink, schema, writerProps, arrowProps);
+            ParquetSharp.IO.ManagedOutputStream managedSink = null;
+            ParquetSharp.Arrow.FileWriter writer = null;
+            bool closed = false;
 
             void Flush()
             {
@@ -98,27 +99,39 @@ namespace ThermoRawFileParser.Writer
                 for (int c = 0; c < cols.Count; c++) { dbl[c].Clear(); str[c].Clear(); }
             }
 
-            foreach (var (ordinal, scanNumber) in committed)
+            try
             {
-                var info = raw.GetTrailerExtraInformation(scanNumber);
-                object[] typed = null;
-                try { typed = raw.GetTrailerExtraValues(scanNumber); } catch { }
-                ord.Add(ordinal); scan.Add(scanNumber);
-                for (int c = 0; c < cols.Count; c++)
+                managedSink = new ParquetSharp.IO.ManagedOutputStream(fs);
+                writer = VendorArrow.OpenWriter(managedSink, schema);
+
+                foreach (var (ordinal, scanNumber) in committed)
                 {
-                    if (cols[c].Numeric)
-                        dbl[c].Add(MzPeakSpectrumWriter.NumericOrNull(typed != null && c < typed.Length ? typed[c] : null));
-                    else
-                        // info may be null for some scans (parity with the tall path's guard); keep
-                        // the row aligned by emitting an empty string rather than dereferencing null.
-                        str[c].Add(info != null && c < info.Length ? (info.Values[c] ?? "") : "");
+                    // Best-effort per scan: a trailer-read failure logs and leaves that row's values empty,
+                    // rather than aborting the (opt-in) wide facet or the run.
+                    ILogEntryAccess info = null;
+                    object[] typed = null;
+                    try { info = raw.GetTrailerExtraInformation(scanNumber); typed = raw.GetTrailerExtraValues(scanNumber); }
+                    catch (Exception ex) { Log.Warn($"vendor_scan_trailers_wide: scan #{scanNumber} trailer read failed ({ex.Message})"); }
+                    ord.Add(ordinal); scan.Add(scanNumber);
+                    for (int c = 0; c < cols.Count; c++)
+                    {
+                        if (cols[c].Numeric)
+                            dbl[c].Add(MzPeakSpectrumWriter.NumericOrNull(typed != null && c < typed.Length ? typed[c] : null));
+                        else
+                            str[c].Add(info != null && c < info.Length ? (info.Values[c] ?? "") : "");
+                    }
+                    rows++;
+                    if (ord.Count >= flushRows) Flush();
                 }
-                rows++;
-                if (ord.Count >= flushRows) Flush();
+                Flush();
+                writer.Close();   // in try: a footer-write failure must propagate, not yield a corrupt facet
+                closed = true;
             }
-            Flush();
-            writer.Close();
-            managedSink.Dispose();
+            finally
+            {
+                if (writer != null && !closed) { try { writer.Close(); } catch { } }
+                managedSink?.Dispose();
+            }
             return rows;
         }
 
