@@ -1,5 +1,16 @@
 # Roadmap: mzPeak Writer for ThermoRawFileParser — v2 ("compression, fidelity & scale")
 
+> ## ⚠️ SUPERSEDED (2026-06) — this v2 roadmap targeted the bespoke writer, which was deleted.
+> TRFP now **delegates to the vendored mzPeak.NET library** (v3 — "mzPeak.NET delegation"). The v2
+> phases below are kept for history; their goals are now provided by the library, changed, or dropped.
+> See `STATE.md` for the v2→v3 mapping and what was actually delivered. Quick status of each v2 phase:
+> - **P1 Streaming + robustness** → provided by the library + `MzPeakSpectrumWriter` guarded read phase.
+> - **P2 Chunked layout** → the library default (`--point` opt-out kept).
+> - **P3 Numpress-linear m/z** → **dropped**; default is now lossless Float64 (no Numpress).
+> - **P4 Profile compaction + ion mobility** → FAIMS provided by the library; profile compaction moot.
+> - **P5 CLI/docs + conformance** → delivered (0/0 validation across modes/instruments/large files;
+>   `METADATA-MAPPING.md` handoff; flags documented).
+
 ## Overview
 
 This roadmap takes the certified v1 point-layout mzPeak writer to its v2 goal: **smaller,

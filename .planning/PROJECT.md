@@ -15,6 +15,18 @@ Produce a **spec-valid mzPeak archive readable by the reference Rust/Python read
 loss of spectral information (m/z + intensity survive at the canonical mzPeak width), straight
 from Thermo RAW.
 
+## ⚠️ Architecture (current — 2026-06 pivot)
+
+The original plan built a **bespoke** mzPeak writer (v1 point layout, then v2 chunked + Numpress).
+That bespoke writer has been **deleted**. TRFP now **delegates** all spectrum/chromatogram/standard-
+metadata writing to the official HUPO-PSI **mzPeak.NET** library, vendored under `mzpeak.net/`
+(`MZPeakNet` + `MZPeakNet.Thermo`). `MzPeakSpectrumWriter` is now a thin orchestrator over
+`MZPeak.Thermo.ThermoMZPeakWriter`. TRFP-owned code is limited to the scan-loop orchestration and the
+**verbatim vendor-metadata facets** (Thermo trailer/tune/run-header/status-log/error-log) that mzML's
+CV vocabulary cannot represent. Rationale: track the reference implementation rather than maintain a
+parallel format writer. Default m/z encoding is now **lossless Float64** (library default), not the
+v2 lossy-Numpress plan. See `STATE.md` (v2→v3 pivot table) and `METADATA-MAPPING.md` (handoff).
+
 ## Requirements
 
 ### Validated
@@ -91,7 +103,11 @@ from Thermo RAW.
 | Private derivative repo okohlbacher/mzPeak4TRFP, TRFP vendored | GitHub can't make a private fork of a public repo; vendoring keeps planning paths + provenance | ✓ Good |
 | Native arm64 via RawFileReader 8.0.37 (AnyCPU), drop x64 pin + mzLib | Removes Rosetta; 52/52 tests native | ✓ Good |
 | v2 default = chunked layout + Numpress-linear m/z (lossy m/z, recorded) | Smallest files, structurally matches the reference corpus; `--lossless`/`--point` opt-outs | — Pending |
-| v2 includes operational work (streaming + per-scan robustness), not just format | E2E surfaced multi-GB OOM risk + a per-scan CONVERT_FAIL; needed for real-world corpus | — Pending |
+| v2 includes operational work (streaming + per-scan robustness), not just format | E2E surfaced multi-GB OOM risk + a per-scan CONVERT_FAIL; needed for real-world corpus | ⊘ Superseded |
+| **v3 pivot: delegate to vendored mzPeak.NET; delete the bespoke writer** | Track the official reference implementation instead of maintaining a parallel format writer; ~3k LoC writer + ~3.8k LoC tests removed | ✓ Done |
+| **Default m/z = lossless Float64 (library default), not lossy Numpress** | The v2 size-via-numpress goal is dropped; chunking + zstd give the size win without lossy m/z | ✓ Done |
+| **Vendor metadata is opt-in, best-effort (log + degrade, never abort)** | Flaky Thermo APIs must not fail a multi-GB conversion; verbatim data preserved where readable | ✓ Done |
+| **Patch conformance bugs in the vendored mzPeak.NET; keep it otherwise upstream-clean** | 6 library bugs blocked 0/0 validation; minimal divergence keeps diffs/PRs clean (HUPO-PSI/mzPeak.NET#1) | ✓ Done |
 
 ---
-*Last updated: 2026-06-14 after initialization*
+*Last updated: 2026-06-18 — reconciled to the mzPeak.NET-delegation architecture (v2→v3 pivot).*

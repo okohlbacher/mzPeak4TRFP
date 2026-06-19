@@ -1,5 +1,10 @@
 # Requirements: mzPeak Writer for ThermoRawFileParser — v2 ("compression, fidelity & scale")
 
+> **⚠️ SUPERSEDED (2026-06).** These v2 requirements targeted the bespoke writer, which was deleted in
+> the v3 mzPeak.NET-delegation pivot. The format/encoding requirements (chunked, Numpress, ZRS) are now
+> owned by the vendored library (Numpress dropped — default is lossless Float64); operational ones
+> (streaming, robustness, conformance) are met by the library + `MzPeakSpectrumWriter`. See `STATE.md`.
+
 **Defined:** 2026-06-14
 **Builds on:** v1 (point-layout writer, certified; archived under `.planning/archive/v1-point-layout/`).
 **Core Value:** Smaller, reference-structured mzPeak output (chunked + Numpress) that scales to multi-GB
