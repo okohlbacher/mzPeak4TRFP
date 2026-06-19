@@ -54,6 +54,14 @@ namespace ThermoRawFileParser.Writer
                         spectrumPeakArrayIndex: ThermoMZPeakWriter.PeakArrayIndex());
                     thermoWriter.InitializeHelper(raw);
 
+                    // Bound row-group size by spectrum count. mzPeak.NET's byte cap (RowGroupSize) is
+                    // compared against an element count that undercounts fat chunk/list payloads, so for
+                    // files with few but very large (profile / FT-ICR) spectra it never trips and the
+                    // whole facet lands in one oversized row group — slow to random-read and flagged by
+                    // mzpeak-validate (data_row_group_not_monolithic). Flushing every N spectra keeps row
+                    // groups bounded regardless, and also lowers peak memory.
+                    thermoWriter.DataWriterConfig = thermoWriter.DataWriterConfig with { EntryBufferSize = 500 };
+
                     ulong ordinal = 0;
 
                     for (var scanNumber = firstScanNumber; scanNumber <= lastScanNumber; scanNumber++)
