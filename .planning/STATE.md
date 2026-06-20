@@ -76,11 +76,12 @@ Progress: [███████░░░] ~75%
 
 ## Remaining / candidates
 
-- Merge `raw-verbatim-metadata` → `main` when ready.
+- Merge `raw-verbatim-metadata` → `main` when ready (your call — branch-first workflow).
 - Upstream: shepherd HUPO-PSI/mzPeak.NET#1 (the 6 conformance fixes + AnyCPU + hooks).
-- Optional: add a `--point` case to `MzPeakDifferentialTests` to lock the data-point-count fix.
-- Optional (upstream-better): make mzPeak.NET's row-group flush truly byte-aware (`BufferedSize`
-  undercounts list payloads); the current `EntryBufferSize` bound is a reliable spectrum-count proxy.
+- `--point` is already exercised by `MzPeakDifferentialTests` (BL-04 closed); a validator-assert on
+  `number_of_data_points` is the only net-new guard and skips without the validator on PATH.
+- Upstream-better (BL-03): make mzPeak.NET's row-group flush truly byte-aware (`BufferedSize`
+  undercounts list payloads); the current `EntryBufferSize=500` bound is a reliable spectrum-count proxy.
 
 ## Accumulated Context
 
